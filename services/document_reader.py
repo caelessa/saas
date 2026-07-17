@@ -57,8 +57,38 @@ def _ocr_image(image, psm=6, timeout=35):
         return f"[ERRO OCR: {type(exc).__name__}: {exc}]"
 
 
+def _ocr_mrz_image(image, timeout=22):
+    """OCR especializado para a zona de leitura mecânica da CNH."""
+    try:
+        import pytesseract
+        from PIL import ImageEnhance, ImageFilter, ImageOps
+
+        tesseract_path = shutil.which("tesseract")
+        if tesseract_path is None:
+            return "[ERRO OCR MRZ: executável tesseract não encontrado]"
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+
+        image = image.convert("L")
+        image = ImageOps.autocontrast(image)
+        image = ImageEnhance.Contrast(image).enhance(2.2)
+        image = image.resize((image.width * 2, image.height * 2))
+        image = image.filter(ImageFilter.SHARPEN)
+
+        config = "--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<"
+        try:
+            return pytesseract.image_to_string(
+                image, lang="eng", config=config, timeout=timeout
+            )
+        except RuntimeError:
+            return f"[ERRO OCR MRZ: tempo máximo de {timeout} segundos excedido]"
+        except Exception as exc:
+            return f"[ERRO OCR MRZ: {type(exc).__name__}: {exc}]"
+    except Exception as exc:
+        return f"[ERRO OCR MRZ: {type(exc).__name__}: {exc}]"
+
+
 def _ocr_pdf(data):
-    """Renderiza somente a primeira página e lê regiões pequenas da CNH-e."""
+    """OCR específico da CNH-e em regiões pequenas."""
     try:
         import fitz
         from PIL import Image
@@ -68,32 +98,26 @@ def _ocr_pdf(data):
             return ""
 
         page = document[0]
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(2.2, 2.2), alpha=False)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
         image = Image.open(io.BytesIO(pixmap.tobytes("png")))
         width, height = image.size
 
         name_crop = image.crop((
-            int(width * 0.125),
-            int(height * 0.105),
-            int(width * 0.505),
-            int(height * 0.205),
+            int(width * 0.125), int(height * 0.135),
+            int(width * 0.505), int(height * 0.205),
         ))
         ids_crop = image.crop((
-            int(width * 0.205),
-            int(height * 0.175),
-            int(width * 0.515),
-            int(height * 0.335),
+            int(width * 0.205), int(height * 0.195),
+            int(width * 0.515), int(height * 0.335),
         ))
         mrz_crop = image.crop((
-            int(width * 0.045),
-            int(height * 0.735),
-            int(width * 0.515),
-            int(height * 0.955),
+            int(width * 0.055), int(height * 0.815),
+            int(width * 0.505), int(height * 0.945),
         ))
 
-        name_text = _normalize(_ocr_image(name_crop, psm=6, timeout=15))
-        ids_text = _normalize(_ocr_image(ids_crop, psm=6, timeout=18))
-        mrz_text = _normalize(_ocr_image(mrz_crop, psm=6, timeout=18))
+        name_text = _normalize(_ocr_image(name_crop, psm=6, timeout=14))
+        ids_text = _normalize(_ocr_image(ids_crop, psm=6, timeout=16))
+        mrz_text = _normalize(_ocr_mrz_image(mrz_crop, timeout=22))
 
         return _normalize(
             "--- CAMPO NOME ---\n" + name_text +
@@ -261,7 +285,8 @@ def parse_cnh(text):
     registro = first([
         r"(?:N[ºO°]?\s*REGISTRO|REGISTRO)\s*[:\-]?\s*([0-9OIL| ]{9,16})",
         r"(?:N[ºO°]?\s*CNH|CNH)\s*[:\-]?\s*([0-9OIL| ]{9,16})",
-        r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\s+([0-9OIL| ]{9,16})\b",
+        r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\s*[,;:]?\s*([0-9OIL|]{9,12})\b",
+        r"\b\d{11}\s*[,;:]?\s*([0-9OIL|]{9,12})\s*[A-E]{1,2}\b",
     ], t)
     if registro:
         registro = registro.upper().translate(str.maketrans({"O": "0", "I": "1", "L": "1", "|": "1"}))
@@ -280,7 +305,7 @@ def parse_cnh(text):
     ], t)
 
     categoria = first([
-        r"\b\d{3}[.]?\d{3}[.]?\d{3}[-]?\d{2}\s+[|Il ]*\d{9,12}\s+([A-E]{1,2})\b",
+        r"\b\d{3}[.]?\d{3}[.]?\d{3}[-]?\d{2}\s*[,;:]?\s*[|Il ]*\d{9,12}\s+([A-E]{1,2})\b",
         r"\b\d{9,12}\s+([A-E]{1,2})\b",
         r"CATEGORIA\s*[:\-]?\s*([A-E]{1,2})\b",
         r"CAT\.?\s*HAB\.?\s*[:\-]?\s*([A-E]{1,2})\b",
