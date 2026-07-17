@@ -28,8 +28,10 @@ def _ocr_image(image):
         import pytesseract
         from PIL import ImageEnhance, ImageFilter, ImageOps
 
-        if shutil.which("tesseract") is None:
-            return ""
+        tesseract_path = shutil.which("tesseract")
+        if tesseract_path is None:
+            return "[ERRO OCR: executável tesseract não encontrado no servidor]"
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
         image = image.convert("L")
         image = ImageOps.autocontrast(image)
@@ -47,8 +49,8 @@ def _ocr_image(image):
             except Exception:
                 outputs.append(pytesseract.image_to_string(image, config=config))
         return "\n".join(outputs)
-    except Exception:
-        return ""
+    except Exception as exc:
+        return f"[ERRO OCR: {type(exc).__name__}: {exc}]"
 
 
 def _ocr_pdf(data):
@@ -147,7 +149,8 @@ def parse_cnh(text):
     ], t)
 
     categoria = first([
-        r"\b\d{9,12}\s+([A-E])\b",
+        r"\b\d{3}[.]?\d{3}[.]?\d{3}[-]?\d{2}\s+[|Il ]*\d{9,12}\s+([A-E]{1,2})\b",
+        r"\b\d{9,12}\s+([A-E]{1,2})\b",
         r"CATEGORIA\s*[:\-]?\s*([A-E]{1,2})\b",
         r"CAT\.?\s*HAB\.?\s*[:\-]?\s*([A-E]{1,2})\b",
     ], t)
@@ -182,7 +185,7 @@ def parse_cnh(text):
     # Zona de leitura mecânica como fallback confiável para o nome.
     mrz = re.search(r"\n([A-Z]{2,}(?:<+[A-Z]{2,}){1,6})<*\n", upper)
     mrz_name = _clean(mrz.group(1).replace("<", " ")) if mrz else ""
-    if mrz_name and 2 <= len(mrz_name.split()) <= 6:
+    if (not nome) and mrz_name and 2 <= len(mrz_name.split()) <= 6:
         nome = mrz_name
 
     # Datas podem sair sem zero à esquerda; normaliza para DD/MM/AAAA.
