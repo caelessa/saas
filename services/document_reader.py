@@ -87,18 +87,53 @@ def _ocr_mrz_image(image, timeout=22):
         return f"[ERRO OCR MRZ: {type(exc).__name__}: {exc}]"
 
 
+def _ocr_cnh_ids_image(image, timeout=18):
+    """OCR restrito à linha CPF, número da CNH e categoria."""
+    try:
+        import pytesseract
+        from PIL import ImageEnhance, ImageFilter, ImageOps
+
+        tesseract_path = shutil.which("tesseract")
+        if tesseract_path is None:
+            return "[ERRO OCR IDS: executável tesseract não encontrado]"
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+
+        image = image.convert("L")
+        image = ImageOps.autocontrast(image)
+        image = ImageEnhance.Contrast(image).enhance(2.4)
+        image = image.resize((image.width * 3, image.height * 3))
+        image = image.filter(ImageFilter.SHARPEN)
+
+        config = (
+            "--oem 3 --psm 6 "
+            "-c tessedit_char_whitelist=0123456789.-,;:ABCDE "
+        )
+        try:
+            return pytesseract.image_to_string(
+                image,
+                lang="eng",
+                config=config,
+                timeout=timeout,
+            )
+        except RuntimeError:
+            return f"[ERRO OCR IDS: tempo máximo de {timeout} segundos excedido]"
+        except Exception as exc:
+            return f"[ERRO OCR IDS: {type(exc).__name__}: {exc}]"
+    except Exception as exc:
+        return f"[ERRO OCR IDS: {type(exc).__name__}: {exc}]"
+
+
 def _ocr_pdf(data):
     """
-    OCR específico da CNH-e.
+    OCR leve da CNH-e.
 
-    A versão anterior usava coordenadas verticais incorretas e recortava áreas
-    em branco. Esta versão lê:
-      1) o quadro superior completo da CNH;
-      2) a zona de leitura mecânica (MRZ).
+    Lê somente:
+      1) faixa CPF + número da CNH + categoria;
+      2) zona de leitura mecânica (MRZ).
     """
     try:
         import fitz
-        from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+        from PIL import Image
 
         document = fitz.open(stream=data, filetype="pdf")
         if len(document) == 0:
@@ -109,15 +144,15 @@ def _ocr_pdf(data):
         image = Image.open(io.BytesIO(pixmap.tobytes("png")))
         width, height = image.size
 
-        # Quadro superior completo da CNH na metade esquerda da página.
-        upper_crop = image.crop((
-            int(width * 0.040),
-            int(height * 0.047),
-            int(width * 0.475),
-            int(height * 0.300),
+        # Faixa exata onde ficam CPF, registro da CNH e categoria.
+        ids_crop = image.crop((
+            int(width * 0.225),
+            int(height * 0.132),
+            int(width * 0.462),
+            int(height * 0.164),
         ))
 
-        # A MRZ fica aproximadamente entre 61% e 70% da altura da página.
+        # MRZ: nome, nascimento e validade.
         mrz_crop = image.crop((
             int(width * 0.065),
             int(height * 0.605),
@@ -125,21 +160,11 @@ def _ocr_pdf(data):
             int(height * 0.700),
         ))
 
-        def prepare_upper(img):
-            img = img.convert("L")
-            img = ImageOps.autocontrast(img)
-            img = ImageEnhance.Contrast(img).enhance(1.8)
-            img = img.resize((img.width * 2, img.height * 2))
-            img = img.filter(ImageFilter.SHARPEN)
-            return img
-
-        upper_text = _normalize(
-            _ocr_image(prepare_upper(upper_crop), psm=6, timeout=35)
-        )
+        ids_text = _normalize(_ocr_cnh_ids_image(ids_crop, timeout=18))
         mrz_text = _normalize(_ocr_mrz_image(mrz_crop, timeout=22))
 
         return _normalize(
-            "--- QUADRO PRINCIPAL DA CNH ---\n" + upper_text +
+            "--- CPF CNH CATEGORIA ---\n" + ids_text +
             "\n\n--- ZONA DE LEITURA MECÂNICA ---\n" + mrz_text
         )
     except Exception as exc:
