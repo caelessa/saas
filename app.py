@@ -3,6 +3,7 @@ from datetime import datetime, date
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import joinedload
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -15,6 +16,11 @@ url=os.getenv('DATABASE_URL','sqlite:///'+str(BASE/'frota_facil.db'))
 if url.startswith('postgres://'): url=url.replace('postgres://','postgresql://',1)
 app.config['SQLALCHEMY_DATABASE_URI']=url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS']=False
+app.config['SQLALCHEMY_ENGINE_OPTIONS']={
+ 'pool_pre_ping': True,
+ 'pool_recycle': 240,
+ 'pool_timeout': 20,
+}
 app.config['MAX_CONTENT_LENGTH']=12*1024*1024
 db=SQLAlchemy(app); login=LoginManager(app); login.login_view='entrar'
 
@@ -43,7 +49,8 @@ class Alert(db.Model):
 class Integration(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); ativo=db.Column(db.Boolean,default=False); configuracao=db.Column(db.Text)
 @login.user_loader
-def load_user(uid): return db.session.get(User,int(uid))
+def load_user(uid):
+ return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
 def tid(): return current_user.tenant_id
 
 def seed():
@@ -79,9 +86,24 @@ def motoristas():
 @app.route('/motoristas/importar',methods=['POST'])
 @login_required
 def importar_motorista():
- f=request.files.get('arquivo');
- if not f: flash('Selecione um arquivo.','danger'); return redirect(url_for('motoristas'))
- texto=extract_text(f); dados=parse_cnh(texto); return render_template('confirmar_motorista.html',dados=dados)
+ f=request.files.get('arquivo')
+ if not f:
+  flash('Selecione um arquivo.','danger')
+  return redirect(url_for('motoristas'))
+
+ # Libera qualquer conexão que tenha ficado ociosa enquanto o OCR processa.
+ # O usuário e a locadora já foram carregados com joinedload no login loader.
+ db.session.remove()
+ try:
+  texto=extract_text(f)
+  dados=parse_cnh(texto)
+  return render_template('confirmar_motorista.html',dados=dados)
+ except Exception as exc:
+  app.logger.exception('Falha ao processar CNH')
+  flash(f'Não foi possível processar a CNH: {exc}','danger')
+  return redirect(url_for('motoristas'))
+ finally:
+  db.session.remove()
 @app.route('/motoristas/excluir/<int:id>',methods=['POST'])
 @login_required
 def excluir_motorista(id):

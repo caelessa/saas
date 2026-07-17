@@ -47,3 +47,11 @@ Esta versão usa Docker porque o Tesseract é uma dependência do sistema operac
 No Render, crie um novo Web Service escolhendo **Language: Docker**.
 Mantenha DATABASE_URL e SECRET_KEY nas variáveis de ambiente.
 O arquivo apt-packages.txt não é usado pelo runtime Python nativo do Render.
+
+
+## Versão 0.4
+- Uma única execução do Tesseract por documento.
+- PDF renderizado em 2x e recortado somente na região da CNH.
+- Timeout do OCR em 45 segundos.
+- pool_pre_ping e pool_recycle para evitar conexões Neon encerradas.
+- Sessão SQLAlchemy liberada durante o processamento pesado.
