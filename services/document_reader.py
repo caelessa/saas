@@ -93,12 +93,8 @@ def _ocr_pdf(data):
         mrz_text = _normalize(_ocr_image(mrz_crop, psm=6, timeout=25))
 
         return _normalize(
-            "--- DADOS DA CNH ---
-" + data_text +
-            "
-
---- ZONA DE LEITURA MECÂNICA ---
-" + mrz_text
+            "--- DADOS DA CNH ---\n" + data_text +
+            "\n\n--- ZONA DE LEITURA MECÂNICA ---\n" + mrz_text
         )
     except Exception as exc:
         return f"[ERRO OCR PDF: {type(exc).__name__}: {exc}]"
