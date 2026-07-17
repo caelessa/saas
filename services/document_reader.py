@@ -88,10 +88,17 @@ def _ocr_mrz_image(image, timeout=22):
 
 
 def _ocr_pdf(data):
-    """OCR específico da CNH-e em regiões pequenas."""
+    """
+    OCR específico da CNH-e.
+
+    A versão anterior usava coordenadas verticais incorretas e recortava áreas
+    em branco. Esta versão lê:
+      1) o quadro superior completo da CNH;
+      2) a zona de leitura mecânica (MRZ).
+    """
     try:
         import fitz
-        from PIL import Image
+        from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
         document = fitz.open(stream=data, filetype="pdf")
         if len(document) == 0:
@@ -102,26 +109,37 @@ def _ocr_pdf(data):
         image = Image.open(io.BytesIO(pixmap.tobytes("png")))
         width, height = image.size
 
-        name_crop = image.crop((
-            int(width * 0.125), int(height * 0.135),
-            int(width * 0.505), int(height * 0.205),
-        ))
-        ids_crop = image.crop((
-            int(width * 0.205), int(height * 0.195),
-            int(width * 0.515), int(height * 0.335),
-        ))
-        mrz_crop = image.crop((
-            int(width * 0.055), int(height * 0.815),
-            int(width * 0.505), int(height * 0.945),
+        # Quadro superior completo da CNH na metade esquerda da página.
+        upper_crop = image.crop((
+            int(width * 0.040),
+            int(height * 0.047),
+            int(width * 0.475),
+            int(height * 0.300),
         ))
 
-        name_text = _normalize(_ocr_image(name_crop, psm=6, timeout=14))
-        ids_text = _normalize(_ocr_image(ids_crop, psm=6, timeout=16))
+        # A MRZ fica aproximadamente entre 61% e 70% da altura da página.
+        mrz_crop = image.crop((
+            int(width * 0.065),
+            int(height * 0.605),
+            int(width * 0.465),
+            int(height * 0.700),
+        ))
+
+        def prepare_upper(img):
+            img = img.convert("L")
+            img = ImageOps.autocontrast(img)
+            img = ImageEnhance.Contrast(img).enhance(1.8)
+            img = img.resize((img.width * 2, img.height * 2))
+            img = img.filter(ImageFilter.SHARPEN)
+            return img
+
+        upper_text = _normalize(
+            _ocr_image(prepare_upper(upper_crop), psm=6, timeout=35)
+        )
         mrz_text = _normalize(_ocr_mrz_image(mrz_crop, timeout=22))
 
         return _normalize(
-            "--- CAMPO NOME ---\n" + name_text +
-            "\n\n--- CAMPOS CPF CNH CATEGORIA DATAS ---\n" + ids_text +
+            "--- QUADRO PRINCIPAL DA CNH ---\n" + upper_text +
             "\n\n--- ZONA DE LEITURA MECÂNICA ---\n" + mrz_text
         )
     except Exception as exc:
