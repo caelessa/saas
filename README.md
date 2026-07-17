@@ -40,3 +40,10 @@ A leitura direta de PDF é tentada primeiro. Se o PDF for imagem, o sistema tent
 - APIs reais de rastreamento, WhatsApp e Senatran
 - Assinatura eletrônica
 - Testes automatizados e LGPD
+
+
+## OCR no Render
+Esta versão usa Docker porque o Tesseract é uma dependência do sistema operacional.
+No Render, crie um novo Web Service escolhendo **Language: Docker**.
+Mantenha DATABASE_URL e SECRET_KEY nas variáveis de ambiente.
+O arquivo apt-packages.txt não é usado pelo runtime Python nativo do Render.
