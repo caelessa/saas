@@ -74,3 +74,10 @@ O arquivo apt-packages.txt não é usado pelo runtime Python nativo do Render.
 - Nome do titular da MRZ sempre tem prioridade sobre os nomes da filiação.
 - Nascimento e validade validados pela MRZ.
 - Maior tolerância a caracteres O/0, I/1 e L/1 em números.
+
+
+## Versão 0.8 — fluxos separados
+- CNH e CRLV agora usam rotinas de extração independentes.
+- O CRLV digital usa diretamente sua camada textual completa.
+- O OCR recortado da CNH nunca mais é aplicado ao CRLV.
+- OCR geral do CRLV é usado somente quando o PDF não contém texto suficiente.

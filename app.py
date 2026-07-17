@@ -95,7 +95,7 @@ def importar_motorista():
  # O usuário e a locadora já foram carregados com joinedload no login loader.
  db.session.remove()
  try:
-  texto=extract_text(f)
+  texto=extract_text(f, document_type='cnh')
   dados=parse_cnh(texto)
   return render_template('confirmar_motorista.html',dados=dados)
  except Exception as exc:
