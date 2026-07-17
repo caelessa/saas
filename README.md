@@ -55,3 +55,22 @@ O arquivo apt-packages.txt não é usado pelo runtime Python nativo do Render.
 - Timeout do OCR em 45 segundos.
 - pool_pre_ping e pool_recycle para evitar conexões Neon encerradas.
 - Sessão SQLAlchemy liberada durante o processamento pesado.
+
+
+## Versão 0.5
+- OCR separado em área de dados e zona de leitura mecânica.
+- Parser MRZ para nome, nascimento e validade.
+- Melhor tratamento de OCR ruidoso da CNH-e.
+
+
+## Versão 0.6
+- Parser do CRLV adaptado ao texto digital da Senatran, em que rótulos e valores aparecem separados.
+- Extração por padrões independentes para placa, Renavam, chassi, marca/modelo, anos, cor, combustível e proprietário.
+
+
+## Versão 0.7 — OCR refinado
+- OCR dividido em três regiões pequenas: nome, identificadores/datas e MRZ.
+- Menor consumo e tempo de processamento no Render Free.
+- Nome do titular da MRZ sempre tem prioridade sobre os nomes da filiação.
+- Nascimento e validade validados pela MRZ.
+- Maior tolerância a caracteres O/0, I/1 e L/1 em números.
