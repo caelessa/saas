@@ -104,32 +104,80 @@ def _ocr_pdf(data):
         return f"[ERRO OCR PDF: {type(exc).__name__}: {exc}]"
 
 
-def extract_text(file_storage):
+def _ocr_crlv_pdf(data):
+    """OCR genérico do CRLV somente quando a camada textual estiver ausente."""
+    try:
+        import fitz
+        from PIL import Image
+
+        document = fitz.open(stream=data, filetype="pdf")
+        if len(document) == 0:
+            return ""
+
+        page = document[0]
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(1.8, 1.8), alpha=False)
+        image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+        return _normalize(_ocr_image(image, psm=6, timeout=35))
+    except Exception as exc:
+        return f"[ERRO OCR CRLV: {type(exc).__name__}: {exc}]"
+
+
+def extract_text(file_storage, document_type=None):
+    """
+    CNH e CRLV possuem fluxos diferentes.
+
+    CNH: camada textual + OCR específico por regiões e MRZ.
+    CRLV: prioriza a camada textual digital completa; OCR só como fallback.
+    """
     name = (file_storage.filename or "").lower()
     data = file_storage.read()
     file_storage.stream.seek(0)
     digital_text = ""
 
-    if name.endswith(".pdf"):
+    if name.endswith(".pdf") or data[:4] == b"%PDF":
         try:
-            reader = PdfReader(io.BytesIO(data))
-            digital_text = "\n".join((page.extract_text() or "") for page in reader.pages)
-        except Exception:
-            digital_text = ""
+            pdf = PdfReader(io.BytesIO(data), strict=False)
+            digital_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+        except Exception as exc:
+            digital_text = f"[ERRO TEXTO PDF: {type(exc).__name__}: {exc}]"
 
-        # Não basta o PDF conter texto: ele precisa conter os campos da CNH/CRLV.
-        # Documentos Senatran costumam expor apenas o aviso do QR Code na camada textual.
-        if not _looks_like_cnh_data(digital_text):
-            ocr_text = _ocr_pdf(data)
-            if ocr_text:
-                return _normalize(digital_text + "\n\n--- OCR DA IMAGEM ---\n" + ocr_text)
-        return _normalize(digital_text)
+        normalized = _normalize(digital_text)
+        upper = normalized.upper()
+
+        if document_type == "crlv":
+            markers = (
+                "CÓDIGO RENAVAM", "CODIGO RENAVAM", "CHASSI",
+                "MARCA / MODELO", "CERTIFICADO DE REGISTRO",
+            )
+            marker_count = sum(marker in upper for marker in markers)
+            has_plate = bool(re.search(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", upper))
+            has_chassis = bool(re.search(r"\b[A-HJ-NPR-Z0-9]{17}\b", upper))
+
+            # CRLV-e normalmente já fornece todos os valores na camada textual.
+            if marker_count >= 2 or (has_plate and has_chassis) or len(normalized) >= 500:
+                return normalized
+
+            return _normalize(
+                normalized + "\n\n--- OCR DO CRLV ---\n" + _ocr_crlv_pdf(data)
+            )
+
+        if document_type == "cnh":
+            return _normalize(
+                normalized + "\n\n--- OCR DA IMAGEM ---\n" + _ocr_pdf(data)
+            )
+
+        # Detecção automática como segurança.
+        if "CÓDIGO RENAVAM" in upper or "CODIGO RENAVAM" in upper or "CHASSI" in upper:
+            return normalized
+        return _normalize(
+            normalized + "\n\n--- OCR DA IMAGEM ---\n" + _ocr_pdf(data)
+        )
 
     try:
         from PIL import Image
-        return _normalize(_ocr_image(Image.open(io.BytesIO(data))))
-    except Exception:
-        return ""
+        return _normalize(_ocr_image(Image.open(io.BytesIO(data)), psm=6, timeout=35))
+    except Exception as exc:
+        return f"[ERRO LEITURA: {type(exc).__name__}: {exc}]"
 
 
 def first(patterns, text, flags=re.I):
@@ -346,13 +394,24 @@ def parse_crlv(text):
 
     ano_fab = ""
     ano_mod = ""
-    year_pairs = re.findall(r"\b(19\d{2}|20\d{2})\s+(19\d{2}|20\d{2})\b", upper)
-    if year_pairs:
-        ano_fab, ano_mod = year_pairs[0]
-    else:
-        years = re.findall(r"\b(19\d{2}|20\d{2})\b", upper)
-        if len(years) >= 2:
-            ano_fab, ano_mod = years[0], years[1]
+
+    # Procura o par fabricação/modelo dentro da mesma linha.
+    # Isso evita confundir o exercício que aparece junto da placa.
+    for line in lines:
+        pair = re.fullmatch(r"\s*((?:19|20)\d{2})\s+((?:19|20)\d{2})\s*", line)
+        if pair:
+            fab, mod = int(pair.group(1)), int(pair.group(2))
+            if fab <= mod <= fab + 2:
+                ano_fab, ano_mod = str(fab), str(mod)
+                break
+
+    if not ano_fab:
+        year_pairs = re.findall(r"\b((?:19|20)\d{2})[ \t]+((?:19|20)\d{2})\b", upper)
+        for fab_text, mod_text in year_pairs:
+            fab, mod = int(fab_text), int(mod_text)
+            if fab <= mod <= fab + 2:
+                ano_fab, ano_mod = fab_text, mod_text
+                break
 
     modelo = ""
     ignore_model = (
