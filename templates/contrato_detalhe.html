@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block heading %}Contrato #{{c.id}}{% endblock %}{% block subheading %}Versão final preservada no momento da geração.{% endblock %}{% block content %}<section class="card contract"><pre>{{c.texto_final}}</pre><button onclick="window.print()">Imprimir / Salvar em PDF</button></section>{% endblock %}
