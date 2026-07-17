@@ -35,20 +35,24 @@ def _ocr_image(image):
 
         image = image.convert("L")
         image = ImageOps.autocontrast(image)
-        image = ImageEnhance.Contrast(image).enhance(1.7)
+        image = ImageEnhance.Contrast(image).enhance(1.5)
         image = image.filter(ImageFilter.SHARPEN)
 
-        configs = [
-            "--oem 3 --psm 6",
-            "--oem 3 --psm 11",
-        ]
-        outputs = []
-        for config in configs:
-            try:
-                outputs.append(pytesseract.image_to_string(image, lang="por", config=config))
-            except Exception:
-                outputs.append(pytesseract.image_to_string(image, config=config))
-        return "\n".join(outputs)
+        try:
+            return pytesseract.image_to_string(
+                image,
+                lang="por",
+                config="--oem 3 --psm 6",
+                timeout=45,
+            )
+        except RuntimeError:
+            return "[ERRO OCR: tempo máximo de 45 segundos excedido]"
+        except Exception:
+            return pytesseract.image_to_string(
+                image,
+                config="--oem 3 --psm 6",
+                timeout=45,
+            )
     except Exception as exc:
         return f"[ERRO OCR: {type(exc).__name__}: {exc}]"
 
@@ -59,27 +63,20 @@ def _ocr_pdf(data):
         from PIL import Image
 
         document = fitz.open(stream=data, filetype="pdf")
-        outputs = []
-        for page_index in range(min(len(document), 2)):
-            page = document[page_index]
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(3.0, 3.0), alpha=False)
-            image = Image.open(io.BytesIO(pixmap.tobytes("png")))
+        if len(document) == 0:
+            return ""
 
-            # OCR da página completa.
-            outputs.append(_ocr_image(image))
+        page = document[0]
+        # 2x é suficiente para a CNH e consome bem menos memória/CPU que 3x.
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
+        image = Image.open(io.BytesIO(pixmap.tobytes("png")))
 
-            # Nas CNHs-e da Senatran, a carteira fica normalmente no lado esquerdo.
-            width, height = image.size
-            cnh_crop = image.crop((0, 0, int(width * 0.52), int(height * 0.82)))
-            outputs.append(_ocr_image(cnh_crop))
-
-            # A faixa inferior contém a zona de leitura mecânica e ajuda a validar o nome.
-            mrz_crop = image.crop((0, int(height * 0.68), int(width * 0.55), height))
-            outputs.append(_ocr_image(mrz_crop))
-
-        return _normalize("\n".join(part for part in outputs if part))
-    except Exception:
-        return ""
+        width, height = image.size
+        # A CNH-e ocupa normalmente a metade esquerda e cerca de 82% da altura.
+        cnh_crop = image.crop((0, 0, int(width * 0.53), int(height * 0.84)))
+        return _normalize(_ocr_image(cnh_crop))
+    except Exception as exc:
+        return f"[ERRO OCR PDF: {type(exc).__name__}: {exc}]"
 
 
 def extract_text(file_storage):
