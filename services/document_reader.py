@@ -105,7 +105,8 @@ def _ocr_cnh_ids_image(image, timeout=18):
         image = image.filter(ImageFilter.SHARPEN)
 
         config = (
-            "--oem 3 --psm 6 "
+            "--oem 3 --psm 7 "
+            "-c preserve_interword_spaces=1 "
             "-c tessedit_char_whitelist=0123456789.-,;:ABCDE "
         )
         try:
@@ -145,11 +146,13 @@ def _ocr_pdf(data):
         width, height = image.size
 
         # Faixa exata onde ficam CPF, registro da CNH e categoria.
+        # Linha correta onde aparecem CPF, número da CNH e categoria.
+        # A versão anterior recortava a região de datas e rótulos.
         ids_crop = image.crop((
-            int(width * 0.225),
-            int(height * 0.132),
-            int(width * 0.462),
-            int(height * 0.164),
+            int(width * 0.205),
+            int(height * 0.225),
+            int(width * 0.475),
+            int(height * 0.285),
         ))
 
         # MRZ: nome, nascimento e validade.
@@ -346,6 +349,20 @@ def parse_cnh(text):
         r"(?:DATA\s+E?\s*LOCAL\s+E?UF\s+DE\s+NASCIMENTO|DATA\s+DE\s+NASCIMENTO|NASCIMENTO)\s*[:\-]?\s*\n?\s*(\d{1,2}/\d{1,2}/\d{4})",
         r"\b(\d{1,2}/\d{1,2}/\d{4})\s*,?\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÜÇ ]{3,},\s*[A-Z]{2}\b",
     ], t)
+
+    # Fallback para a linha compacta de CPF + CNH + categoria.
+    compact_line = re.search(
+        r"(\d{3}[.]?\d{3}[.]?\d{3}[-]?\d{2})\D{0,5}(\d{9,12})\D{0,3}([A-E]{1,2})\b",
+        upper,
+    )
+    if compact_line:
+        if not cpf:
+            cpf = re.sub(r"\D", "", compact_line.group(1))
+        if not registro:
+            registro = compact_line.group(2)
+        compact_category = compact_line.group(3)
+    else:
+        compact_category = ""
 
     categoria = first([
         r"\b\d{3}[.]?\d{3}[.]?\d{3}[-]?\d{2}\s*[,;:]?\s*[|Il ]*\d{9,12}\s+([A-E]{1,2})\b",
