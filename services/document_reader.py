@@ -105,7 +105,7 @@ def _ocr_cnh_ids_image(image, timeout=18):
         image = image.filter(ImageFilter.SHARPEN)
 
         config = (
-            "--oem 3 --psm 7 "
+            "--oem 3 --psm 6 "
             "-c preserve_interword_spaces=1 "
             "-c tessedit_char_whitelist=0123456789.-,;:ABCDE "
         )
@@ -148,11 +148,13 @@ def _ocr_pdf(data):
         # Faixa exata onde ficam CPF, registro da CNH e categoria.
         # Linha correta onde aparecem CPF, número da CNH e categoria.
         # A versão anterior recortava a região de datas e rótulos.
+        # Faixa real onde aparecem CPF, número da CNH e categoria.
+        # Coordenadas calibradas no PDF oficial da Senatran.
         ids_crop = image.crop((
-            int(width * 0.205),
-            int(height * 0.225),
-            int(width * 0.475),
-            int(height * 0.285),
+            int(width * 0.225),
+            int(height * 0.183),
+            int(width * 0.455),
+            int(height * 0.218),
         ))
 
         # MRZ: nome, nascimento e validade.
