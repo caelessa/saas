@@ -1,5 +1,5 @@
-import os, uuid
-from datetime import datetime, date
+import os, uuid, re
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -36,6 +36,8 @@ class Vehicle(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(30)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); investor=db.relationship('Investor')
 class Odometer(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); km=db.Column(db.Integer,nullable=False); origem=db.Column(db.String(40)); data=db.Column(db.DateTime,default=datetime.utcnow); vehicle=db.relationship('Vehicle')
+class MileageRequest(db.Model):
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False); token=db.Column(db.String(64),unique=True,nullable=False,index=True); status=db.Column(db.String(30),default='Pendente'); expires_at=db.Column(db.DateTime); sent_at=db.Column(db.DateTime,default=datetime.utcnow); submitted_at=db.Column(db.DateTime); km=db.Column(db.Integer); previous_km=db.Column(db.Integer); photo=db.Column(db.String(255)); notes=db.Column(db.Text); vehicle=db.relationship('Vehicle'); driver=db.relationship('Driver')
 class ContractTemplate(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
@@ -53,6 +55,16 @@ def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
 def tid(): return current_user.tenant_id
 
+def normalize_phone(value):
+ digits=re.sub(r'\D','',value or '')
+ if not digits: return ''
+ if digits.startswith('00'): digits=digits[2:]
+ if len(digits) in (10,11): digits='55'+digits
+ return digits
+
+def active_request(vehicle_id, driver_id):
+ return MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id,driver_id=driver_id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
+
 def seed():
  db.create_all()
  if not Tenant.query.first():
@@ -60,6 +72,23 @@ def seed():
   u=User(tenant_id=t.id,nome='Administrador',email='admin@frotafacil.local',senha=generate_password_hash('admin123')); db.session.add(u)
   base='''CONTRATO DE LOCAÇÃO\nLOCATÁRIO: {{motorista_nome}}, CPF {{motorista_cpf}}, CNH {{motorista_cnh}}.\nVEÍCULO: {{veiculo_modelo}}, placa {{veiculo_placa}}, Renavam {{veiculo_renavam}}.\nVALOR: R$ {{valor_locacao}}. CAUÇÃO: R$ {{caucao}}.\nINÍCIO: {{data_inicio}}. TÉRMINO: {{data_fim}}.\nLIMITE DE KM: {{limite_km}}. EXCEDENTE: R$ {{valor_km_excedente}}/km.'''
   db.session.add_all([ContractTemplate(tenant_id=t.id,nome='Combustão com limite',tipo_veiculo='Combustão',possui_limite_km=True,conteudo=base),ContractTemplate(tenant_id=t.id,nome='Elétrico com limite',tipo_veiculo='Elétrico',possui_limite_km=True,conteudo=base+'\nO LOCATÁRIO se responsabiliza pela recarga e uso de equipamentos homologados.')]); db.session.commit()
+
+@app.route('/criar-conta',methods=['GET','POST'])
+def criar_conta():
+ if current_user.is_authenticated: return redirect(url_for('dashboard'))
+ if request.method=='POST':
+  nome=request.form.get('nome','').strip(); empresa=request.form.get('empresa','').strip(); email=request.form.get('email','').strip().lower(); senha=request.form.get('senha','')
+  if not nome or not empresa or not email or len(senha)<6:
+   flash('Preencha todos os campos. A senha deve ter pelo menos 6 caracteres.','danger')
+  elif User.query.filter_by(email=email).first():
+   flash('Este e-mail já está cadastrado.','danger')
+  else:
+   t=Tenant(nome=empresa,ativo=True); db.session.add(t); db.session.flush()
+   u=User(tenant_id=t.id,nome=nome,email=email,senha=generate_password_hash(senha),perfil='admin'); db.session.add(u)
+   base='''CONTRATO DE LOCAÇÃO\nLOCATÁRIO: {{motorista_nome}}, CPF {{motorista_cpf}}, CNH {{motorista_cnh}}.\nVEÍCULO: {{veiculo_modelo}}, placa {{veiculo_placa}}, Renavam {{veiculo_renavam}}.\nVALOR: R$ {{valor_locacao}}. CAUÇÃO: R$ {{caucao}}.\nINÍCIO: {{data_inicio}}. TÉRMINO: {{data_fim}}.'''
+   db.session.add(ContractTemplate(tenant_id=t.id,nome='Modelo básico',tipo_veiculo='Todos',possui_limite_km=False,conteudo=base))
+   db.session.commit(); login_user(u); flash('Conta criada. Sua base está limpa e pronta para os cadastros.','success'); return redirect(url_for('dashboard'))
+ return render_template('criar_conta.html')
 
 @app.route('/entrar',methods=['GET','POST'])
 def entrar():
@@ -122,7 +151,7 @@ def veiculos():
  if request.method=='POST':
   vals={k:request.form.get(k) for k in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']}
   v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0); db.session.add(v); db.session.flush(); db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=v.km_atual,origem='Cadastro')); db.session.commit(); flash('Veículo cadastrado.','success'); return redirect(url_for('veiculos'))
- return render_template('veiculos.html',items=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa),investidores=Investor.query.filter_by(tenant_id=tid()).all())
+ return render_template('veiculos.html',items=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all())
 @app.route('/veiculos/importar',methods=['POST'])
 @login_required
 def importar_veiculo():
@@ -133,6 +162,63 @@ def importar_veiculo():
 @login_required
 def atualizar_km(id):
  v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404(); km=int(request.form['km']); v.km_atual=km; db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=km,origem=request.form.get('origem','Manual'))); db.session.commit(); flash('Quilometragem atualizada.','success'); return redirect(url_for('veiculos'))
+
+@app.route('/veiculos/<int:id>/solicitar-km',methods=['POST'])
+@login_required
+def solicitar_km(id):
+ v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ d=Driver.query.filter_by(id=request.form.get('driver_id'),tenant_id=tid()).first_or_404()
+ telefone=normalize_phone(d.telefone)
+ if not telefone:
+  flash('Cadastre um telefone/WhatsApp válido para o motorista.','danger'); return redirect(url_for('veiculos'))
+ req=active_request(v.id,d.id)
+ if not req:
+  req=MileageRequest(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=v.km_atual)
+  db.session.add(req); db.session.commit()
+ link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
+ mensagem=f'Olá, {d.nome}! Precisamos da quilometragem atual do veículo {v.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
+ from urllib.parse import quote
+ return redirect(f'https://wa.me/{telefone}?text={quote(mensagem)}')
+
+@app.route('/km/<token>',methods=['GET','POST'])
+def registrar_quilometragem_publica(token):
+ req=MileageRequest.query.options(joinedload(MileageRequest.vehicle),joinedload(MileageRequest.driver)).filter_by(token=token).first_or_404()
+ if req.status=='Concluído': return render_template('quilometragem_sucesso.html',req=req,ja_enviado=True)
+ if req.expires_at and req.expires_at<datetime.utcnow():
+  return render_template('quilometragem_publica.html',req=req,expirado=True),410
+ if request.method=='POST':
+  try: km=int(request.form.get('km',''))
+  except ValueError:
+   flash('Informe uma quilometragem válida.','danger'); return render_template('quilometragem_publica.html',req=req,expirado=False)
+  if km < (req.vehicle.km_atual or 0):
+   flash(f'A quilometragem não pode ser menor que a última leitura ({req.vehicle.km_atual:,} km).','danger'); return render_template('quilometragem_publica.html',req=req,expirado=False)
+  foto=request.files.get('foto')
+  if not foto or not foto.filename:
+   flash('A foto do painel é obrigatória.','danger'); return render_template('quilometragem_publica.html',req=req,expirado=False)
+  ext=Path(secure_filename(foto.filename)).suffix.lower()
+  if ext not in ('.jpg','.jpeg','.png','.webp'):
+   flash('Envie uma foto JPG, PNG ou WEBP.','danger'); return render_template('quilometragem_publica.html',req=req,expirado=False)
+  pasta=UPLOAD/str(req.tenant_id)/'odometros'; pasta.mkdir(parents=True,exist_ok=True)
+  nome=f'{uuid.uuid4().hex}{ext}'; foto.save(pasta/nome)
+  req.km=km; req.photo=nome; req.notes=request.form.get('observacoes'); req.status='Concluído'; req.submitted_at=datetime.utcnow()
+  req.vehicle.km_atual=km
+  db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,km=km,origem='Motorista via link'))
+  db.session.commit()
+  return redirect(url_for('registrar_quilometragem_publica',token=token))
+ return render_template('quilometragem_publica.html',req=req,expirado=False)
+
+@app.route('/quilometragens')
+@login_required
+def quilometragens():
+ items=MileageRequest.query.options(joinedload(MileageRequest.vehicle),joinedload(MileageRequest.driver)).filter_by(tenant_id=tid()).order_by(MileageRequest.id.desc()).all()
+ return render_template('quilometragens.html',items=items)
+
+@app.route('/quilometragens/<int:id>/foto')
+@login_required
+def foto_quilometragem(id):
+ req=MileageRequest.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not req.photo: abort(404)
+ return send_from_directory(UPLOAD/str(tid())/'odometros',req.photo)
 
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
