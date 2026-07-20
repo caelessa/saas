@@ -5,7 +5,7 @@
 <section class="card">
 <form method="post" class="form-grid">
 {% for n,l in [('placa','Placa'),('renavam','Renavam'),('chassi','Chassi'),('marca_modelo','Marca/modelo'),('ano_fabricacao','Ano fabricação'),('ano_modelo','Ano modelo'),('cor','Cor'),('combustivel','Combustível'),('proprietario_legal','Proprietário legal'),('cpf_cnpj_proprietario','CPF/CNPJ proprietário'),('valor_repasse','Repasse'),('limite_km','Limite km'),('valor_km_excedente','Valor km excedente'),('rastreador_id','ID rastreador')] %}
-<label>{{l}}<input name="{{n}}" value="{{getattr(v,n) or ''}}" {% if n=='placa' %}required{% endif %}></label>
+<label>{{l}}<input name="{{n}}" value="{{ (v|attr(n)) or '' }}" {% if n=='placa' %}required{% endif %}></label>
 {% endfor %}
 <label>Investidor<select name="investor_id"><option value="">Sem investidor</option>{% for i in investidores %}<option value="{{i.id}}" {% if v.investor_id==i.id %}selected{% endif %}>{{i.nome}}</option>{% endfor %}</select></label>
 <label>Status<select name="status">
