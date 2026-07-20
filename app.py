@@ -188,6 +188,43 @@ def importar_veiculo():
  f=request.files.get('arquivo');
  if not f: flash('Selecione um arquivo.','danger'); return redirect(url_for('veiculos'))
  dados=parse_crlv(extract_text(f)); return render_template('confirmar_veiculo.html',dados=dados,investidores=Investor.query.filter_by(tenant_id=tid()).all())
+@app.route('/veiculos/<int:id>/excluir',methods=['POST'])
+@login_required
+def excluir_veiculo(id):
+ v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ contratos=Contract.query.filter_by(tenant_id=tid(),vehicle_id=v.id).count()
+ if contratos:
+  flash('Este veículo possui contrato(s) vinculado(s) e não pode ser excluído. Altere o status para Vendido ou Inativo para preservar o histórico.','danger')
+  return redirect(url_for('veiculos'))
+
+ # Remove os arquivos das fotos de quilometragem antes dos registros.
+ solicitacoes=MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=v.id).all()
+ for solicitacao in solicitacoes:
+  if solicitacao.photo:
+   foto=UPLOAD / solicitacao.photo
+   try:
+    if foto.exists(): foto.unlink()
+   except OSError:
+    app.logger.warning('Não foi possível remover a foto %s',foto)
+
+ # Remove dados operacionais dependentes do veículo.
+ MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=v.id).delete(synchronize_session=False)
+ Odometer.query.filter_by(tenant_id=tid(),vehicle_id=v.id).delete(synchronize_session=False)
+ Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id).delete(synchronize_session=False)
+ documentos=Document.query.filter_by(tenant_id=tid(),entidade='veiculo',entidade_id=v.id).all()
+ for documento in documentos:
+  if documento.arquivo:
+   arquivo=UPLOAD / documento.arquivo
+   try:
+    if arquivo.exists(): arquivo.unlink()
+   except OSError:
+    app.logger.warning('Não foi possível remover o documento %s',arquivo)
+  db.session.delete(documento)
+ db.session.delete(v)
+ db.session.commit()
+ flash('Veículo excluído com sucesso.','success')
+ return redirect(url_for('veiculos'))
+
 @app.route('/veiculos/<int:id>/km',methods=['POST'])
 @login_required
 def atualizar_km(id):
