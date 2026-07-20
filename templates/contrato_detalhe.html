@@ -1,1 +1,30 @@
-{% extends 'base.html' %}{% block heading %}Contrato #{{c.id}}{% endblock %}{% block subheading %}Versão final preservada no momento da geração.{% endblock %}{% block content %}<section class="card contract"><pre>{{c.texto_final}}</pre><button onclick="window.print()">Imprimir / Salvar em PDF</button></section>{% endblock %}
+{% extends 'base.html' %}
+{% block heading %}Contrato #{{c.id}}{% endblock %}
+{% block subheading %}Versão final preservada no momento da geração.{% endblock %}
+{% block content %}
+<section class="card contract-summary">
+ <div><strong>Status:</strong> <span class="badge {% if c.status=='Cancelado' %}cancelled{% elif c.status=='Ativo' %}ok{% endif %}">{{c.status}}</span></div>
+ <div><strong>Motorista:</strong> {{c.driver.nome}}</div>
+ <div><strong>Veículo:</strong> {{c.vehicle.placa}} — {{c.vehicle.marca_modelo or '-'}}</div>
+ {% if c.cancelado_em %}<div><strong>Cancelado em:</strong> {{c.cancelado_em.strftime('%d/%m/%Y às %H:%M')}}</div>{% endif %}
+ {% if c.motivo_cancelamento %}<div><strong>Motivo:</strong> {{c.motivo_cancelamento}}</div>{% endif %}
+</section>
+
+{% if c.status=='Ativo' %}
+<section class="card cancel-contract">
+ <h2>Cancelar contrato</h2>
+ <p class="hint">O contrato continuará no histórico. Se o veículo estiver como Alugado, voltará automaticamente para Disponível.</p>
+ <form method="post" action="{{url_for('cancelar_contrato',id=c.id)}}" onsubmit="return confirm('Confirma o cancelamento do contrato #{{c.id}}? Esta ação não poderá ser desfeita.')">
+  <label>Motivo do cancelamento (opcional)
+   <textarea name="motivo_cancelamento" placeholder="Ex.: desistência do motorista, contrato criado para teste..."></textarea>
+  </label>
+  <button class="danger" type="submit">Cancelar contrato</button>
+ </form>
+</section>
+{% endif %}
+
+<section class="card contract">
+ <pre>{{c.texto_final}}</pre>
+ <button onclick="window.print()">Imprimir / Salvar em PDF</button>
+</section>
+{% endblock %}
