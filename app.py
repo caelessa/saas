@@ -4,6 +4,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
+from sqlalchemy import inspect, text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -33,7 +34,7 @@ class Driver(db.Model):
 class Investor(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf_cnpj=db.Column(db.String(20)); telefone=db.Column(db.String(30)); email=db.Column(db.String(120)); regra_repasse=db.Column(db.String(30),default='Valor fixo'); observacoes=db.Column(db.Text)
 class Vehicle(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(30)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); investor=db.relationship('Investor')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(30)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); investor=db.relationship('Investor')
 class Odometer(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); km=db.Column(db.Integer,nullable=False); origem=db.Column(db.String(40)); data=db.Column(db.DateTime,default=datetime.utcnow); vehicle=db.relationship('Vehicle')
 class MileageRequest(db.Model):
@@ -65,8 +66,34 @@ def normalize_phone(value):
 def active_request(vehicle_id, driver_id):
  return MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id,driver_id=driver_id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
 
+def oil_status(v):
+ if not v.controlar_oleo or v.ultima_troca_oleo_km is None or not v.intervalo_oleo_km:
+  return {'state':'off','label':'Não configurado','remaining':None,'next_km':None}
+ next_km=v.ultima_troca_oleo_km+v.intervalo_oleo_km
+ remaining=next_km-(v.km_atual or 0)
+ alert=v.alerta_oleo_km if v.alerta_oleo_km is not None else 100
+ if remaining < 0:
+  return {'state':'overdue','label':f'Vencida há {abs(remaining):,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
+ if remaining <= alert:
+  return {'state':'warning','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
+ return {'state':'ok','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
+
+def migrate_schema():
+ columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
+ additions=[
+  ('controlar_oleo','BOOLEAN DEFAULT FALSE'),
+  ('ultima_troca_oleo_km','INTEGER'),
+  ('intervalo_oleo_km','INTEGER DEFAULT 10000'),
+  ('alerta_oleo_km','INTEGER DEFAULT 100'),
+ ]
+ for name,definition in additions:
+  if name not in columns:
+   with db.engine.begin() as conn:
+    conn.execute(text(f'ALTER TABLE vehicle ADD COLUMN {name} {definition}'))
+
 def seed():
  db.create_all()
+ migrate_schema()
  if not Tenant.query.first():
   t=Tenant(nome='Locadora Demonstração'); db.session.add(t); db.session.flush()
   u=User(tenant_id=t.id,nome='Administrador',email='admin@frotafacil.local',senha=generate_password_hash('admin123')); db.session.add(u)
@@ -103,8 +130,11 @@ def sair(): logout_user(); return redirect(url_for('entrar'))
 @app.route('/')
 @login_required
 def dashboard():
- cards={'veiculos':Vehicle.query.filter_by(tenant_id=tid()).count(),'motoristas':Driver.query.filter_by(tenant_id=tid()).count(),'contratos':Contract.query.filter_by(tenant_id=tid(),status='Ativo').count(),'alertas':Alert.query.filter_by(tenant_id=tid(),lido=False).count()}
- return render_template('dashboard.html',cards=cards,veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.id.desc()).limit(6),alertas=Alert.query.filter_by(tenant_id=tid(),lido=False).limit(5))
+ vehicles=Vehicle.query.filter_by(tenant_id=tid()).all()
+ oil_alerts=[(v,oil_status(v)) for v in vehicles if oil_status(v)['state'] in ('warning','overdue')]
+ system_alerts=Alert.query.filter_by(tenant_id=tid(),lido=False).limit(5).all()
+ cards={'veiculos':len(vehicles),'motoristas':Driver.query.filter_by(tenant_id=tid()).count(),'contratos':Contract.query.filter_by(tenant_id=tid(),status='Ativo').count(),'alertas':len(oil_alerts)+Alert.query.filter_by(tenant_id=tid(),lido=False).count()}
+ return render_template('dashboard.html',cards=cards,veiculos=sorted(vehicles,key=lambda v:v.id,reverse=True)[:6],alertas=system_alerts,oil_alerts=oil_alerts[:8],oil_status=oil_status)
 
 @app.route('/motoristas',methods=['GET','POST'])
 @login_required
@@ -150,8 +180,8 @@ def investidores():
 def veiculos():
  if request.method=='POST':
   vals={k:request.form.get(k) for k in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']}
-  v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0); db.session.add(v); db.session.flush(); db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=v.km_atual,origem='Cadastro')); db.session.commit(); flash('Veículo cadastrado.','success'); return redirect(url_for('veiculos'))
- return render_template('veiculos.html',items=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all())
+  v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100); db.session.add(v); db.session.flush(); db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=v.km_atual,origem='Cadastro')); db.session.commit(); flash('Veículo cadastrado.','success'); return redirect(url_for('veiculos'))
+ return render_template('veiculos.html',items=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),oil_status=oil_status)
 @app.route('/veiculos/importar',methods=['POST'])
 @login_required
 def importar_veiculo():
@@ -162,6 +192,16 @@ def importar_veiculo():
 @login_required
 def atualizar_km(id):
  v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404(); km=int(request.form['km']); v.km_atual=km; db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=km,origem=request.form.get('origem','Manual'))); db.session.commit(); flash('Quilometragem atualizada.','success'); return redirect(url_for('veiculos'))
+
+@app.route('/veiculos/<int:id>/oleo',methods=['POST'])
+@login_required
+def configurar_oleo(id):
+ v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ v.controlar_oleo=bool(request.form.get('controlar_oleo'))
+ v.ultima_troca_oleo_km=int(request.form['ultima_troca_oleo_km']) if request.form.get('ultima_troca_oleo_km') else None
+ v.intervalo_oleo_km=int(request.form.get('intervalo_oleo_km') or 10000)
+ v.alerta_oleo_km=int(request.form.get('alerta_oleo_km') or 100)
+ db.session.commit(); flash('Plano de troca de óleo atualizado.','success'); return redirect(url_for('veiculos'))
 
 @app.route('/veiculos/<int:id>/solicitar-km',methods=['POST'])
 @login_required
