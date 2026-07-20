@@ -1,1 +1,62 @@
-{% extends 'base.html' %}{% block heading %}Contratos inteligentes{% endblock %}{% block subheading %}Selecione motorista, veículo e modelo; digite apenas condições variáveis.{% endblock %}{% block content %}<section class="card"><h2>Novo contrato</h2><form method="post" class="form-grid"><label>Motorista<select name="driver_id" required>{% for x in motoristas %}<option value="{{x.id}}">{{x.nome}}</option>{% endfor %}</select></label><label>Veículo<select name="vehicle_id" required>{% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}</select></label><label>Modelo<select name="template_id" required>{% for x in modelos %}<option value="{{x.id}}">{{x.nome}}</option>{% endfor %}</select></label><label>Início<input type="date" name="data_inicio"></label><label>Término<input type="date" name="data_fim"></label><label>Valor locação<input type="number" step="0.01" name="valor_locacao"></label><label>Caução<input type="number" step="0.01" name="caucao"></label><label>Franquia<input type="number" step="0.01" name="franquia"></label><label>Limite km<input type="number" name="limite_km"></label><label>Valor km excedente<input type="number" step="0.01" name="valor_km_excedente"></label><button>Gerar contrato</button></form></section><section class="card"><h2>Contratos gerados</h2><table><tr><th>#</th><th>Motorista</th><th>Veículo</th><th>Período</th><th>Valor</th><th>Status</th></tr>{% for x in items %}<tr><td><a href="{{url_for('contrato_detalhe',id=x.id)}}">{{x.id}}</a></td><td>{{x.driver.nome}}</td><td>{{x.vehicle.placa}}</td><td>{{x.data_inicio}} a {{x.data_fim}}</td><td>R$ {{x.valor_locacao}}</td><td><span class="badge">{{x.status}}</span></td></tr>{% else %}<tr><td colspan="6">Nenhum contrato.</td></tr>{% endfor %}</table></section>{% endblock %}
+{% extends 'base.html' %}
+{% block heading %}Contratos inteligentes{% endblock %}
+{% block subheading %}Selecione motorista, veículo e modelo; digite apenas condições variáveis.{% endblock %}
+{% block content %}
+<section class="card">
+ <h2>Novo contrato</h2>
+ {% if motoristas and veiculos and modelos %}
+ <form method="post" class="form-grid">
+  <label>Motorista
+   <select name="driver_id" required>
+    {% for x in motoristas %}<option value="{{x.id}}">{{x.nome}}</option>{% endfor %}
+   </select>
+  </label>
+  <label>Veículo
+   <select name="vehicle_id" required>
+    {% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}
+   </select>
+  </label>
+  <label>Modelo
+   <select name="template_id" required>
+    {% for x in modelos %}<option value="{{x.id}}">{{x.nome}}</option>{% endfor %}
+   </select>
+  </label>
+  <label>Início<input type="date" name="data_inicio"></label>
+  <label>Término<input type="date" name="data_fim"></label>
+  <label>Valor locação<input type="number" step="0.01" name="valor_locacao"></label>
+  <label>Caução<input type="number" step="0.01" name="caucao"></label>
+  <label>Franquia<input type="number" step="0.01" name="franquia"></label>
+  <label>Limite km<input type="number" name="limite_km"></label>
+  <label>Valor km excedente<input type="number" step="0.01" name="valor_km_excedente"></label>
+  <button>Gerar contrato</button>
+ </form>
+ {% else %}
+ <p class="hint">Para gerar um contrato, é necessário ter motorista ativo, veículo disponível e modelo de contrato ativo.</p>
+ {% endif %}
+</section>
+
+<section class="card">
+ <h2>Contratos gerados</h2>
+ <table>
+  <tr><th>#</th><th>Motorista</th><th>Veículo</th><th>Período</th><th>Valor</th><th>Status</th><th>Ações</th></tr>
+  {% for x in items %}
+  <tr>
+   <td><a href="{{url_for('contrato_detalhe',id=x.id)}}">{{x.id}}</a></td>
+   <td>{{x.driver.nome}}</td>
+   <td>{{x.vehicle.placa}}</td>
+   <td>{{x.data_inicio or '-'}} a {{x.data_fim or '-'}}</td>
+   <td>R$ {{x.valor_locacao}}</td>
+   <td><span class="badge {% if x.status=='Cancelado' %}cancelled{% elif x.status=='Ativo' %}ok{% endif %}">{{x.status}}</span></td>
+   <td class="contract-actions">
+    <a class="button small secondary" href="{{url_for('contrato_detalhe',id=x.id)}}">Visualizar</a>
+    {% if x.status=='Ativo' %}
+    <form method="post" action="{{url_for('cancelar_contrato',id=x.id)}}" onsubmit="return confirm('Cancelar o contrato #{{x.id}}? O histórico será mantido e esta ação não poderá ser desfeita.')">
+     <button class="danger small" type="submit">Cancelar</button>
+    </form>
+    {% endif %}
+   </td>
+  </tr>
+  {% else %}<tr><td colspan="7">Nenhum contrato.</td></tr>{% endfor %}
+ </table>
+</section>
+{% endblock %}
