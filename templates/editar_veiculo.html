@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block heading %}Editar veículo{% endblock %}
+{% block subheading %}Altere os dados e a situação operacional do veículo {{v.placa}}.{% endblock %}
+{% block content %}
+<section class="card">
+<form method="post" class="form-grid">
+{% for n,l in [('placa','Placa'),('renavam','Renavam'),('chassi','Chassi'),('marca_modelo','Marca/modelo'),('ano_fabricacao','Ano fabricação'),('ano_modelo','Ano modelo'),('cor','Cor'),('combustivel','Combustível'),('proprietario_legal','Proprietário legal'),('cpf_cnpj_proprietario','CPF/CNPJ proprietário'),('valor_repasse','Repasse'),('limite_km','Limite km'),('valor_km_excedente','Valor km excedente'),('rastreador_id','ID rastreador')] %}
+<label>{{l}}<input name="{{n}}" value="{{getattr(v,n) or ''}}" {% if n=='placa' %}required{% endif %}></label>
+{% endfor %}
+<label>Investidor<select name="investor_id"><option value="">Sem investidor</option>{% for i in investidores %}<option value="{{i.id}}" {% if v.investor_id==i.id %}selected{% endif %}>{{i.nome}}</option>{% endfor %}</select></label>
+<label>Status<select name="status">
+{% for status in ['Disponível','Alugado','Manutenção','Bloqueado','Inativo','Vendido'] %}<option {% if v.status==status %}selected{% endif %}>{{status}}</option>{% endfor %}
+</select></label>
+<div class="wide maintenance-box"><h3>Troca de óleo</h3><label class="check"><input type="checkbox" name="controlar_oleo" value="1" {% if v.controlar_oleo %}checked{% endif %}> Controlar troca de óleo</label><div class="maintenance-fields"><label>Km da última troca<input type="number" name="ultima_troca_oleo_km" min="0" value="{{v.ultima_troca_oleo_km or ''}}"></label><label>Intervalo em km<input type="number" name="intervalo_oleo_km" min="1" value="{{v.intervalo_oleo_km or 10000}}"></label><label>Alertar quando faltarem<input type="number" name="alerta_oleo_km" min="0" value="{{v.alerta_oleo_km if v.alerta_oleo_km is not none else 100}}"></label></div></div>
+<div class="wide actions"><button type="submit">Salvar alterações</button> <a class="button secondary" href="{{url_for('veiculos')}}">Cancelar</a></div>
+</form>
+</section>
+{% endblock %}
