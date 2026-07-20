@@ -188,6 +188,27 @@ def importar_veiculo():
  f=request.files.get('arquivo');
  if not f: flash('Selecione um arquivo.','danger'); return redirect(url_for('veiculos'))
  dados=parse_crlv(extract_text(f)); return render_template('confirmar_veiculo.html',dados=dados,investidores=Investor.query.filter_by(tenant_id=tid()).all())
+
+@app.route('/veiculos/<int:id>/editar',methods=['GET','POST'])
+@login_required
+def editar_veiculo(id):
+ v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if request.method=='POST':
+  for campo in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']:
+   setattr(v,campo,request.form.get(campo))
+  v.investor_id=request.form.get('investor_id') or None
+  v.valor_repasse=request.form.get('valor_repasse') or 0
+  v.limite_km=request.form.get('limite_km') or None
+  v.valor_km_excedente=request.form.get('valor_km_excedente') or 0
+  v.controlar_oleo=bool(request.form.get('controlar_oleo'))
+  v.ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None
+  v.intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000
+  v.alerta_oleo_km=request.form.get('alerta_oleo_km') or 100
+  db.session.commit()
+  flash('Veículo atualizado com sucesso.','success')
+  return redirect(url_for('veiculos'))
+ return render_template('editar_veiculo.html',v=v,investidores=Investor.query.filter_by(tenant_id=tid()).order_by(Investor.nome).all())
+
 @app.route('/veiculos/<int:id>/excluir',methods=['POST'])
 @login_required
 def excluir_veiculo(id):
