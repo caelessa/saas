@@ -42,7 +42,7 @@ class MileageRequest(db.Model):
 class ContractTemplate(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); data_inicio=db.Column(db.String(10)); data_fim=db.Column(db.String(10)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); data_inicio=db.Column(db.String(10)); data_fim=db.Column(db.String(10)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); cancelado_em=db.Column(db.DateTime); motivo_cancelamento=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
@@ -79,17 +79,27 @@ def oil_status(v):
  return {'state':'ok','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
 
 def migrate_schema():
- columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
- additions=[
+ vehicle_columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
+ vehicle_additions=[
   ('controlar_oleo','BOOLEAN DEFAULT FALSE'),
   ('ultima_troca_oleo_km','INTEGER'),
   ('intervalo_oleo_km','INTEGER DEFAULT 10000'),
   ('alerta_oleo_km','INTEGER DEFAULT 100'),
  ]
- for name,definition in additions:
-  if name not in columns:
+ for name,definition in vehicle_additions:
+  if name not in vehicle_columns:
    with db.engine.begin() as conn:
     conn.execute(text(f'ALTER TABLE vehicle ADD COLUMN {name} {definition}'))
+
+ contract_columns={c['name'] for c in inspect(db.engine).get_columns('contract')}
+ contract_additions=[
+  ('cancelado_em','TIMESTAMP'),
+  ('motivo_cancelamento','TEXT'),
+ ]
+ for name,definition in contract_additions:
+  if name not in contract_columns:
+   with db.engine.begin() as conn:
+    conn.execute(text(f'ALTER TABLE contract ADD COLUMN {name} {definition}'))
 
 def seed():
  db.create_all()
@@ -322,15 +332,64 @@ def foto_quilometragem(id):
 @login_required
 def contratos():
  if request.method=='POST':
-  d=Driver.query.filter_by(id=request.form['driver_id'],tenant_id=tid()).first_or_404(); v=Vehicle.query.filter_by(id=request.form['vehicle_id'],tenant_id=tid()).first_or_404(); t=ContractTemplate.query.filter_by(id=request.form['template_id'],tenant_id=tid()).first_or_404()
+  d=Driver.query.filter_by(id=request.form['driver_id'],tenant_id=tid()).first_or_404()
+  v=Vehicle.query.filter_by(id=request.form['vehicle_id'],tenant_id=tid()).first_or_404()
+  t=ContractTemplate.query.filter_by(id=request.form['template_id'],tenant_id=tid(),ativo=True).first_or_404()
+
+  if d.status!='Ativo':
+   flash('Selecione um motorista ativo para gerar o contrato.','danger')
+   return redirect(url_for('contratos'))
+  if v.status!='Disponível':
+   flash(f'O veículo {v.placa} não está disponível para um novo contrato.','danger')
+   return redirect(url_for('contratos'))
+  contrato_ativo=Contract.query.filter_by(tenant_id=tid(),vehicle_id=v.id,status='Ativo').first()
+  if contrato_ativo:
+   flash(f'O veículo {v.placa} já possui o contrato ativo #{contrato_ativo.id}.','danger')
+   return redirect(url_for('contratos'))
+
   repl={'motorista_nome':d.nome,'motorista_cpf':d.cpf or '','motorista_cnh':d.numero_cnh or '','veiculo_modelo':v.marca_modelo or '','veiculo_placa':v.placa,'veiculo_renavam':v.renavam or '','valor_locacao':request.form.get('valor_locacao',''),'caucao':request.form.get('caucao',''),'data_inicio':request.form.get('data_inicio',''),'data_fim':request.form.get('data_fim',''),'limite_km':request.form.get('limite_km','Sem limite'),'valor_km_excedente':request.form.get('valor_km_excedente','0')}
   texto=t.conteudo
   for k,val in repl.items(): texto=texto.replace('{{'+k+'}}',str(val))
-  c=Contract(tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,data_inicio=repl['data_inicio'],data_fim=repl['data_fim'],valor_locacao=request.form.get('valor_locacao') or 0,caucao=request.form.get('caucao') or 0,franquia=request.form.get('franquia') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,texto_final=texto); db.session.add(c); v.status='Alugado'; db.session.commit(); flash('Contrato gerado.','success'); return redirect(url_for('contrato_detalhe',id=c.id))
- return render_template('contratos.html',items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).all())
+  c=Contract(tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,data_inicio=repl['data_inicio'],data_fim=repl['data_fim'],valor_locacao=request.form.get('valor_locacao') or 0,caucao=request.form.get('caucao') or 0,franquia=request.form.get('franquia') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,texto_final=texto)
+  db.session.add(c)
+  v.status='Alugado'
+  db.session.commit()
+  flash('Contrato gerado.','success')
+  return redirect(url_for('contrato_detalhe',id=c.id))
+
+ return render_template(
+  'contratos.html',
+  items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()).all(),
+  motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),
+  veiculos=Vehicle.query.filter_by(tenant_id=tid(),status='Disponível').order_by(Vehicle.placa).all(),
+  modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).order_by(ContractTemplate.nome).all(),
+ )
+
 @app.route('/contratos/<int:id>')
 @login_required
-def contrato_detalhe(id): return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
+def contrato_detalhe(id):
+ return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
+
+@app.route('/contratos/<int:id>/cancelar',methods=['POST'])
+@login_required
+def cancelar_contrato(id):
+ c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if c.status!='Ativo':
+  flash(f'O contrato #{c.id} já está {c.status.lower()} e não pode ser cancelado novamente.','danger')
+  return redirect(url_for('contrato_detalhe',id=c.id))
+
+ c.status='Cancelado'
+ c.cancelado_em=datetime.utcnow()
+ c.motivo_cancelamento=(request.form.get('motivo_cancelamento') or '').strip() or None
+
+ # Só devolve para Disponível quando o veículo ainda está marcado como Alugado.
+ # Assim, um veículo já colocado como Inativo, Vendido ou em Manutenção não é reativado.
+ if c.vehicle and c.vehicle.status=='Alugado':
+  c.vehicle.status='Disponível'
+
+ db.session.commit()
+ flash(f'Contrato #{c.id} cancelado. O histórico foi preservado.','success')
+ return redirect(url_for('contrato_detalhe',id=c.id))
 
 @app.route('/documentos',methods=['GET','POST'])
 @login_required
