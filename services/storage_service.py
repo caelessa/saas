@@ -121,6 +121,42 @@ class StorageService:
             except OSError:
                 pass
 
+
+    def exists(self, storage_key: str) -> bool:
+        """Informa se uma chave existe sem baixar o arquivo inteiro."""
+        if not storage_key:
+            return False
+        storage_key = self._normalize_key(storage_key)
+        if self.using_r2:
+            try:
+                self._client.head_object(Bucket=self.bucket_name, Key=storage_key)
+                return True
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code in {"NoSuchKey", "404", "NotFound"}:
+                    return False
+                raise
+        return (self.local_root / storage_key).exists()
+
+    def tenant_usage(self, tenant_id: int) -> dict:
+        """Conta objetos e bytes sob o prefixo da locadora."""
+        prefix = f"{tenant_id}/"
+        if self.using_r2:
+            count = 0
+            total_bytes = 0
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    count += 1
+                    total_bytes += int(obj.get("Size", 0))
+            return {"objects": count, "bytes": total_bytes}
+
+        base = self.local_root / str(tenant_id)
+        if not base.exists():
+            return {"objects": 0, "bytes": 0}
+        files = [p for p in base.rglob("*") if p.is_file()]
+        return {"objects": len(files), "bytes": sum(p.stat().st_size for p in files)}
+
     def check_connection(self) -> bool:
         """Valida credenciais e acesso ao bucket sem criar ou apagar objetos."""
         if not self.using_r2:
