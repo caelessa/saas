@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Armazenamento | Frota Fácil{% endblock %}
+{% block heading %}Saúde do armazenamento{% endblock %}
+{% block subheading %}Integridade dos documentos, fotos e backups da locadora{% endblock %}
+{% block content %}
+<div class="cards">
+ <div class="card"><small>Provedor</small><strong>{{ storage_backend }}</strong></div>
+ <div class="card"><small>Conexão</small><strong>{{ "Saudável" if conectado else "Indisponível" }}</strong></div>
+ <div class="card"><small>Objetos da locadora</small><strong>{{ uso.objects }}</strong></div>
+ <div class="card"><small>Espaço utilizado</small><strong>{{ "%.2f"|format(uso.bytes / 1024 / 1024) }} MB</strong></div>
+</div>
+<section class="panel">
+ <div class="panel-head"><div><h2>Integridade dos arquivos</h2><p>{{ referencias_total }} referências verificadas</p></div></div>
+ {% if erro_verificacao %}<div class="flash danger">Erro de conexão: {{ erro_verificacao }}</div>{% endif %}
+ {% if ausentes %}
+ <div class="flash danger">{{ ausentes|length }} arquivo(s) referenciado(s) não foram encontrados.</div>
+ <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Nome</th><th>Chave</th></tr></thead><tbody>
+ {% for item in ausentes %}<tr><td>{{item.tipo}}</td><td>{{item.nome}}</td><td><small>{{item.chave}}</small></td></tr>{% endfor %}
+ </tbody></table></div>
+ {% else %}<div class="flash success">Todas as referências verificadas estão disponíveis.</div>{% endif %}
+</section>
+<section class="panel">
+ <div class="panel-head"><div><h2>Backup lógico da locadora</h2><p>Inclui cadastros e registros do banco. Os arquivos continuam no R2.</p></div></div>
+ <div style="display:flex;gap:12px;flex-wrap:wrap">
+  <form method="post" action="{{url_for('criar_backup_tenant')}}"><button type="submit">Criar backup no R2</button></form>
+  <a class="button secondary" href="{{url_for('baixar_backup_tenant')}}">Baixar backup agora</a>
+ </div>
+ {% if backups %}
+ <div class="table-wrap" style="margin-top:18px"><table><thead><tr><th>Backup</th><th>Tamanho</th><th>Data UTC</th></tr></thead><tbody>
+ {% for b in backups %}<tr><td>{{b.chave.split('/')[-1]}}</td><td>{{"%.1f"|format(b.tamanho/1024)}} KB</td><td>{{b.data.strftime('%d/%m/%Y %H:%M')}}</td></tr>{% endfor %}
+ </tbody></table></div>
+ {% else %}<p style="margin-top:16px">Nenhum backup foi criado ainda.</p>{% endif %}
+</section>
+<section class="panel">
+ <h2>Importante</h2>
+ <p>Este backup é uma cópia lógica dos dados da locadora. Ele não substitui o backup completo do PostgreSQL/Neon. A restauração automática não foi incluída nesta versão para evitar sobrescrever dados sem validação.</p>
+</section>
+{% endblock %}
