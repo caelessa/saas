@@ -221,15 +221,22 @@ def excluir_veiculo(id):
   flash('Este veículo possui contrato(s) vinculado(s) e não pode ser excluído. Altere o status para Vendido ou Inativo para preservar o histórico.','danger')
   return redirect(url_for('veiculos'))
 
- # Remove os arquivos das fotos de quilometragem antes dos registros.
+ # Remove as fotos de quilometragem antes dos registros.
+ # Fotos novas ficam no Cloudflare R2; nomes antigos sem "/" continuam
+ # compatíveis com o armazenamento local usado anteriormente.
  solicitacoes=MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=v.id).all()
  for solicitacao in solicitacoes:
-  if solicitacao.photo:
-   foto=UPLOAD / solicitacao.photo
-   try:
-    if foto.exists(): foto.unlink()
-   except OSError:
-    app.logger.warning('Não foi possível remover a foto %s',foto)
+  if not solicitacao.photo:
+   continue
+  try:
+   if '/' in solicitacao.photo:
+    storage.delete(solicitacao.photo)
+   else:
+    foto=UPLOAD/str(solicitacao.tenant_id)/'odometros'/solicitacao.photo
+    if foto.exists():
+     foto.unlink()
+  except Exception:
+   app.logger.warning('Não foi possível remover a foto %s',solicitacao.photo)
 
  # Remove dados operacionais dependentes do veículo.
  MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=v.id).delete(synchronize_session=False)
@@ -298,12 +305,26 @@ def registrar_quilometragem_publica(token):
   ext=Path(secure_filename(foto.filename)).suffix.lower()
   if ext not in ('.jpg','.jpeg','.png','.webp'):
    flash('Envie uma foto JPG, PNG ou WEBP.','danger'); return render_template('quilometragem_publica.html',req=req,expirado=False)
-  pasta=UPLOAD/str(req.tenant_id)/'odometros'; pasta.mkdir(parents=True,exist_ok=True)
-  nome=f'{uuid.uuid4().hex}{ext}'; foto.save(pasta/nome)
-  req.km=km; req.photo=nome; req.notes=request.form.get('observacoes'); req.status='Concluído'; req.submitted_at=datetime.utcnow()
-  req.vehicle.km_atual=km
-  db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,km=km,origem='Motorista via link'))
-  db.session.commit()
+  chave=f'{req.tenant_id}/odometros/{uuid.uuid4().hex}{ext}'
+  try:
+   storage.upload(foto.stream,chave,foto.mimetype)
+   req.km=km
+   req.photo=chave
+   req.notes=request.form.get('observacoes')
+   req.status='Concluído'
+   req.submitted_at=datetime.utcnow()
+   req.vehicle.km_atual=km
+   db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,km=km,origem='Motorista via link'))
+   db.session.commit()
+  except Exception:
+   db.session.rollback()
+   app.logger.exception('Falha ao armazenar foto do painel')
+   try:
+    storage.delete(chave)
+   except Exception:
+    pass
+   flash('Não foi possível armazenar a foto do painel. Tente novamente.','danger')
+   return render_template('quilometragem_publica.html',req=req,expirado=False)
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
 
@@ -317,8 +338,34 @@ def quilometragens():
 @login_required
 def foto_quilometragem(id):
  req=MileageRequest.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- if not req.photo: abort(404)
- return send_from_directory(UPLOAD/str(tid())/'odometros',req.photo)
+ if not req.photo:
+  abort(404)
+
+ # Compatibilidade com fotos antigas salvas localmente antes do R2.
+ if '/' not in req.photo:
+  return send_from_directory(UPLOAD/str(tid())/'odometros',req.photo)
+
+ try:
+  conteudo=storage.download(req.photo)
+ except StorageNotFoundError:
+  abort(404)
+ except Exception:
+  app.logger.exception('Falha ao baixar foto de quilometragem %s',req.id)
+  abort(503)
+
+ extensao=Path(req.photo).suffix.lower()
+ mimetypes={
+  '.jpg':'image/jpeg',
+  '.jpeg':'image/jpeg',
+  '.png':'image/png',
+  '.webp':'image/webp',
+ }
+ return send_file(
+  BytesIO(conteudo),
+  mimetype=mimetypes.get(extensao,'application/octet-stream'),
+  download_name=f'painel_{req.vehicle_id}_{req.id}{extensao}',
+  as_attachment=False,
+ )
 
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
