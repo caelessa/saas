@@ -1,7 +1,7 @@
 import os, uuid, re
 from datetime import datetime, date, timedelta
 from pathlib import Path
-from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
 from sqlalchemy import inspect, text
@@ -9,8 +9,11 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from services.document_reader import extract_text, parse_cnh, parse_crlv
+from services.storage_service import StorageService, StorageNotFoundError
+from io import BytesIO
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
+storage=StorageService(UPLOAD)
 app=Flask(__name__)
 app.config['SECRET_KEY']=os.getenv('SECRET_KEY','dev-change-me')
 url=os.getenv('DATABASE_URL','sqlite:///'+str(BASE/'frota_facil.db'))
@@ -42,7 +45,7 @@ class MileageRequest(db.Model):
 class ContractTemplate(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); data_inicio=db.Column(db.String(10)); data_fim=db.Column(db.String(10)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); cancelado_em=db.Column(db.DateTime); motivo_cancelamento=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); data_inicio=db.Column(db.String(10)); data_fim=db.Column(db.String(10)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
@@ -79,27 +82,17 @@ def oil_status(v):
  return {'state':'ok','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
 
 def migrate_schema():
- vehicle_columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
- vehicle_additions=[
+ columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
+ additions=[
   ('controlar_oleo','BOOLEAN DEFAULT FALSE'),
   ('ultima_troca_oleo_km','INTEGER'),
   ('intervalo_oleo_km','INTEGER DEFAULT 10000'),
   ('alerta_oleo_km','INTEGER DEFAULT 100'),
  ]
- for name,definition in vehicle_additions:
-  if name not in vehicle_columns:
+ for name,definition in additions:
+  if name not in columns:
    with db.engine.begin() as conn:
     conn.execute(text(f'ALTER TABLE vehicle ADD COLUMN {name} {definition}'))
-
- contract_columns={c['name'] for c in inspect(db.engine).get_columns('contract')}
- contract_additions=[
-  ('cancelado_em','TIMESTAMP'),
-  ('motivo_cancelamento','TEXT'),
- ]
- for name,definition in contract_additions:
-  if name not in contract_columns:
-   with db.engine.begin() as conn:
-    conn.execute(text(f'ALTER TABLE contract ADD COLUMN {name} {definition}'))
 
 def seed():
  db.create_all()
@@ -245,11 +238,10 @@ def excluir_veiculo(id):
  documentos=Document.query.filter_by(tenant_id=tid(),entidade='veiculo',entidade_id=v.id).all()
  for documento in documentos:
   if documento.arquivo:
-   arquivo=UPLOAD / documento.arquivo
    try:
-    if arquivo.exists(): arquivo.unlink()
-   except OSError:
-    app.logger.warning('Não foi possível remover o documento %s',arquivo)
+    storage.delete(documento.arquivo)
+   except Exception:
+    app.logger.warning('Não foi possível remover o documento %s',documento.arquivo)
   db.session.delete(documento)
  db.session.delete(v)
  db.session.commit()
@@ -332,76 +324,71 @@ def foto_quilometragem(id):
 @login_required
 def contratos():
  if request.method=='POST':
-  d=Driver.query.filter_by(id=request.form['driver_id'],tenant_id=tid()).first_or_404()
-  v=Vehicle.query.filter_by(id=request.form['vehicle_id'],tenant_id=tid()).first_or_404()
-  t=ContractTemplate.query.filter_by(id=request.form['template_id'],tenant_id=tid(),ativo=True).first_or_404()
-
-  if d.status!='Ativo':
-   flash('Selecione um motorista ativo para gerar o contrato.','danger')
-   return redirect(url_for('contratos'))
-  if v.status!='Disponível':
-   flash(f'O veículo {v.placa} não está disponível para um novo contrato.','danger')
-   return redirect(url_for('contratos'))
-  contrato_ativo=Contract.query.filter_by(tenant_id=tid(),vehicle_id=v.id,status='Ativo').first()
-  if contrato_ativo:
-   flash(f'O veículo {v.placa} já possui o contrato ativo #{contrato_ativo.id}.','danger')
-   return redirect(url_for('contratos'))
-
+  d=Driver.query.filter_by(id=request.form['driver_id'],tenant_id=tid()).first_or_404(); v=Vehicle.query.filter_by(id=request.form['vehicle_id'],tenant_id=tid()).first_or_404(); t=ContractTemplate.query.filter_by(id=request.form['template_id'],tenant_id=tid()).first_or_404()
   repl={'motorista_nome':d.nome,'motorista_cpf':d.cpf or '','motorista_cnh':d.numero_cnh or '','veiculo_modelo':v.marca_modelo or '','veiculo_placa':v.placa,'veiculo_renavam':v.renavam or '','valor_locacao':request.form.get('valor_locacao',''),'caucao':request.form.get('caucao',''),'data_inicio':request.form.get('data_inicio',''),'data_fim':request.form.get('data_fim',''),'limite_km':request.form.get('limite_km','Sem limite'),'valor_km_excedente':request.form.get('valor_km_excedente','0')}
   texto=t.conteudo
   for k,val in repl.items(): texto=texto.replace('{{'+k+'}}',str(val))
-  c=Contract(tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,data_inicio=repl['data_inicio'],data_fim=repl['data_fim'],valor_locacao=request.form.get('valor_locacao') or 0,caucao=request.form.get('caucao') or 0,franquia=request.form.get('franquia') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,texto_final=texto)
-  db.session.add(c)
-  v.status='Alugado'
-  db.session.commit()
-  flash('Contrato gerado.','success')
-  return redirect(url_for('contrato_detalhe',id=c.id))
-
- return render_template(
-  'contratos.html',
-  items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()).all(),
-  motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),
-  veiculos=Vehicle.query.filter_by(tenant_id=tid(),status='Disponível').order_by(Vehicle.placa).all(),
-  modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).order_by(ContractTemplate.nome).all(),
- )
-
+  c=Contract(tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,data_inicio=repl['data_inicio'],data_fim=repl['data_fim'],valor_locacao=request.form.get('valor_locacao') or 0,caucao=request.form.get('caucao') or 0,franquia=request.form.get('franquia') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,texto_final=texto); db.session.add(c); v.status='Alugado'; db.session.commit(); flash('Contrato gerado.','success'); return redirect(url_for('contrato_detalhe',id=c.id))
+ return render_template('contratos.html',items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).all())
 @app.route('/contratos/<int:id>')
 @login_required
-def contrato_detalhe(id):
- return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
-
-@app.route('/contratos/<int:id>/cancelar',methods=['POST'])
-@login_required
-def cancelar_contrato(id):
- c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- if c.status!='Ativo':
-  flash(f'O contrato #{c.id} já está {c.status.lower()} e não pode ser cancelado novamente.','danger')
-  return redirect(url_for('contrato_detalhe',id=c.id))
-
- c.status='Cancelado'
- c.cancelado_em=datetime.utcnow()
- c.motivo_cancelamento=(request.form.get('motivo_cancelamento') or '').strip() or None
-
- # Só devolve para Disponível quando o veículo ainda está marcado como Alugado.
- # Assim, um veículo já colocado como Inativo, Vendido ou em Manutenção não é reativado.
- if c.vehicle and c.vehicle.status=='Alugado':
-  c.vehicle.status='Disponível'
-
- db.session.commit()
- flash(f'Contrato #{c.id} cancelado. O histórico foi preservado.','success')
- return redirect(url_for('contrato_detalhe',id=c.id))
+def contrato_detalhe(id): return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
 
 @app.route('/documentos',methods=['GET','POST'])
 @login_required
 def documentos():
  if request.method=='POST':
-  f=request.files['arquivo']; nome=f'{uuid.uuid4().hex}_{secure_filename(f.filename)}'; pasta=UPLOAD/str(tid()); pasta.mkdir(exist_ok=True); f.save(pasta/nome)
-  db.session.add(Document(tenant_id=tid(),tipo=request.form['tipo'],entidade=request.form['entidade'],entidade_id=request.form.get('entidade_id') or None,nome_original=f.filename,arquivo=nome)); db.session.commit(); flash('Documento armazenado.','success'); return redirect(url_for('documentos'))
- return render_template('documentos.html',items=Document.query.filter_by(tenant_id=tid()).order_by(Document.id.desc()),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all())
+  f=request.files.get('arquivo')
+  if not f or not f.filename:
+   flash('Selecione um arquivo.','danger')
+   return redirect(url_for('documentos'))
+  nome_original=secure_filename(f.filename)
+  if not nome_original:
+   flash('Nome de arquivo inválido.','danger')
+   return redirect(url_for('documentos'))
+  chave=f'{tid()}/documentos/{uuid.uuid4().hex}_{nome_original}'
+  try:
+   storage.upload(f.stream,chave,f.mimetype)
+   db.session.add(Document(tenant_id=tid(),tipo=request.form['tipo'],entidade=request.form['entidade'],entidade_id=request.form.get('entidade_id') or None,nome_original=nome_original,arquivo=chave))
+   db.session.commit()
+  except Exception:
+   db.session.rollback()
+   app.logger.exception('Falha ao armazenar documento')
+   try: storage.delete(chave)
+   except Exception: pass
+   flash('Não foi possível armazenar o documento. Verifique a configuração do Cloudflare R2.','danger')
+   return redirect(url_for('documentos'))
+  flash('Documento armazenado de forma persistente.','success')
+  return redirect(url_for('documentos'))
+ return render_template('documentos.html',items=Document.query.filter_by(tenant_id=tid()).order_by(Document.id.desc()),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),storage_backend=storage.backend_name)
+
 @app.route('/documentos/<int:id>/baixar')
 @login_required
 def baixar_documento(id):
- d=Document.query.filter_by(id=id,tenant_id=tid()).first_or_404(); return send_from_directory(UPLOAD/str(tid()),d.arquivo,as_attachment=True,download_name=d.nome_original)
+ d=Document.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ try:
+  conteudo=storage.download(d.arquivo)
+ except StorageNotFoundError:
+  abort(404)
+ except Exception:
+  app.logger.exception('Falha ao baixar documento %s',d.id)
+  abort(503)
+ return send_file(BytesIO(conteudo),as_attachment=True,download_name=d.nome_original,mimetype='application/octet-stream')
+
+@app.route('/documentos/<int:id>/excluir',methods=['POST'])
+@login_required
+def excluir_documento(id):
+ d=Document.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ try:
+  storage.delete(d.arquivo)
+  db.session.delete(d)
+  db.session.commit()
+  flash('Documento excluído.','success')
+ except Exception:
+  db.session.rollback()
+  app.logger.exception('Falha ao excluir documento %s',d.id)
+  flash('Não foi possível excluir o documento.','danger')
+ return redirect(url_for('documentos'))
 
 @app.route('/manutencoes',methods=['GET','POST'])
 @login_required
