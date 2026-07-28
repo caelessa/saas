@@ -1,5 +1,5 @@
-import os, uuid, re
-from datetime import datetime, date, timedelta
+import os, uuid, re, json
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from services.document_reader import extract_text, parse_cnh, parse_crlv
 from services.storage_service import StorageService, StorageNotFoundError
 from io import BytesIO
+from decimal import Decimal
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
 storage=StorageService(UPLOAD)
@@ -58,6 +59,34 @@ class Integration(db.Model):
 def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
 def tid(): return current_user.tenant_id
+
+
+def json_safe(value):
+ if value is None or isinstance(value,(str,int,float,bool)):
+  return value
+ if isinstance(value,(datetime,date)):
+  return value.isoformat()
+ if isinstance(value,Decimal):
+  return str(value)
+ return str(value)
+
+def model_rows(model, tenant_id):
+ rows=[]
+ for item in model.query.filter_by(tenant_id=tenant_id).all():
+  rows.append({column.name:json_safe(getattr(item,column.name)) for column in item.__table__.columns})
+ return rows
+
+def tenant_backup_payload(tenant_id):
+ tenant=Tenant.query.get(tenant_id)
+ models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,Document,Maintenance,Alert,Integration]
+ return {
+  'formato':'frota-facil-tenant-backup-v1',
+  'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
+  'tenant':{'id':tenant.id,'nome':tenant.nome,'cnpj':tenant.cnpj,'ativo':tenant.ativo},
+  'usuarios':model_rows(User,tenant_id),
+  'dados':{model.__tablename__:model_rows(model,tenant_id) for model in models},
+ }
+
 
 def normalize_phone(value):
  digits=re.sub(r'\D','',value or '')
@@ -443,6 +472,78 @@ def manutencoes():
  if request.method=='POST':
   m=Maintenance(tenant_id=tid(),vehicle_id=request.form['vehicle_id'],tipo=request.form['tipo'],data=request.form.get('data'),km=request.form.get('km') or None,custo=request.form.get('custo') or 0,proxima_km=request.form.get('proxima_km') or None,proxima_data=request.form.get('proxima_data'),observacoes=request.form.get('observacoes')); db.session.add(m); db.session.commit(); flash('Manutenção registrada.','success'); return redirect(url_for('manutencoes'))
  return render_template('manutencoes.html',items=Maintenance.query.filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all())
+
+@app.route('/administracao/armazenamento')
+@login_required
+def administracao_armazenamento():
+ documentos=Document.query.filter_by(tenant_id=tid()).all()
+ fotos=MileageRequest.query.options(joinedload(MileageRequest.vehicle)).filter_by(tenant_id=tid(),status='Concluído').filter(MileageRequest.photo.isnot(None)).all()
+ referencias=[]
+ for documento in documentos:
+  referencias.append({'tipo':'Documento','nome':documento.nome_original or documento.arquivo,'chave':documento.arquivo})
+ for foto in fotos:
+  referencias.append({'tipo':'Foto do painel','nome':f'{foto.vehicle.placa if foto.vehicle else "Veículo"} — leitura #{foto.id}','chave':foto.photo})
+
+ ausentes=[]
+ erro_verificacao=None
+ try:
+  for item in referencias:
+   if '/' not in (item['chave'] or ''):
+    existe=(UPLOAD/str(tid())/'odometros'/item['chave']).exists()
+   else:
+    existe=storage.exists(item['chave'])
+   if not existe:
+    ausentes.append(item)
+ except Exception as exc:
+  app.logger.exception('Falha na verificação de integridade')
+  erro_verificacao=str(exc)
+
+ try:
+  conectado=storage.check_connection() if storage.using_r2 else False
+  uso=storage.tenant_usage(tid())
+ except Exception as exc:
+  app.logger.exception('Falha ao consultar armazenamento')
+  conectado=False
+  uso={'objects':0,'bytes':0}
+  if not erro_verificacao:
+   erro_verificacao=str(exc)
+
+ backups=[]
+ try:
+  if storage.using_r2:
+   prefix=f'{tid()}/backups/'
+   pagina=storage._client.list_objects_v2(Bucket=storage.bucket_name,Prefix=prefix)
+   backups=sorted(
+    [{'chave':o['Key'],'tamanho':o['Size'],'data':o['LastModified']} for o in pagina.get('Contents',[])],
+    key=lambda x:x['data'],reverse=True
+   )[:10]
+ except Exception:
+  app.logger.exception('Falha ao listar backups')
+
+ return render_template('armazenamento.html',storage_backend=storage.backend_name,conectado=conectado,uso=uso,referencias_total=len(referencias),ausentes=ausentes,erro_verificacao=erro_verificacao,backups=backups)
+
+@app.route('/administracao/backup/criar',methods=['POST'])
+@login_required
+def criar_backup_tenant():
+ payload=tenant_backup_payload(tid())
+ conteudo=json.dumps(payload,ensure_ascii=False,indent=2).encode('utf-8')
+ chave=f'{tid()}/backups/backup_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json'
+ try:
+  storage.upload(BytesIO(conteudo),chave,'application/json')
+  flash('Backup lógico criado no Cloudflare R2.','success')
+ except Exception:
+  app.logger.exception('Falha ao criar backup')
+  flash('Não foi possível criar o backup.','danger')
+ return redirect(url_for('administracao_armazenamento'))
+
+@app.route('/administracao/backup/baixar')
+@login_required
+def baixar_backup_tenant():
+ payload=tenant_backup_payload(tid())
+ conteudo=json.dumps(payload,ensure_ascii=False,indent=2).encode('utf-8')
+ nome=f'backup_frota_facil_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json'
+ return send_file(BytesIO(conteudo),as_attachment=True,download_name=nome,mimetype='application/json')
+
 @app.route('/integracoes')
 @login_required
 def integracoes(): return render_template('integracoes.html')
