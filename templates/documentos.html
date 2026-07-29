@@ -14,11 +14,16 @@
   </form>
 </section>
 <section class="card">
+  <form method="get" style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+    <input name="q" value="{{q or ''}}" placeholder="Pesquisar por identificador, CNH, Renavam, nome do arquivo ou tipo" style="min-width:320px;flex:1">
+    <button type="submit">Pesquisar</button>
+    {% if q %}<a class="button secondary" href="{{url_for('documentos')}}">Limpar</a>{% endif %}
+  </form>
   <table>
-    <tr><th>Tipo</th><th>Arquivo</th><th>Relação</th><th>Data</th><th>Ações</th></tr>
+    <tr><th>Identificador</th><th>Tipo</th><th>Arquivo</th><th>Relação</th><th>Documento</th><th>Data</th><th>Ações</th></tr>
     {% for x in items %}
     <tr>
-      <td>{{x.tipo}}</td><td>{{x.nome_original}}</td><td>{{x.entidade}} #{{x.entidade_id or '-'}}</td><td>{{x.criado_em.strftime('%d/%m/%Y')}}</td>
+      <td><strong>{{x.identificador or "-"}}</strong></td><td>{{x.tipo}}</td><td>{{x.nome_original}}</td><td>{{x.entidade}} #{{x.entidade_id or "-"}}</td><td>{{x.numero_documento or "-"}}</td><td>{{x.criado_em.strftime("%d/%m/%Y")}}</td>
       <td>
         <a class="button small" href="{{url_for('baixar_documento',id=x.id)}}">Baixar</a>
         <form method="post" action="{{url_for('excluir_documento',id=x.id)}}" style="display:inline" onsubmit="return confirm('Excluir este documento definitivamente?')">
@@ -26,7 +31,7 @@
         </form>
       </td>
     </tr>
-    {% else %}<tr><td colspan="5">Nenhum documento.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="7">Nenhum documento.</td></tr>{% endfor %}
   </table>
 </section>
 {% endblock %}
