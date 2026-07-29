@@ -1,4 +1,4 @@
-import os, uuid, re, json
+import os, uuid, re, json, hashlib, unicodedata
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
@@ -48,7 +48,7 @@ class ContractTemplate(db.Model):
 class Contract(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); data_inicio=db.Column(db.String(10)); data_fim=db.Column(db.String(10)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
 class Document(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); observacoes=db.Column(db.Text); vehicle=db.relationship('Vehicle')
 class Alert(db.Model):
@@ -88,6 +88,50 @@ def tenant_backup_payload(tenant_id):
  }
 
 
+
+def slug_documento(value, fallback='SEM-NOME'):
+ value=unicodedata.normalize('NFKD',value or '').encode('ascii','ignore').decode('ascii')
+ value=re.sub(r'[^A-Za-z0-9]+','-',value.upper()).strip('-')
+ return value[:60] or fallback
+
+def extensao_segura(nome_original):
+ ext=Path(nome_original or '').suffix.lower()
+ return ext if ext in {'.pdf','.png','.jpg','.jpeg','.webp'} else '.bin'
+
+def identificador_documento(tipo, entidade_id, referencia, ano=None):
+ tipo=slug_documento(tipo,'DOC')
+ referencia=slug_documento(referencia)
+ ano=str(ano or datetime.now().year)
+ return f'{tipo}-{int(entidade_id):06d}-{referencia}-{ano}'
+
+def armazenar_documento_cadastro(tipo, entidade, entidade_id, referencia, numero_documento, nome_original, temp_key, mimetype, ano=None):
+ """Move o arquivo temporário do OCR para a pasta definitiva e registra no banco."""
+ if not temp_key:
+  return None
+ prefixo=f'{tid()}/temporarios/'
+ if not temp_key.startswith(prefixo):
+  raise ValueError('Chave temporária inválida.')
+ conteudo=storage.download(temp_key)
+ identificador=identificador_documento(tipo,entidade_id,referencia,ano)
+ ext=extensao_segura(nome_original)
+ chave=f'{tid()}/documentos/{entidade.lower()}s/{entidade_id}/{tipo.lower()}/{identificador}{ext}'
+ storage.upload(BytesIO(conteudo),chave,mimetype or 'application/octet-stream')
+ documento=Document(
+  tenant_id=tid(),
+  tipo=tipo,
+  entidade=entidade,
+  entidade_id=entidade_id,
+  identificador=identificador,
+  numero_documento=(numero_documento or '').strip() or None,
+  nome_original=secure_filename(nome_original or f'{identificador}{ext}'),
+  arquivo=chave,
+  hash_sha256=hashlib.sha256(conteudo).hexdigest(),
+  status='Ativo',
+ )
+ db.session.add(documento)
+ storage.delete(temp_key)
+ return documento
+
 def normalize_phone(value):
  digits=re.sub(r'\D','',value or '')
  if not digits: return ''
@@ -111,17 +155,29 @@ def oil_status(v):
  return {'state':'ok','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
 
 def migrate_schema():
- columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
- additions=[
+ vehicle_columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
+ vehicle_additions=[
   ('controlar_oleo','BOOLEAN DEFAULT FALSE'),
   ('ultima_troca_oleo_km','INTEGER'),
   ('intervalo_oleo_km','INTEGER DEFAULT 10000'),
   ('alerta_oleo_km','INTEGER DEFAULT 100'),
  ]
- for name,definition in additions:
-  if name not in columns:
+ for name,definition in vehicle_additions:
+  if name not in vehicle_columns:
    with db.engine.begin() as conn:
     conn.execute(text(f'ALTER TABLE vehicle ADD COLUMN {name} {definition}'))
+
+ document_columns={c['name'] for c in inspect(db.engine).get_columns('document')}
+ document_additions=[
+  ('identificador','VARCHAR(180)'),
+  ('numero_documento','VARCHAR(60)'),
+  ('hash_sha256','VARCHAR(64)'),
+  ('status',"VARCHAR(20) DEFAULT 'Ativo'"),
+ ]
+ for name,definition in document_additions:
+  if name not in document_columns:
+   with db.engine.begin() as conn:
+    conn.execute(text(f'ALTER TABLE document ADD COLUMN {name} {definition}'))
 
 def seed():
  db.create_all()
@@ -172,7 +228,29 @@ def dashboard():
 @login_required
 def motoristas():
  if request.method=='POST':
-  d=Driver(tenant_id=tid(),**{k:request.form.get(k) for k in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','email','endereco','status']}); db.session.add(d); db.session.commit(); flash('Motorista cadastrado.','success'); return redirect(url_for('motoristas'))
+  d=Driver(tenant_id=tid(),**{k:request.form.get(k) for k in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','email','endereco','status']})
+  db.session.add(d)
+  try:
+   db.session.flush()
+   armazenar_documento_cadastro(
+    tipo='CNH',
+    entidade='Motorista',
+    entidade_id=d.id,
+    referencia=d.nome,
+    numero_documento=d.numero_cnh,
+    nome_original=request.form.get('_documento_nome'),
+    temp_key=request.form.get('_documento_temp_key'),
+    mimetype=request.form.get('_documento_mimetype'),
+    ano=(d.validade_cnh or '')[-4:] if d.validade_cnh else None,
+   )
+   db.session.commit()
+  except Exception:
+   db.session.rollback()
+   app.logger.exception('Falha ao cadastrar motorista e armazenar CNH')
+   flash('Não foi possível concluir o cadastro e armazenar a CNH. Tente novamente.','danger')
+   return redirect(url_for('motoristas'))
+  flash('Motorista cadastrado e CNH armazenada automaticamente.','success')
+  return redirect(url_for('motoristas'))
  return render_template('motoristas.html',items=Driver.query.filter_by(tenant_id=tid()).order_by(Driver.nome))
 @app.route('/motoristas/importar',methods=['POST'])
 @login_required
@@ -182,14 +260,20 @@ def importar_motorista():
   flash('Selecione um arquivo.','danger')
   return redirect(url_for('motoristas'))
 
- # Libera qualquer conexão que tenha ficado ociosa enquanto o OCR processa.
- # O usuário e a locadora já foram carregados com joinedload no login loader.
- db.session.remove()
+ nome_original=secure_filename(f.filename or 'cnh')
+ mimetype=f.mimetype or 'application/octet-stream'
+ conteudo=f.read()
+ temp_key=f'{tid()}/temporarios/{uuid.uuid4().hex}_{nome_original}'
  try:
-  texto=extract_text(f, document_type='cnh')
+  storage.upload(BytesIO(conteudo),temp_key,mimetype)
+  # Libera a conexão durante o OCR.
+  db.session.remove()
+  texto=extract_text(BytesIO(conteudo), document_type='cnh')
   dados=parse_cnh(texto)
-  return render_template('confirmar_motorista.html',dados=dados)
+  return render_template('confirmar_motorista.html',dados=dados,documento_temp_key=temp_key,documento_nome=nome_original,documento_mimetype=mimetype)
  except Exception as exc:
+  try: storage.delete(temp_key)
+  except Exception: pass
   app.logger.exception('Falha ao processar CNH')
   flash(f'Não foi possível processar a CNH: {exc}','danger')
   return redirect(url_for('motoristas'))
@@ -212,14 +296,52 @@ def investidores():
 def veiculos():
  if request.method=='POST':
   vals={k:request.form.get(k) for k in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']}
-  v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100); db.session.add(v); db.session.flush(); db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=v.km_atual,origem='Cadastro')); db.session.commit(); flash('Veículo cadastrado.','success'); return redirect(url_for('veiculos'))
+  v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100)
+  db.session.add(v)
+  try:
+   db.session.flush()
+   db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=v.km_atual,origem='Cadastro'))
+   armazenar_documento_cadastro(
+    tipo='CRLV',
+    entidade='Veículo',
+    entidade_id=v.id,
+    referencia=v.placa,
+    numero_documento=v.renavam,
+    nome_original=request.form.get('_documento_nome'),
+    temp_key=request.form.get('_documento_temp_key'),
+    mimetype=request.form.get('_documento_mimetype'),
+    ano=v.ano_modelo,
+   )
+   db.session.commit()
+  except Exception:
+   db.session.rollback()
+   app.logger.exception('Falha ao cadastrar veículo e armazenar CRLV')
+   flash('Não foi possível concluir o cadastro e armazenar o CRLV. Tente novamente.','danger')
+   return redirect(url_for('veiculos'))
+  flash('Veículo cadastrado e CRLV armazenado automaticamente.','success')
+  return redirect(url_for('veiculos'))
  return render_template('veiculos.html',items=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),oil_status=oil_status)
 @app.route('/veiculos/importar',methods=['POST'])
 @login_required
 def importar_veiculo():
- f=request.files.get('arquivo');
- if not f: flash('Selecione um arquivo.','danger'); return redirect(url_for('veiculos'))
- dados=parse_crlv(extract_text(f)); return render_template('confirmar_veiculo.html',dados=dados,investidores=Investor.query.filter_by(tenant_id=tid()).all())
+ f=request.files.get('arquivo')
+ if not f or not f.filename:
+  flash('Selecione um arquivo.','danger')
+  return redirect(url_for('veiculos'))
+ nome_original=secure_filename(f.filename or 'crlv')
+ mimetype=f.mimetype or 'application/octet-stream'
+ conteudo=f.read()
+ temp_key=f'{tid()}/temporarios/{uuid.uuid4().hex}_{nome_original}'
+ try:
+  storage.upload(BytesIO(conteudo),temp_key,mimetype)
+  dados=parse_crlv(extract_text(BytesIO(conteudo)))
+  return render_template('confirmar_veiculo.html',dados=dados,investidores=Investor.query.filter_by(tenant_id=tid()).all(),documento_temp_key=temp_key,documento_nome=nome_original,documento_mimetype=mimetype)
+ except Exception as exc:
+  try: storage.delete(temp_key)
+  except Exception: pass
+  app.logger.exception('Falha ao processar CRLV')
+  flash(f'Não foi possível processar o CRLV: {exc}','danger')
+  return redirect(url_for('veiculos'))
 
 @app.route('/veiculos/<int:id>/editar',methods=['GET','POST'])
 @login_required
@@ -424,8 +546,11 @@ def documentos():
    return redirect(url_for('documentos'))
   chave=f'{tid()}/documentos/{uuid.uuid4().hex}_{nome_original}'
   try:
-   storage.upload(f.stream,chave,f.mimetype)
-   db.session.add(Document(tenant_id=tid(),tipo=request.form['tipo'],entidade=request.form['entidade'],entidade_id=request.form.get('entidade_id') or None,nome_original=nome_original,arquivo=chave))
+   conteudo=f.read()
+   storage.upload(BytesIO(conteudo),chave,f.mimetype)
+   entidade_id=request.form.get('entidade_id') or None
+   identificador=identificador_documento(request.form['tipo'],entidade_id or 0,nome_original)
+   db.session.add(Document(tenant_id=tid(),tipo=request.form['tipo'],entidade=request.form['entidade'],entidade_id=entidade_id,identificador=identificador,nome_original=nome_original,arquivo=chave,hash_sha256=hashlib.sha256(conteudo).hexdigest(),status='Ativo'))
    db.session.commit()
   except Exception:
    db.session.rollback()
@@ -436,7 +561,12 @@ def documentos():
    return redirect(url_for('documentos'))
   flash('Documento armazenado de forma persistente.','success')
   return redirect(url_for('documentos'))
- return render_template('documentos.html',items=Document.query.filter_by(tenant_id=tid()).order_by(Document.id.desc()),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),storage_backend=storage.backend_name)
+ q=(request.args.get('q') or '').strip()
+ consulta=Document.query.filter_by(tenant_id=tid())
+ if q:
+  termo=f'%{q}%'
+  consulta=consulta.filter(db.or_(Document.identificador.ilike(termo),Document.numero_documento.ilike(termo),Document.nome_original.ilike(termo),Document.tipo.ilike(termo),Document.entidade.ilike(termo)))
+ return render_template('documentos.html',items=consulta.order_by(Document.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),storage_backend=storage.backend_name,q=q)
 
 @app.route('/documentos/<int:id>/baixar')
 @login_required
