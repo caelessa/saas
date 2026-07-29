@@ -8,6 +8,7 @@ from sqlalchemy import inspect, text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.datastructures import FileStorage
 from services.document_reader import extract_text, parse_cnh, parse_crlv
 from services.storage_service import StorageService, StorageNotFoundError
 from io import BytesIO
@@ -268,7 +269,8 @@ def importar_motorista():
   storage.upload(BytesIO(conteudo),temp_key,mimetype)
   # Libera a conexão durante o OCR.
   db.session.remove()
-  texto=extract_text(BytesIO(conteudo), document_type='cnh')
+  arquivo_ocr=FileStorage(stream=BytesIO(conteudo),filename=nome_original,content_type=mimetype)
+  texto=extract_text(arquivo_ocr, document_type='cnh')
   dados=parse_cnh(texto)
   return render_template('confirmar_motorista.html',dados=dados,documento_temp_key=temp_key,documento_nome=nome_original,documento_mimetype=mimetype)
  except Exception as exc:
@@ -334,7 +336,8 @@ def importar_veiculo():
  temp_key=f'{tid()}/temporarios/{uuid.uuid4().hex}_{nome_original}'
  try:
   storage.upload(BytesIO(conteudo),temp_key,mimetype)
-  dados=parse_crlv(extract_text(BytesIO(conteudo)))
+  arquivo_ocr=FileStorage(stream=BytesIO(conteudo),filename=nome_original,content_type=mimetype)
+  dados=parse_crlv(extract_text(arquivo_ocr))
   return render_template('confirmar_veiculo.html',dados=dados,investidores=Investor.query.filter_by(tenant_id=tid()).all(),documento_temp_key=temp_key,documento_nome=nome_original,documento_mimetype=mimetype)
  except Exception as exc:
   try: storage.delete(temp_key)
