@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block heading %}Modelos de contrato{% endblock %}
+{% block subheading %}Cadastre, versione, ative e escolha o modelo padrão da locadora.{% endblock %}
+{% block content %}
+<section class="card actions">
+  <a class="button" href="{{url_for('novo_modelo_contrato')}}">+ Novo modelo / Upload</a>
+  <form method="post" action="{{url_for('instalar_locadrivers')}}" style="display:inline">
+    <button type="submit">Instalar modelo Locadrivers/LCDVS</button>
+  </form>
+</section>
+<section class="card">
+<table><tr><th>Modelo</th><th>Versão</th><th>Tipo</th><th>Arquivo</th><th>Status</th><th>Padrão</th><th>Ações</th></tr>
+{% for x in items %}<tr>
+<td><strong>{{x.nome}}</strong><br><small>{{x.descricao or ''}}</small></td>
+<td>{{x.versao or 1}}</td><td>{{x.tipo_veiculo or 'Todos'}}</td><td>{{x.nome_original or 'Criado no sistema'}}</td>
+<td><span class="badge">{{'Ativo' if x.ativo else 'Inativo'}}</span></td><td>{{'Sim' if x.padrao else 'Não'}}</td>
+<td>
+<a href="{{url_for('editar_modelo_contrato',id=x.id)}}">Editar / nova versão</a>
+<form method="post" action="{{url_for('alternar_modelo_contrato',id=x.id)}}" style="display:inline"><button type="submit">{{'Inativar' if x.ativo else 'Ativar'}}</button></form>
+{% if x.ativo and not x.padrao %}<form method="post" action="{{url_for('definir_modelo_padrao',id=x.id)}}" style="display:inline"><button type="submit">Definir padrão</button></form>{% endif %}
+</td>
+</tr>{% else %}<tr><td colspan="7">Nenhum modelo cadastrado.</td></tr>{% endfor %}
+</table>
+</section>
+{% endblock %}

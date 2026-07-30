@@ -1,1 +1,57 @@
-{% extends 'base.html' %}{% block heading %}Contratos inteligentes{% endblock %}{% block subheading %}Selecione motorista, veículo e modelo; digite apenas condições variáveis.{% endblock %}{% block content %}<section class="card"><h2>Novo contrato</h2><form method="post" class="form-grid"><label>Motorista<select name="driver_id" required>{% for x in motoristas %}<option value="{{x.id}}">{{x.nome}}</option>{% endfor %}</select></label><label>Veículo<select name="vehicle_id" required>{% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}</select></label><label>Modelo<select name="template_id" required>{% for x in modelos %}<option value="{{x.id}}">{{x.nome}}</option>{% endfor %}</select></label><label>Início<input type="date" name="data_inicio"></label><label>Término<input type="date" name="data_fim"></label><label>Valor locação<input type="number" step="0.01" name="valor_locacao"></label><label>Caução<input type="number" step="0.01" name="caucao"></label><label>Franquia<input type="number" step="0.01" name="franquia"></label><label>Limite km<input type="number" name="limite_km"></label><label>Valor km excedente<input type="number" step="0.01" name="valor_km_excedente"></label><button>Gerar contrato</button></form></section><section class="card"><h2>Contratos gerados</h2><table><tr><th>#</th><th>Motorista</th><th>Veículo</th><th>Período</th><th>Valor</th><th>Status</th></tr>{% for x in items %}<tr><td><a href="{{url_for('contrato_detalhe',id=x.id)}}">{{x.id}}</a></td><td>{{x.driver.nome}}</td><td>{{x.vehicle.placa}}</td><td>{{x.data_inicio}} a {{x.data_fim}}</td><td>R$ {{x.valor_locacao}}</td><td><span class="badge">{{x.status}}</span></td></tr>{% else %}<tr><td colspan="6">Nenhum contrato.</td></tr>{% endfor %}</table></section>{% endblock %}
+{% extends 'base.html' %}
+{% block heading %}Contratos inteligentes{% endblock %}
+{% block subheading %}Escolha motorista, veículo e modelo. Os dados cadastrais são preenchidos automaticamente.{% endblock %}
+{% block content %}
+{% if not modelos %}
+<section class="card">
+  <h2>Nenhum modelo ativo</h2>
+  <p>Cadastre um modelo ou instale o modelo Locadrivers/LCDVS antes de gerar contratos.</p>
+  <a class="button" href="{{url_for('modelos_contrato')}}">Abrir modelos de contrato</a>
+</section>
+{% else %}
+<section class="card">
+<h2>Novo contrato</h2>
+<form method="post" class="form-grid">
+<label>Motorista<select name="driver_id" required><option value="">Selecione</option>{% for x in motoristas %}<option value="{{x.id}}">{{x.nome}} — CPF {{x.cpf or 'não informado'}}</option>{% endfor %}</select></label>
+<label>Veículo<select name="vehicle_id" required><option value="">Selecione</option>{% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}</select></label>
+<label>Modelo<select name="template_id" required>{% for x in modelos %}<option value="{{x.id}}" {% if x.padrao %}selected{% endif %}>{{x.nome}} — versão {{x.versao}}{% if x.padrao %} (padrão){% endif %}</option>{% endfor %}</select></label>
+
+<label>Início<input type="date" name="data_inicio" value="{{hoje}}" required></label>
+<label>Horário inicial<input type="time" name="hora_inicio" value="09:00" required></label>
+<label>Término<input type="date" name="data_fim" value="{{fim_padrao}}" required></label>
+
+<label>Periodicidade<select name="periodicidade"><option>Semanal</option><option>Quinzenal</option><option>Mensal</option></select></label>
+<label>Dia de vencimento<select name="dia_vencimento"><option>segunda-feira</option><option>terça-feira</option><option>quarta-feira</option><option>quinta-feira</option><option>sexta-feira</option><option>sábado</option><option>domingo</option></select></label>
+<label>Valor da locação<input type="number" step="0.01" min="0" name="valor_locacao" required></label>
+<label>Caução<input type="number" step="0.01" min="0" name="caucao" required></label>
+<label>Franquia do seguro<input type="number" step="0.01" min="0" name="franquia" value="5000" required></label>
+<label>Limite de km<input type="number" min="0" name="limite_km"></label>
+<label>Valor do km excedente<input type="number" step="0.01" min="0" name="valor_km_excedente" value="1.00"></label>
+
+<label>Multa por atraso (%)<input type="number" step="0.01" min="0" name="multa_atraso_percentual" value="6"></label>
+<label>Juros ao mês (%)<input type="number" step="0.01" min="0" name="juros_mes_percentual" value="1"></label>
+<label>Índice de correção<input name="indice_correcao" value="IGPM"></label>
+<label>Bloqueio após (horas)<input type="number" min="0" name="prazo_bloqueio_horas" value="48"></label>
+<label>Multa diária<input type="number" step="0.01" min="0" name="multa_diaria" value="500"></label>
+<label>Taxa administrativa das multas (%)<input type="number" step="0.01" min="0" name="taxa_adm_multas_percentual" value="20"></label>
+
+<label>Nacionalidade<input name="nacionalidade" value="brasileiro"></label>
+<label>Estado civil<input name="estado_civil" value="solteiro"></label>
+<label>Profissão<input name="profissao" value="motorista"></label>
+<label>Cidade da assinatura<input name="cidade_assinatura" value="Carapicuíba/SP"></label>
+<button>Preencher e gerar contrato</button>
+</form>
+<p class="muted">Gestora e parceira operacional vêm do modelo selecionado. Motorista, proprietário e veículo vêm dos respectivos cadastros.</p>
+</section>
+{% endif %}
+
+<section class="card"><h2>Contratos gerados</h2>
+<table><tr><th>#</th><th>Motorista</th><th>Veículo</th><th>Modelo</th><th>Período</th><th>Valor</th><th>Status</th></tr>
+{% for x in items %}<tr>
+<td><a href="{{url_for('contrato_detalhe',id=x.id)}}">{{x.id}}</a></td>
+<td>{{x.driver.nome}}</td><td>{{x.vehicle.placa}}</td>
+<td>{{x.template_nome or (x.template.nome if x.template else '-')}} v{{x.template_versao or 1}}</td>
+<td>{{x.data_inicio}} a {{x.data_fim}}</td><td>R$ {{'%.2f'|format(x.valor_locacao or 0)}}</td><td><span class="badge">{{x.status}}</span></td>
+</tr>{% else %}<tr><td colspan="7">Nenhum contrato.</td></tr>{% endfor %}</table>
+</section>
+{% endblock %}

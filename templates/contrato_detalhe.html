@@ -1,1 +1,11 @@
-{% extends 'base.html' %}{% block heading %}Contrato #{{c.id}}{% endblock %}{% block subheading %}Versão final preservada no momento da geração.{% endblock %}{% block content %}<section class="card contract"><pre>{{c.texto_final}}</pre><button onclick="window.print()">Imprimir / Salvar em PDF</button></section>{% endblock %}
+{% extends 'base.html' %}
+{% block heading %}Contrato #{{c.id}}{% endblock %}
+{% block subheading %}{{c.template_nome or 'Modelo'}} — versão {{c.template_versao or 1}} preservada na geração.{% endblock %}
+{% block content %}
+<section class="card actions no-print">
+<a class="button" href="{{url_for('contrato_texto',id=c.id)}}">Baixar texto</a>
+<button onclick="window.print()">Imprimir / Salvar em PDF</button>
+<a class="button secondary" href="{{url_for('contratos')}}">Voltar</a>
+</section>
+<section class="card contract-paper"><pre>{{c.texto_final}}</pre></section>
+{% endblock %}
