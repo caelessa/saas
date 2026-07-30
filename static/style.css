@@ -11,3 +11,13 @@ textarea{width:100%;font:inherit;padding:12px;border-radius:8px}
  .app,main{display:block!important;margin:0!important;padding:0!important}
  .contract-paper{box-shadow:none;border:0;max-width:none;padding:15mm}
 }
+
+.contract-paper{max-width:900px;margin:0 auto;background:#fff;color:#111;padding:42px;box-shadow:0 2px 18px rgba(0,0,0,.08)}
+.contract-paper pre{font-family:Arial,Helvetica,sans-serif;white-space:pre-wrap;word-break:normal;line-height:1.55;font-size:14px;margin:0}
+@media print{
+ aside,header,.no-print,.flash{display:none!important}
+ .app,main{display:block!important;margin:0!important;padding:0!important;background:#fff!important}
+ .contract-paper{box-shadow:none!important;max-width:none!important;padding:12mm!important;border:0!important}
+ .contract-paper pre{font-size:11pt;line-height:1.45}
+ @page{size:A4;margin:12mm}
+}
