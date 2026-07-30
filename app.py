@@ -45,9 +45,9 @@ class Odometer(db.Model):
 class MileageRequest(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False); token=db.Column(db.String(64),unique=True,nullable=False,index=True); status=db.Column(db.String(30),default='Pendente'); expires_at=db.Column(db.DateTime); sent_at=db.Column(db.DateTime,default=datetime.utcnow); submitted_at=db.Column(db.DateTime); km=db.Column(db.Integer); previous_km=db.Column(db.Integer); photo=db.Column(db.String(255)); notes=db.Column(db.Text); vehicle=db.relationship('Vehicle'); driver=db.relationship('Driver')
 class ContractTemplate(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); ativo=db.Column(db.Boolean,default=True)
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); descricao=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); padrao=db.Column(db.Boolean,default=False); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); nome_original=db.Column(db.String(255)); gestora_nome=db.Column(db.String(180)); gestora_fantasia=db.Column(db.String(120)); gestora_cnpj=db.Column(db.String(30)); gestora_endereco=db.Column(db.String(255)); parceira_nome=db.Column(db.String(180)); parceira_cnpj=db.Column(db.String(30)); parceira_endereco=db.Column(db.String(255)); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); data_inicio=db.Column(db.String(10)); data_fim=db.Column(db.String(10)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); template_nome=db.Column(db.String(120)); template_versao=db.Column(db.Integer,default=1); data_inicio=db.Column(db.String(10)); hora_inicio=db.Column(db.String(5)); data_fim=db.Column(db.String(10)); periodicidade=db.Column(db.String(30)); dia_vencimento=db.Column(db.String(30)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); multa_atraso_percentual=db.Column(db.Numeric(6,2)); juros_mes_percentual=db.Column(db.Numeric(6,2)); indice_correcao=db.Column(db.String(30)); prazo_bloqueio_horas=db.Column(db.Integer); multa_diaria=db.Column(db.Numeric(12,2)); taxa_adm_multas_percentual=db.Column(db.Numeric(6,2)); nacionalidade=db.Column(db.String(60)); estado_civil=db.Column(db.String(60)); profissao=db.Column(db.String(100)); cidade_assinatura=db.Column(db.String(100)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
@@ -172,35 +172,196 @@ def oil_status(v):
  return {'state':'ok','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
 
 def migrate_schema():
- vehicle_columns={c['name'] for c in inspect(db.engine).get_columns('vehicle')}
- vehicle_additions=[
-  ('controlar_oleo','BOOLEAN DEFAULT FALSE'),
-  ('ultima_troca_oleo_km','INTEGER'),
-  ('intervalo_oleo_km','INTEGER DEFAULT 10000'),
-  ('alerta_oleo_km','INTEGER DEFAULT 100'),
- ]
- for name,definition in vehicle_additions:
-  if name not in vehicle_columns:
-   with db.engine.begin() as conn:
-    conn.execute(text(f'ALTER TABLE vehicle ADD COLUMN {name} {definition}'))
+ additions={
+  'vehicle':[
+   ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
+   ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
+  ],
+  'contract_template':[
+   ('descricao','VARCHAR(255)'),('versao','INTEGER DEFAULT 1'),('padrao','BOOLEAN DEFAULT FALSE'),
+   ('nome_original','VARCHAR(255)'),('gestora_nome','VARCHAR(180)'),('gestora_fantasia','VARCHAR(120)'),
+   ('gestora_cnpj','VARCHAR(30)'),('gestora_endereco','VARCHAR(255)'),('parceira_nome','VARCHAR(180)'),
+   ('parceira_cnpj','VARCHAR(30)'),('parceira_endereco','VARCHAR(255)'),
+  ],
+  'contract':[
+   ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
+   ('periodicidade','VARCHAR(30)'),('dia_vencimento','VARCHAR(30)'),('multa_atraso_percentual','NUMERIC(6,2)'),
+   ('juros_mes_percentual','NUMERIC(6,2)'),('indice_correcao','VARCHAR(30)'),('prazo_bloqueio_horas','INTEGER'),
+   ('multa_diaria','NUMERIC(12,2)'),('taxa_adm_multas_percentual','NUMERIC(6,2)'),('nacionalidade','VARCHAR(60)'),
+   ('estado_civil','VARCHAR(60)'),('profissao','VARCHAR(100)'),('cidade_assinatura','VARCHAR(100)'),
+  ],
+ }
+ inspector=inspect(db.engine)
+ for table_name,fields in additions.items():
+  if table_name not in inspector.get_table_names():
+   continue
+  columns={c['name'] for c in inspector.get_columns(table_name)}
+  for name,definition in fields:
+   if name not in columns:
+    with db.engine.begin() as conn:
+     conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {name} {definition}'))
 
- # Amplia campos que recebem textos reais extraídos do CRLV.
- with db.engine.begin() as conn:
-  conn.execute(text('ALTER TABLE vehicle ALTER COLUMN combustivel TYPE VARCHAR(100)'))
-  conn.execute(text('ALTER TABLE vehicle ALTER COLUMN proprietario_legal TYPE VARCHAR(180)'))
-  conn.execute(text('ALTER TABLE vehicle ALTER COLUMN marca_modelo TYPE VARCHAR(120)'))
+LOCADRIVERS_TEMPLATE_VERSION=2
 
- document_columns={c['name'] for c in inspect(db.engine).get_columns('document')}
- document_additions=[
-  ('identificador','VARCHAR(180)'),
-  ('numero_documento','VARCHAR(60)'),
-  ('hash_sha256','VARCHAR(64)'),
-  ('status',"VARCHAR(20) DEFAULT 'Ativo'"),
- ]
- for name,definition in document_additions:
-  if name not in document_columns:
-   with db.engine.begin() as conn:
-    conn.execute(text(f'ALTER TABLE document ADD COLUMN {name} {definition}'))
+def moeda_br(value):
+ try:
+  n=Decimal(str(value or 0))
+ except Exception:
+  n=Decimal('0')
+ return f'{n:,.2f}'.replace(',','X').replace('.',',').replace('X','.')
+
+def data_br(value):
+ try:
+  return datetime.strptime(value,'%Y-%m-%d').strftime('%d/%m/%Y')
+ except Exception:
+  return value or ''
+
+def locadrivers_template_completo():
+ return """CONTRATO PARTICULAR DE LOCAÇÃO DE VEÍCULO PARA TRANSPORTE PRIVADO POR APLICATIVO
+
+IDENTIFICAÇÃO DAS PARTES
+
+GESTORA DA LOCAÇÃO: {{gestora_nome}}, nome fantasia {{gestora_fantasia}}, inscrita no CNPJ sob nº {{gestora_cnpj}}, com endereço em {{gestora_endereco}}, doravante denominada GESTORA ou LOCADORA.
+
+PROPRIETÁRIO DO VEÍCULO: {{proprietario_nome}}, CPF/CNPJ nº {{proprietario_documento}}, legítimo proprietário do veículo objeto deste contrato, doravante denominado PROPRIETÁRIO.
+
+PARCEIRA OPERACIONAL: {{parceira_nome}}, inscrita no CNPJ sob nº {{parceira_cnpj}}, com endereço em {{parceira_endereco}}, doravante denominada PARCEIRA OPERACIONAL.
+
+LOCATÁRIO: {{motorista_nome}}, {{nacionalidade}}, {{estado_civil}}, {{profissao}}, RG nº {{motorista_rg}}, CPF nº {{motorista_cpf}}, CNH nº {{motorista_cnh}}, residente e domiciliado em {{motorista_endereco}}, doravante denominado LOCATÁRIO.
+
+As partes acima identificadas têm, entre si, justo e contratado o presente CONTRATO DE LOCAÇÃO DE VEÍCULO, mediante as cláusulas e condições seguintes.
+
+CLÁUSULA 1ª — DO OBJETO
+
+1.1. O presente contrato tem como objeto a locação do seguinte veículo:
+Modelo: {{veiculo_modelo}}
+Cor: {{veiculo_cor}}
+Ano/Modelo: {{veiculo_ano_fabricacao}}/{{veiculo_ano_modelo}}
+Placa: {{veiculo_placa}}
+Renavam: {{veiculo_renavam}}
+Quilometragem inicial: {{km_inicial}} km
+
+CLÁUSULA 2ª — DO VALOR, PAGAMENTO, CAUÇÃO E INADIMPLÊNCIA
+
+2.1. O LOCATÁRIO pagará o valor {{periodicidade_minuscula}} de R$ {{valor_locacao}} ({{valor_locacao_extenso}}), com vencimento toda {{dia_vencimento}}, via PIX ou boleto bancário.
+
+2.2. No ato da assinatura, o LOCATÁRIO pagará caução no valor de R$ {{caucao}} ({{caucao_extenso}}), que poderá ser utilizada para abatimento de débitos contratuais.
+
+2.3. A caução não cobre multas de trânsito, avarias ou danos ao veículo e será devolvida em até 60 (sessenta) dias úteis após o encerramento do contrato, desde que não existam pendências financeiras ou contratuais.
+
+2.4. O atraso no pagamento acarretará multa de {{multa_atraso_percentual}}% sobre o valor em atraso, juros de {{juros_mes_percentual}}% ao mês sobre o saldo devedor e correção monetária pelo índice {{indice_correcao}}.
+
+2.5. O atraso superior a {{prazo_bloqueio_horas}} horas poderá ocasionar bloqueio do veículo, rescisão contratual, retirada imediata do veículo e cobrança de multa diária de R$ {{multa_diaria}}, limitada ao valor FIPE do veículo.
+
+2.6. O LOCATÁRIO autoriza eventual negativação junto aos órgãos de proteção ao crédito em caso de inadimplência, observadas as exigências legais aplicáveis.
+
+CLÁUSULA 3ª — DO PRAZO
+
+3.1. O presente contrato terá vigência de {{prazo_dias}} dias, com início em {{data_inicio_formatada}} às {{hora_inicio}}, e término previsto para {{data_fim_formatada}}, podendo ser prorrogado por acordo entre as partes até o limite máximo de 1 (um) ano.
+
+CLÁUSULA 4ª — DA RESCISÃO
+
+4.1. A rescisão antecipada pelo LOCATÁRIO antes do terceiro mês implicará multa equivalente à caução, no valor de R$ {{caucao}}.
+
+4.2. Após o terceiro mês, o LOCATÁRIO poderá rescindir o contrato mediante aviso prévio de 7 (sete) dias.
+
+4.3. A LOCADORA poderá rescindir o contrato a qualquer momento, devendo o veículo ser devolvido em até 1 (um) dia corrido após a comunicação.
+
+CLÁUSULA 5ª — DAS CONDIÇÕES E DA VISTORIA DO VEÍCULO
+
+5.1. O LOCATÁRIO declara receber o veículo em perfeitas condições de uso, conservação e funcionamento, conforme vistoria anexa, que integra este contrato.
+
+5.2. O LOCATÁRIO obriga-se a enviar toda segunda-feira fotos externas do veículo, foto do painel com a quilometragem e foto da etiqueta de troca de óleo.
+
+CLÁUSULA 6ª — DO USO DO VEÍCULO
+
+6.1. O veículo deverá ser utilizado exclusivamente pelo LOCATÁRIO para transporte privado por aplicativo.
+
+6.2. É expressamente proibido sublocar, ceder, emprestar ou permitir que terceiro conduza o veículo sem autorização; utilizar o veículo fora do Estado de São Paulo; retirar adesivos obrigatórios; ou utilizá-lo para fins ilícitos.
+
+6.3. A quilometragem semanal fica limitada a {{limite_km}} km. A quilometragem excedente será cobrada no valor de R$ {{valor_km_excedente}} por quilômetro.
+
+CLÁUSULA 7ª — DAS MULTAS DE TRÂNSITO
+
+7.1. O LOCATÁRIO será integralmente responsável pelas multas e infrações de trânsito ocorridas durante a vigência da locação, inclusive pela identificação do condutor e pontuação na CNH.
+
+7.2. As multas deverão ser reembolsadas à LOCADORA acrescidas de {{taxa_adm_multas_percentual}}% de taxa administrativa.
+
+CLÁUSULA 8ª — DAS AVARIAS, SINISTROS E DANOS A TERCEIROS
+
+8.1. O LOCATÁRIO responderá integralmente por danos e colisões, arranhões e mau uso, despesas de guincho e prejuízos causados a terceiros durante a vigência deste contrato.
+
+8.2. Em caso de acidente, roubo ou furto, o LOCATÁRIO deverá comunicar imediatamente a LOCADORA e apresentar boletim de ocorrência em até 2 (dois) dias.
+
+CLÁUSULA 9ª — DO SEGURO
+
+9.1. O veículo possui seguro. Em caso de sinistro, o LOCATÁRIO será responsável pelo pagamento da franquia no valor de R$ {{franquia}} ({{franquia_extenso}}), sem prejuízo de outros valores não cobertos pela apólice quando decorrentes de sua responsabilidade.
+
+CLÁUSULA 10ª — DA DEVOLUÇÃO
+
+10.1. O veículo deverá ser devolvido nas mesmas condições em que foi entregue, ressalvado o desgaste natural decorrente do uso regular.
+
+10.2. Havendo danos, o LOCATÁRIO deverá efetuar o pagamento dos reparos em até 3 (três) dias úteis após a apresentação dos orçamentos.
+
+10.3. A não devolução poderá ensejar as medidas judiciais e criminais cabíveis.
+
+CLÁUSULA 11ª — DAS DISPOSIÇÕES GERAIS
+
+11.1. O PROPRIETÁRIO não possui responsabilidade pela gestão da locação, cobranças ou relação contratual operacional com o LOCATÁRIO.
+
+11.2. Eventuais tolerâncias de qualquer das partes não constituem novação, renúncia ou alteração das condições deste contrato.
+
+11.3. Este contrato não poderá ser cedido ou transferido sem autorização expressa e escrita da LOCADORA.
+
+CLÁUSULA 12ª — DO FORO
+
+12.1. Fica eleito o foro da Comarca de São Paulo/SP para dirimir quaisquer controvérsias oriundas deste contrato, com renúncia a qualquer outro, por mais privilegiado que seja.
+
+E, por estarem de acordo, as partes assinam o presente instrumento.
+
+{{cidade_assinatura}}, {{data_assinatura_formatada}}.
+
+
+________________________________________
+{{gestora_nome}}
+GESTORA / LOCADORA
+
+
+________________________________________
+{{proprietario_nome}}
+PROPRIETÁRIO
+
+
+________________________________________
+{{motorista_nome}}
+LOCATÁRIO
+
+
+________________________________________
+{{parceira_nome}}
+PARCEIRA OPERACIONAL
+
+
+________________________________________        ________________________________________
+TESTEMUNHA 1 — Nome/CPF                           TESTEMUNHA 2 — Nome/CPF
+"""
+
+def ensure_locadrivers_template(tenant_id, force_new_version=False):
+ existing=ContractTemplate.query.filter_by(tenant_id=tenant_id,nome='Locadrivers Completo',versao=LOCADRIVERS_TEMPLATE_VERSION).first()
+ if existing and not force_new_version:
+  return existing
+ ContractTemplate.query.filter_by(tenant_id=tenant_id,padrao=True).update({'padrao':False},synchronize_session=False)
+ model=ContractTemplate(
+  tenant_id=tenant_id,nome='Locadrivers Completo',descricao='Minuta integral Locadrivers com 12 cláusulas e preenchimento automático.',
+  versao=LOCADRIVERS_TEMPLATE_VERSION,padrao=True,tipo_veiculo='Todos',possui_limite_km=True,
+  conteudo=locadrivers_template_completo(),nome_original='minuta-locadrivers-v2',
+  gestora_nome='LCADRIVER CORRETORA DE ALUGUEL DE VEÍCULOS LTDA',gestora_fantasia='LOCADRIVERS',
+  gestora_cnpj='64.406.745/0001-38',gestora_endereco='Av. Deputado Emilio Carlos, nº 656, Vila Caldas, Carapicuíba/SP — CEP 06310-160',
+  parceira_nome='L.C.DVS CORRETORA DE ALUGUEL DE VEÍCULOS LTDA',parceira_cnpj='48.758.670/0001-06',
+  parceira_endereco='Alameda Araguaia, nº 2104, Alphaville Industrial, Barueri/SP — CEP 06455-000',ativo=True,
+ )
+ db.session.add(model)
+ return model
 
 def seed():
  db.create_all()
@@ -209,7 +370,11 @@ def seed():
   t=Tenant(nome='Locadora Demonstração'); db.session.add(t); db.session.flush()
   u=User(tenant_id=t.id,nome='Administrador',email='admin@frotafacil.local',senha=generate_password_hash('admin123')); db.session.add(u)
   base='''CONTRATO DE LOCAÇÃO\nLOCATÁRIO: {{motorista_nome}}, CPF {{motorista_cpf}}, CNH {{motorista_cnh}}.\nVEÍCULO: {{veiculo_modelo}}, placa {{veiculo_placa}}, Renavam {{veiculo_renavam}}.\nVALOR: R$ {{valor_locacao}}. CAUÇÃO: R$ {{caucao}}.\nINÍCIO: {{data_inicio}}. TÉRMINO: {{data_fim}}.\nLIMITE DE KM: {{limite_km}}. EXCEDENTE: R$ {{valor_km_excedente}}/km.'''
-  db.session.add_all([ContractTemplate(tenant_id=t.id,nome='Combustão com limite',tipo_veiculo='Combustão',possui_limite_km=True,conteudo=base),ContractTemplate(tenant_id=t.id,nome='Elétrico com limite',tipo_veiculo='Elétrico',possui_limite_km=True,conteudo=base+'\nO LOCATÁRIO se responsabiliza pela recarga e uso de equipamentos homologados.')]); db.session.commit()
+  db.session.add_all([ContractTemplate(tenant_id=t.id,nome='Combustão com limite',tipo_veiculo='Combustão',possui_limite_km=True,conteudo=base),ContractTemplate(tenant_id=t.id,nome='Elétrico com limite',tipo_veiculo='Elétrico',possui_limite_km=True,conteudo=base+'\nO LOCATÁRIO se responsabiliza pela recarga e uso de equipamentos homologados.')]); db.session.flush()
+ # Instala automaticamente a minuta completa v2 para todos os tenants.
+ for tenant in Tenant.query.all():
+  ensure_locadrivers_template(tenant.id)
+ db.session.commit()
 
 @app.route('/criar-conta',methods=['GET','POST'])
 def criar_conta():
@@ -224,7 +389,8 @@ def criar_conta():
    t=Tenant(nome=empresa,ativo=True); db.session.add(t); db.session.flush()
    u=User(tenant_id=t.id,nome=nome,email=email,senha=generate_password_hash(senha),perfil='admin'); db.session.add(u)
    base='''CONTRATO DE LOCAÇÃO\nLOCATÁRIO: {{motorista_nome}}, CPF {{motorista_cpf}}, CNH {{motorista_cnh}}.\nVEÍCULO: {{veiculo_modelo}}, placa {{veiculo_placa}}, Renavam {{veiculo_renavam}}.\nVALOR: R$ {{valor_locacao}}. CAUÇÃO: R$ {{caucao}}.\nINÍCIO: {{data_inicio}}. TÉRMINO: {{data_fim}}.'''
-   db.session.add(ContractTemplate(tenant_id=t.id,nome='Modelo básico',tipo_veiculo='Todos',possui_limite_km=False,conteudo=base))
+   db.session.add(ContractTemplate(tenant_id=t.id,nome='Modelo básico',tipo_veiculo='Todos',possui_limite_km=False,conteudo=base,versao=1,padrao=False))
+   ensure_locadrivers_template(t.id)
    db.session.commit(); login_user(u); flash('Conta criada. Sua base está limpa e pronta para os cadastros.','success'); return redirect(url_for('dashboard'))
  return render_template('criar_conta.html')
 
@@ -548,15 +714,128 @@ def foto_quilometragem(id):
 @login_required
 def contratos():
  if request.method=='POST':
-  d=Driver.query.filter_by(id=request.form['driver_id'],tenant_id=tid()).first_or_404(); v=Vehicle.query.filter_by(id=request.form['vehicle_id'],tenant_id=tid()).first_or_404(); t=ContractTemplate.query.filter_by(id=request.form['template_id'],tenant_id=tid()).first_or_404()
-  repl={'motorista_nome':d.nome,'motorista_cpf':d.cpf or '','motorista_cnh':d.numero_cnh or '','veiculo_modelo':v.marca_modelo or '','veiculo_placa':v.placa,'veiculo_renavam':v.renavam or '','valor_locacao':request.form.get('valor_locacao',''),'caucao':request.form.get('caucao',''),'data_inicio':request.form.get('data_inicio',''),'data_fim':request.form.get('data_fim',''),'limite_km':request.form.get('limite_km','Sem limite'),'valor_km_excedente':request.form.get('valor_km_excedente','0')}
-  texto=t.conteudo
-  for k,val in repl.items(): texto=texto.replace('{{'+k+'}}',str(val))
-  c=Contract(tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,data_inicio=repl['data_inicio'],data_fim=repl['data_fim'],valor_locacao=request.form.get('valor_locacao') or 0,caucao=request.form.get('caucao') or 0,franquia=request.form.get('franquia') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,texto_final=texto); db.session.add(c); v.status='Alugado'; db.session.commit(); flash('Contrato gerado.','success'); return redirect(url_for('contrato_detalhe',id=c.id))
- return render_template('contratos.html',items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).all())
+  d=Driver.query.filter_by(id=request.form['driver_id'],tenant_id=tid()).first_or_404()
+  v=Vehicle.query.filter_by(id=request.form['vehicle_id'],tenant_id=tid()).first_or_404()
+  t=ContractTemplate.query.filter_by(id=request.form['template_id'],tenant_id=tid(),ativo=True).first_or_404()
+  data_inicio=request.form.get('data_inicio','')
+  data_fim=request.form.get('data_fim','')
+  try:
+   prazo_dias=(datetime.strptime(data_fim,'%Y-%m-%d')-datetime.strptime(data_inicio,'%Y-%m-%d')).days
+  except Exception:
+   prazo_dias=90
+  proprietario_nome=v.proprietario_legal or (v.investor.nome if v.investor else 'A preencher')
+  proprietario_documento=v.cpf_cnpj_proprietario or (v.investor.cpf_cnpj if v.investor else 'A preencher')
+  valor_locacao=request.form.get('valor_locacao') or 0
+  caucao=request.form.get('caucao') or 0
+  franquia=request.form.get('franquia') or 0
+  valor_km=request.form.get('valor_km_excedente') or 0
+  periodicidade=request.form.get('periodicidade','Semanal')
+  repl={
+   'gestora_nome':t.gestora_nome or '', 'gestora_fantasia':t.gestora_fantasia or '', 'gestora_cnpj':t.gestora_cnpj or '', 'gestora_endereco':t.gestora_endereco or '',
+   'parceira_nome':t.parceira_nome or '', 'parceira_cnpj':t.parceira_cnpj or '', 'parceira_endereco':t.parceira_endereco or '',
+   'proprietario_nome':proprietario_nome,'proprietario_documento':proprietario_documento,
+   'motorista_nome':d.nome,'motorista_cpf':d.cpf or 'A preencher','motorista_rg':d.rg or 'A preencher','motorista_cnh':d.numero_cnh or 'A preencher','motorista_endereco':d.endereco or 'A preencher',
+   'nacionalidade':request.form.get('nacionalidade') or 'brasileiro','estado_civil':request.form.get('estado_civil') or 'solteiro','profissao':request.form.get('profissao') or 'motorista',
+   'veiculo_modelo':v.marca_modelo or 'A preencher','veiculo_cor':v.cor or 'A preencher','veiculo_ano_fabricacao':v.ano_fabricacao or 'A preencher','veiculo_ano_modelo':v.ano_modelo or 'A preencher',
+   'veiculo_placa':v.placa or 'A preencher','veiculo_renavam':v.renavam or 'A preencher','km_inicial':v.km_atual or 0,
+   'periodicidade':periodicidade,'periodicidade_minuscula':periodicidade.lower(),'dia_vencimento':request.form.get('dia_vencimento','segunda-feira'),
+   'valor_locacao':moeda_br(valor_locacao),'valor_locacao_extenso':'valor informado acima','caucao':moeda_br(caucao),'caucao_extenso':'valor informado acima',
+   'franquia':moeda_br(franquia),'franquia_extenso':'valor informado acima','limite_km':request.form.get('limite_km') or 'sem limite definido','valor_km_excedente':moeda_br(valor_km),
+   'multa_atraso_percentual':request.form.get('multa_atraso_percentual') or '6','juros_mes_percentual':request.form.get('juros_mes_percentual') or '1','indice_correcao':request.form.get('indice_correcao') or 'IGPM',
+   'prazo_bloqueio_horas':request.form.get('prazo_bloqueio_horas') or '48','multa_diaria':moeda_br(request.form.get('multa_diaria') or 500),'taxa_adm_multas_percentual':request.form.get('taxa_adm_multas_percentual') or '20',
+   'data_inicio_formatada':data_br(data_inicio),'hora_inicio':request.form.get('hora_inicio') or '09:00','data_fim_formatada':data_br(data_fim),'prazo_dias':prazo_dias,
+   'cidade_assinatura':request.form.get('cidade_assinatura') or 'Carapicuíba/SP','data_assinatura_formatada':data_br(data_inicio),
+  }
+  texto_final=t.conteudo or ''
+  for key,value in repl.items():
+   texto_final=texto_final.replace('{{'+key+'}}',str(value))
+  c=Contract(
+   tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,template_nome=t.nome,template_versao=t.versao or 1,
+   data_inicio=data_inicio,hora_inicio=repl['hora_inicio'],data_fim=data_fim,periodicidade=periodicidade,dia_vencimento=repl['dia_vencimento'],
+   valor_locacao=valor_locacao,caucao=caucao,franquia=franquia,limite_km=request.form.get('limite_km') or None,valor_km_excedente=valor_km,
+   multa_atraso_percentual=request.form.get('multa_atraso_percentual') or 6,juros_mes_percentual=request.form.get('juros_mes_percentual') or 1,
+   indice_correcao=repl['indice_correcao'],prazo_bloqueio_horas=request.form.get('prazo_bloqueio_horas') or 48,multa_diaria=request.form.get('multa_diaria') or 500,
+   taxa_adm_multas_percentual=request.form.get('taxa_adm_multas_percentual') or 20,nacionalidade=repl['nacionalidade'],estado_civil=repl['estado_civil'],
+   profissao=repl['profissao'],cidade_assinatura=repl['cidade_assinatura'],texto_final=texto_final,
+  )
+  db.session.add(c); v.status='Alugado'; db.session.commit()
+  flash('Contrato completo gerado com todas as cláusulas da minuta.','success')
+  return redirect(url_for('contrato_detalhe',id=c.id))
+ hoje=date.today(); fim=hoje+timedelta(days=90)
+ return render_template('contratos.html',items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).order_by(ContractTemplate.padrao.desc(),ContractTemplate.id.desc()).all(),hoje=hoje.isoformat(),fim_padrao=fim.isoformat())
+
 @app.route('/contratos/<int:id>')
 @login_required
-def contrato_detalhe(id): return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
+def contrato_detalhe(id):
+ return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
+
+@app.route('/contratos/<int:id>/texto')
+@login_required
+def contrato_texto(id):
+ c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ return send_file(BytesIO((c.texto_final or '').encode('utf-8')),as_attachment=True,download_name=f'contrato_{c.id}.txt',mimetype='text/plain; charset=utf-8')
+
+@app.route('/modelos-contrato')
+@login_required
+def modelos_contrato():
+ return render_template('modelos_contrato.html',items=ContractTemplate.query.filter_by(tenant_id=tid()).order_by(ContractTemplate.nome,ContractTemplate.versao.desc()).all())
+
+@app.route('/modelos-contrato/locadrivers',methods=['POST'])
+@login_required
+def instalar_locadrivers():
+ model=ensure_locadrivers_template(tid())
+ db.session.commit()
+ flash(f'Modelo Locadrivers Completo v{model.versao} instalado e definido como padrão.','success')
+ return redirect(url_for('modelos_contrato'))
+
+@app.route('/modelos-contrato/novo',methods=['GET','POST'])
+@login_required
+def novo_modelo_contrato():
+ if request.method=='POST':
+  return salvar_modelo_contrato(None)
+ return render_template('modelo_contrato_form.html',modelo=None)
+
+@app.route('/modelos-contrato/<int:id>/editar',methods=['GET','POST'])
+@login_required
+def editar_modelo_contrato(id):
+ modelo=ContractTemplate.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if request.method=='POST':
+  return salvar_modelo_contrato(modelo)
+ return render_template('modelo_contrato_form.html',modelo=modelo)
+
+def salvar_modelo_contrato(modelo):
+ conteudo=request.form.get('conteudo','').strip()
+ arquivo=request.files.get('arquivo')
+ nome_original=None
+ if arquivo and arquivo.filename:
+  nome_original=secure_filename(arquivo.filename)
+  if nome_original.lower().endswith('.txt'):
+   conteudo=arquivo.read().decode('utf-8',errors='replace')
+  elif nome_original.lower().endswith('.pdf'):
+   try: conteudo=extract_text(arquivo,document_type='contract')
+   except Exception: flash('Não foi possível extrair o PDF. Cole o texto no campo conteúdo.','warning')
+ if not conteudo:
+  flash('Informe o conteúdo do contrato.','danger')
+  return render_template('modelo_contrato_form.html',modelo=modelo)
+ versao=(modelo.versao or 1)+1 if modelo else 1
+ novo=ContractTemplate(tenant_id=tid(),nome=request.form['nome'].strip(),descricao=request.form.get('descricao'),versao=versao,padrao=bool(request.form.get('padrao')),tipo_veiculo=request.form.get('tipo_veiculo','Todos'),possui_limite_km=bool(request.form.get('possui_limite_km')),conteudo=conteudo,nome_original=nome_original or (modelo.nome_original if modelo else None),gestora_nome=request.form.get('gestora_nome'),gestora_fantasia=request.form.get('gestora_fantasia'),gestora_cnpj=request.form.get('gestora_cnpj'),gestora_endereco=request.form.get('gestora_endereco'),parceira_nome=request.form.get('parceira_nome'),parceira_cnpj=request.form.get('parceira_cnpj'),parceira_endereco=request.form.get('parceira_endereco'),ativo=True)
+ if novo.padrao: ContractTemplate.query.filter_by(tenant_id=tid(),padrao=True).update({'padrao':False},synchronize_session=False)
+ db.session.add(novo); db.session.commit(); flash('Nova versão do modelo salva.','success')
+ return redirect(url_for('modelos_contrato'))
+
+@app.route('/modelos-contrato/<int:id>/alternar',methods=['POST'])
+@login_required
+def alternar_modelo_contrato(id):
+ modelo=ContractTemplate.query.filter_by(id=id,tenant_id=tid()).first_or_404(); modelo.ativo=not modelo.ativo
+ if not modelo.ativo: modelo.padrao=False
+ db.session.commit(); return redirect(url_for('modelos_contrato'))
+
+@app.route('/modelos-contrato/<int:id>/padrao',methods=['POST'])
+@login_required
+def definir_modelo_padrao(id):
+ modelo=ContractTemplate.query.filter_by(id=id,tenant_id=tid(),ativo=True).first_or_404()
+ ContractTemplate.query.filter_by(tenant_id=tid(),padrao=True).update({'padrao':False},synchronize_session=False); modelo.padrao=True; db.session.commit()
+ return redirect(url_for('modelos_contrato'))
 
 @app.route('/documentos',methods=['GET','POST'])
 @login_required
