@@ -39,7 +39,7 @@ class Driver(db.Model):
 class Investor(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf_cnpj=db.Column(db.String(20)); telefone=db.Column(db.String(30)); email=db.Column(db.String(120)); regra_repasse=db.Column(db.String(30),default='Valor fixo'); observacoes=db.Column(db.Text)
 class Vehicle(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(30)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); investor=db.relationship('Investor')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(100)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); investor=db.relationship('Investor')
 class Odometer(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); km=db.Column(db.Integer,nullable=False); origem=db.Column(db.String(40)); data=db.Column(db.DateTime,default=datetime.utcnow); vehicle=db.relationship('Vehicle')
 class MileageRequest(db.Model):
@@ -89,6 +89,22 @@ def tenant_backup_payload(tenant_id):
  }
 
 
+
+def limpar_campo_ocr_veiculo(campo, valor):
+ valor=(valor or '').strip()
+ valor=re.sub(r'\s+',' ',valor)
+ if campo=='combustivel':
+  # Corrige concatenações comuns do OCR do CRLV, como:
+  # ELETRICO/FONTE EXTERNAPARTICULAR
+  valor=re.sub(r'(?i)(FONTE EXTERNA)(PARTICULAR|ALUGUEL|OFICIAL|APRENDIZAGEM)$',r'\1',valor)
+  valor=re.sub(r'(?i)(ELETRICO)(PARTICULAR|ALUGUEL|OFICIAL|APRENDIZAGEM)$',r'\1',valor)
+  return valor[:100]
+ limites={
+  'placa':10,'renavam':20,'chassi':40,'marca_modelo':120,
+  'ano_fabricacao':10,'ano_modelo':10,'cor':40,'status':30,
+  'proprietario_legal':180,'cpf_cnpj_proprietario':30,'rastreador_id':80,
+ }
+ return valor[:limites.get(campo,255)]
 
 def slug_documento(value, fallback='SEM-NOME'):
  value=unicodedata.normalize('NFKD',value or '').encode('ascii','ignore').decode('ascii')
@@ -167,6 +183,12 @@ def migrate_schema():
   if name not in vehicle_columns:
    with db.engine.begin() as conn:
     conn.execute(text(f'ALTER TABLE vehicle ADD COLUMN {name} {definition}'))
+
+ # Amplia campos que recebem textos reais extraídos do CRLV.
+ with db.engine.begin() as conn:
+  conn.execute(text('ALTER TABLE vehicle ALTER COLUMN combustivel TYPE VARCHAR(100)'))
+  conn.execute(text('ALTER TABLE vehicle ALTER COLUMN proprietario_legal TYPE VARCHAR(180)'))
+  conn.execute(text('ALTER TABLE vehicle ALTER COLUMN marca_modelo TYPE VARCHAR(120)'))
 
  document_columns={c['name'] for c in inspect(db.engine).get_columns('document')}
  document_additions=[
@@ -297,7 +319,8 @@ def investidores():
 @login_required
 def veiculos():
  if request.method=='POST':
-  vals={k:request.form.get(k) for k in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']}
+  campos_veiculo=['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']
+  vals={k:limpar_campo_ocr_veiculo(k,request.form.get(k)) for k in campos_veiculo}
   v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100)
   db.session.add(v)
   try:
