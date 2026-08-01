@@ -1,6 +1,7 @@
 import os, uuid, re, json, hashlib, unicodedata
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
@@ -12,6 +13,7 @@ from werkzeug.datastructures import FileStorage
 from services.document_reader import extract_text, parse_cnh, parse_crlv
 from services.storage_service import StorageService, StorageNotFoundError
 from services.contract_service import gerar_numero_contrato, registrar_evento_contrato
+from services.pdf_service import gerar_pdf_contrato
 from io import BytesIO
 from decimal import Decimal
 
@@ -36,7 +38,7 @@ class Tenant(db.Model):
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf=db.Column(db.String(14)); rg=db.Column(db.String(30)); numero_cnh=db.Column(db.String(20)); categoria=db.Column(db.String(5)); data_nascimento=db.Column(db.String(10)); validade_cnh=db.Column(db.String(10)); telefone=db.Column(db.String(30)); email=db.Column(db.String(120)); endereco=db.Column(db.String(250)); status=db.Column(db.String(30),default='Ativo'); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf=db.Column(db.String(14)); rg=db.Column(db.String(30)); numero_cnh=db.Column(db.String(20)); categoria=db.Column(db.String(5)); data_nascimento=db.Column(db.String(10)); validade_cnh=db.Column(db.String(10)); telefone=db.Column(db.String(30)); email=db.Column(db.String(120)); endereco=db.Column(db.String(250)); logradouro=db.Column(db.String(160)); numero_endereco=db.Column(db.String(20)); complemento=db.Column(db.String(100)); bairro=db.Column(db.String(100)); cidade=db.Column(db.String(100)); uf=db.Column(db.String(2)); cep=db.Column(db.String(10)); status=db.Column(db.String(30),default='Ativo'); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Investor(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf_cnpj=db.Column(db.String(20)); telefone=db.Column(db.String(30)); email=db.Column(db.String(120)); regra_repasse=db.Column(db.String(30),default='Valor fixo'); observacoes=db.Column(db.Text)
 class Vehicle(db.Model):
@@ -84,6 +86,10 @@ class Contract(db.Model):
  atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
  assinado_em=db.Column(db.DateTime)
  assinatura_id=db.Column(db.String(120))
+ documento_id=db.Column(db.Integer,db.ForeignKey('document.id'))
+ arquivo_pdf=db.Column(db.String(255))
+ hash_documento=db.Column(db.String(64))
+ gerado_em=db.Column(db.DateTime)
  driver=db.relationship('Driver')
  vehicle=db.relationship('Vehicle')
  template=db.relationship('ContractTemplate')
@@ -203,6 +209,29 @@ def armazenar_documento_cadastro(tipo, entidade, entidade_id, referencia, numero
  storage.delete(temp_key)
  return documento
 
+SAO_PAULO=ZoneInfo("America/Sao_Paulo")
+
+def agora_sao_paulo_naive():
+ return datetime.now(SAO_PAULO).replace(tzinfo=None)
+
+def endereco_completo_motorista(driver):
+ partes=[]
+ if driver.logradouro:
+  linha=driver.logradouro
+  if driver.numero_endereco: linha+=f", nº {driver.numero_endereco}"
+  partes.append(linha)
+ if driver.complemento: partes.append(driver.complemento)
+ local=", ".join([x for x in [driver.bairro,driver.cidade] if x])
+ if driver.uf: local=(local+("/" if local else "")+driver.uf)
+ if local: partes.append(local)
+ if driver.cep: partes.append(f"CEP {driver.cep}")
+ return ", ".join(partes) if partes else (driver.endereco or "A preencher")
+
+def valor_extenso(valor):
+ from num2words import num2words
+ try: return num2words(Decimal(str(valor or 0)),lang="pt_BR",to="currency")
+ except Exception: return "valor não informado"
+
 def normalize_phone(value):
  digits=re.sub(r'\D','',value or '')
  if not digits: return ''
@@ -231,6 +260,7 @@ def migrate_schema():
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
   ],
+  'driver':[('logradouro','VARCHAR(160)'),('numero_endereco','VARCHAR(20)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)')],
   'contract_template':[
    ('descricao','VARCHAR(255)'),('versao','INTEGER DEFAULT 1'),('padrao','BOOLEAN DEFAULT FALSE'),
    ('nome_original','VARCHAR(255)'),('gestora_nome','VARCHAR(180)'),('gestora_fantasia','VARCHAR(120)'),
@@ -245,7 +275,7 @@ def migrate_schema():
    ('estado_civil','VARCHAR(60)'),('profissao','VARCHAR(100)'),('cidade_assinatura','VARCHAR(100)'),
    ('numero_contrato','VARCHAR(30)'),('versao','INTEGER DEFAULT 1'),('criado_por_id','INTEGER'),
    ('criado_em','TIMESTAMP'),('atualizado_em','TIMESTAMP'),('assinado_em','TIMESTAMP'),
-   ('assinatura_id','VARCHAR(120)'),
+   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('gerado_em','TIMESTAMP'),
   ],
  }
  inspector=inspect(db.engine)
@@ -481,7 +511,7 @@ def dashboard():
 @login_required
 def motoristas():
  if request.method=='POST':
-  d=Driver(tenant_id=tid(),**{k:request.form.get(k) for k in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','email','endereco','status']})
+  d=Driver(tenant_id=tid(),**{k:request.form.get(k) for k in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','email','endereco','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','status']})
   db.session.add(d)
   try:
    db.session.flush()
@@ -798,13 +828,13 @@ def contratos():
    'gestora_nome':t.gestora_nome or '', 'gestora_fantasia':t.gestora_fantasia or '', 'gestora_cnpj':t.gestora_cnpj or '', 'gestora_endereco':t.gestora_endereco or '',
    'parceira_nome':t.parceira_nome or '', 'parceira_cnpj':t.parceira_cnpj or '', 'parceira_endereco':t.parceira_endereco or '',
    'proprietario_nome':proprietario_nome,'proprietario_documento':proprietario_documento,
-   'motorista_nome':d.nome,'motorista_cpf':d.cpf or 'A preencher','motorista_rg':d.rg or 'A preencher','motorista_cnh':d.numero_cnh or 'A preencher','motorista_endereco':d.endereco or 'A preencher',
+   'motorista_nome':d.nome,'motorista_cpf':d.cpf or 'A preencher','motorista_rg':d.rg or 'A preencher','motorista_cnh':d.numero_cnh or 'A preencher','motorista_endereco':endereco_completo_motorista(d),
    'nacionalidade':request.form.get('nacionalidade') or 'brasileiro','estado_civil':request.form.get('estado_civil') or 'solteiro','profissao':request.form.get('profissao') or 'motorista',
    'veiculo_modelo':v.marca_modelo or 'A preencher','veiculo_cor':v.cor or 'A preencher','veiculo_ano_fabricacao':v.ano_fabricacao or 'A preencher','veiculo_ano_modelo':v.ano_modelo or 'A preencher',
    'veiculo_placa':v.placa or 'A preencher','veiculo_renavam':v.renavam or 'A preencher','km_inicial':v.km_atual or 0,
    'periodicidade':periodicidade,'periodicidade_minuscula':periodicidade.lower(),'dia_vencimento':request.form.get('dia_vencimento','segunda-feira'),
-   'valor_locacao':moeda_br(valor_locacao),'valor_locacao_extenso':'valor informado acima','caucao':moeda_br(caucao),'caucao_extenso':'valor informado acima',
-   'franquia':moeda_br(franquia),'franquia_extenso':'valor informado acima','limite_km':request.form.get('limite_km') or 'sem limite definido','valor_km_excedente':moeda_br(valor_km),
+   'valor_locacao':moeda_br(valor_locacao),'valor_locacao_extenso':valor_extenso(valor_locacao),'caucao':moeda_br(caucao),'caucao_extenso':valor_extenso(caucao),
+   'franquia':moeda_br(franquia),'franquia_extenso':valor_extenso(franquia),'limite_km':request.form.get('limite_km') or '','valor_km_excedente':moeda_br(valor_km),
    'multa_atraso_percentual':request.form.get('multa_atraso_percentual') or '6','juros_mes_percentual':request.form.get('juros_mes_percentual') or '1','indice_correcao':request.form.get('indice_correcao') or 'IGPM',
    'prazo_bloqueio_horas':request.form.get('prazo_bloqueio_horas') or '48','multa_diaria':moeda_br(request.form.get('multa_diaria') or 500),'taxa_adm_multas_percentual':request.form.get('taxa_adm_multas_percentual') or '20',
    'data_inicio_formatada':data_br(data_inicio),'hora_inicio':request.form.get('hora_inicio') or '09:00','data_fim_formatada':data_br(data_fim),'prazo_dias':prazo_dias,
@@ -823,12 +853,21 @@ def contratos():
    indice_correcao=repl['indice_correcao'],prazo_bloqueio_horas=request.form.get('prazo_bloqueio_horas') or 48,multa_diaria=request.form.get('multa_diaria') or 500,
    taxa_adm_multas_percentual=request.form.get('taxa_adm_multas_percentual') or 20,nacionalidade=repl['nacionalidade'],estado_civil=repl['estado_civil'],
    profissao=repl['profissao'],cidade_assinatura=repl['cidade_assinatura'],texto_final=texto_final,
-   status='Gerado',versao=1,criado_por_id=current_user.id,criado_em=datetime.utcnow(),
+   status='Gerado',versao=1,criado_por_id=current_user.id,criado_em=agora_sao_paulo_naive(),
   )
   db.session.add(c)
   db.session.flush()
   c.numero_contrato=gerar_numero_contrato(c.id,c.criado_em)
   c.texto_final=(c.texto_final or '').replace('{{numero_contrato}}',c.numero_contrato)
+  if not c.limite_km:
+   c.texto_final=c.texto_final.replace('6.3. A quilometragem semanal fica limitada a  km. A quilometragem excedente será cobrada no valor de R$ '+moeda_br(c.valor_km_excedente)+' por quilômetro.','6.3. Não há limite semanal de quilometragem neste contrato.')
+  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final)
+  chave_pdf=f'{tid()}/documentos/contratos/{c.numero_contrato}.pdf'
+  storage.upload(BytesIO(pdf_bytes),chave_pdf,'application/pdf')
+  hash_pdf=hashlib.sha256(pdf_bytes).hexdigest()
+  doc=Document(tenant_id=tid(),tipo='Contrato',entidade='Contrato',entidade_id=c.id,identificador=c.numero_contrato,numero_documento=c.numero_contrato,nome_original=f'{c.numero_contrato}.pdf',arquivo=chave_pdf,hash_sha256=hash_pdf,status='Ativo',versao=c.versao or 1,criado_em=agora_sao_paulo_naive())
+  db.session.add(doc); db.session.flush()
+  c.documento_id=doc.id; c.arquivo_pdf=chave_pdf; c.hash_documento=hash_pdf; c.gerado_em=agora_sao_paulo_naive()
   registrar_evento_contrato(
    db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,
    evento='CONTRATO_GERADO',descricao=f'Contrato {c.numero_contrato} gerado com o modelo {c.template_nome} v{c.template_versao}.',
@@ -846,7 +885,8 @@ def contratos():
 def contrato_detalhe(id):
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle),joinedload(Contract.criado_por)).filter_by(id=id,tenant_id=tid()).first_or_404()
  eventos=ContractEvent.query.options(joinedload(ContractEvent.user)).filter_by(tenant_id=tid(),contract_id=c.id).order_by(ContractEvent.criado_em.desc()).all()
- return render_template('contrato_detalhe.html',c=c,eventos=eventos)
+ documento=Document.query.filter_by(id=c.documento_id,tenant_id=tid()).first() if c.documento_id else None
+ return render_template('contrato_detalhe.html',c=c,eventos=eventos,documento=documento)
 
 @app.route('/contratos/<int:id>/status',methods=['POST'])
 @login_required
@@ -872,6 +912,42 @@ def contrato_status(id):
  db.session.commit()
  flash(f'Status do contrato {c.numero_contrato} atualizado para {novo}.','success')
  return redirect(url_for('contrato_detalhe',id=id))
+
+
+@app.route('/contratos/<int:id>/gerar-pdf',methods=['POST'])
+@login_required
+def gerar_pdf_contrato_existente(id):
+ c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if c.arquivo_pdf and c.documento_id:
+  flash('O PDF deste contrato já está armazenado.','info')
+  return redirect(url_for('contrato_detalhe',id=id))
+ chave_pdf=f'{tid()}/documentos/contratos/{c.numero_contrato}.pdf'
+ try:
+  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final)
+  storage.upload(BytesIO(pdf_bytes),chave_pdf,'application/pdf')
+  hash_pdf=hashlib.sha256(pdf_bytes).hexdigest()
+  doc=Document(tenant_id=tid(),tipo='Contrato',entidade='Contrato',entidade_id=c.id,identificador=c.numero_contrato,numero_documento=c.numero_contrato,nome_original=f'{c.numero_contrato}.pdf',arquivo=chave_pdf,hash_sha256=hash_pdf,status='Ativo',versao=c.versao or 1,criado_em=agora_sao_paulo_naive())
+  db.session.add(doc); db.session.flush()
+  c.documento_id=doc.id; c.arquivo_pdf=chave_pdf; c.hash_documento=hash_pdf; c.gerado_em=agora_sao_paulo_naive()
+  registrar_evento_contrato(db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,evento='PDF_ARMAZENADO',descricao=f'PDF do contrato {c.numero_contrato} armazenado no Cloudflare R2.',status_novo=c.status)
+  db.session.commit()
+  flash('PDF gerado e enviado para a Central de Documentos.','success')
+ except Exception:
+  db.session.rollback()
+  try: storage.delete(chave_pdf)
+  except Exception: pass
+  app.logger.exception('Falha ao gerar PDF do contrato %s',c.id)
+  flash('Não foi possível gerar e armazenar o PDF.','danger')
+ return redirect(url_for('contrato_detalhe',id=id))
+
+@app.route('/contratos/<int:id>/pdf')
+@login_required
+def contrato_pdf(id):
+ c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not c.arquivo_pdf: abort(404)
+ try: conteudo=storage.download(c.arquivo_pdf)
+ except StorageNotFoundError: abort(404)
+ return send_file(BytesIO(conteudo),as_attachment=True,download_name=f'{c.numero_contrato}.pdf',mimetype='application/pdf')
 
 @app.route('/contratos/<int:id>/texto')
 @login_required

@@ -13,3 +13,5 @@ PyMuPDF==1.24.7
 reportlab==4.2.2
 
 boto3==1.35.99
+
+num2words==0.5.14
