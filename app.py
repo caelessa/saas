@@ -11,6 +11,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.datastructures import FileStorage
 from services.document_reader import extract_text, parse_cnh, parse_crlv
 from services.storage_service import StorageService, StorageNotFoundError
+from services.contract_service import gerar_numero_contrato, registrar_evento_contrato
 from io import BytesIO
 from decimal import Decimal
 
@@ -47,7 +48,60 @@ class MileageRequest(db.Model):
 class ContractTemplate(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); descricao=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); padrao=db.Column(db.Boolean,default=False); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); nome_original=db.Column(db.String(255)); gestora_nome=db.Column(db.String(180)); gestora_fantasia=db.Column(db.String(120)); gestora_cnpj=db.Column(db.String(30)); gestora_endereco=db.Column(db.String(255)); parceira_nome=db.Column(db.String(180)); parceira_cnpj=db.Column(db.String(30)); parceira_endereco=db.Column(db.String(255)); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id')); template_nome=db.Column(db.String(120)); template_versao=db.Column(db.Integer,default=1); data_inicio=db.Column(db.String(10)); hora_inicio=db.Column(db.String(5)); data_fim=db.Column(db.String(10)); periodicidade=db.Column(db.String(30)); dia_vencimento=db.Column(db.String(30)); valor_locacao=db.Column(db.Numeric(12,2)); caucao=db.Column(db.Numeric(12,2)); franquia=db.Column(db.Numeric(12,2)); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2)); multa_atraso_percentual=db.Column(db.Numeric(6,2)); juros_mes_percentual=db.Column(db.Numeric(6,2)); indice_correcao=db.Column(db.String(30)); prazo_bloqueio_horas=db.Column(db.Integer); multa_diaria=db.Column(db.Numeric(12,2)); taxa_adm_multas_percentual=db.Column(db.Numeric(6,2)); nacionalidade=db.Column(db.String(60)); estado_civil=db.Column(db.String(60)); profissao=db.Column(db.String(100)); cidade_assinatura=db.Column(db.String(100)); status=db.Column(db.String(30),default='Ativo'); texto_final=db.Column(db.Text); driver=db.relationship('Driver'); vehicle=db.relationship('Vehicle'); template=db.relationship('ContractTemplate')
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ numero_contrato=db.Column(db.String(30),unique=True,index=True)
+ driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'))
+ vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'))
+ template_id=db.Column(db.Integer,db.ForeignKey('contract_template.id'))
+ template_nome=db.Column(db.String(120))
+ template_versao=db.Column(db.Integer,default=1)
+ versao=db.Column(db.Integer,default=1)
+ data_inicio=db.Column(db.String(10))
+ hora_inicio=db.Column(db.String(5))
+ data_fim=db.Column(db.String(10))
+ periodicidade=db.Column(db.String(30))
+ dia_vencimento=db.Column(db.String(30))
+ valor_locacao=db.Column(db.Numeric(12,2))
+ caucao=db.Column(db.Numeric(12,2))
+ franquia=db.Column(db.Numeric(12,2))
+ limite_km=db.Column(db.Integer)
+ valor_km_excedente=db.Column(db.Numeric(10,2))
+ multa_atraso_percentual=db.Column(db.Numeric(6,2))
+ juros_mes_percentual=db.Column(db.Numeric(6,2))
+ indice_correcao=db.Column(db.String(30))
+ prazo_bloqueio_horas=db.Column(db.Integer)
+ multa_diaria=db.Column(db.Numeric(12,2))
+ taxa_adm_multas_percentual=db.Column(db.Numeric(6,2))
+ nacionalidade=db.Column(db.String(60))
+ estado_civil=db.Column(db.String(60))
+ profissao=db.Column(db.String(100))
+ cidade_assinatura=db.Column(db.String(100))
+ status=db.Column(db.String(30),default='Gerado')
+ texto_final=db.Column(db.Text)
+ criado_por_id=db.Column(db.Integer,db.ForeignKey('user.id'))
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
+ assinado_em=db.Column(db.DateTime)
+ assinatura_id=db.Column(db.String(120))
+ driver=db.relationship('Driver')
+ vehicle=db.relationship('Vehicle')
+ template=db.relationship('ContractTemplate')
+ criado_por=db.relationship('User')
+
+class ContractEvent(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ contract_id=db.Column(db.Integer,db.ForeignKey('contract.id'),nullable=False,index=True)
+ user_id=db.Column(db.Integer,db.ForeignKey('user.id'))
+ evento=db.Column(db.String(60),nullable=False)
+ descricao=db.Column(db.Text)
+ status_anterior=db.Column(db.String(30))
+ status_novo=db.Column(db.String(30))
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ user=db.relationship('User')
+ contract=db.relationship('Contract',backref=db.backref('eventos',lazy='dynamic',cascade='all, delete-orphan'))
+
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
@@ -79,7 +133,7 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,Document,Maintenance,Alert,Integration]
+ models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Alert,Integration]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
@@ -189,6 +243,9 @@ def migrate_schema():
    ('juros_mes_percentual','NUMERIC(6,2)'),('indice_correcao','VARCHAR(30)'),('prazo_bloqueio_horas','INTEGER'),
    ('multa_diaria','NUMERIC(12,2)'),('taxa_adm_multas_percentual','NUMERIC(6,2)'),('nacionalidade','VARCHAR(60)'),
    ('estado_civil','VARCHAR(60)'),('profissao','VARCHAR(100)'),('cidade_assinatura','VARCHAR(100)'),
+   ('numero_contrato','VARCHAR(30)'),('versao','INTEGER DEFAULT 1'),('criado_por_id','INTEGER'),
+   ('criado_em','TIMESTAMP'),('atualizado_em','TIMESTAMP'),('assinado_em','TIMESTAMP'),
+   ('assinatura_id','VARCHAR(120)'),
   ],
  }
  inspector=inspect(db.engine)
@@ -366,6 +423,13 @@ def ensure_locadrivers_template(tenant_id, force_new_version=False):
 def seed():
  db.create_all()
  migrate_schema()
+ # Garante tabela de histórico após migrações e numera contratos antigos.
+ db.create_all()
+ for contrato in Contract.query.filter(Contract.numero_contrato.is_(None)).order_by(Contract.id).all():
+  contrato.numero_contrato=gerar_numero_contrato(contrato.id,contrato.criado_em or datetime.utcnow())
+  if contrato.status in (None,'Ativo'):
+   contrato.status='Gerado'
+  contrato.versao=contrato.versao or 1
  if not Tenant.query.first():
   t=Tenant(nome='Locadora Demonstração'); db.session.add(t); db.session.flush()
   u=User(tenant_id=t.id,nome='Administrador',email='admin@frotafacil.local',senha=generate_password_hash('admin123')); db.session.add(u)
@@ -410,7 +474,7 @@ def dashboard():
  vehicles=Vehicle.query.filter_by(tenant_id=tid()).all()
  oil_alerts=[(v,oil_status(v)) for v in vehicles if oil_status(v)['state'] in ('warning','overdue')]
  system_alerts=Alert.query.filter_by(tenant_id=tid(),lido=False).limit(5).all()
- cards={'veiculos':len(vehicles),'motoristas':Driver.query.filter_by(tenant_id=tid()).count(),'contratos':Contract.query.filter_by(tenant_id=tid(),status='Ativo').count(),'alertas':len(oil_alerts)+Alert.query.filter_by(tenant_id=tid(),lido=False).count()}
+ cards={'veiculos':len(vehicles),'motoristas':Driver.query.filter_by(tenant_id=tid()).count(),'contratos':Contract.query.filter(Contract.tenant_id==tid(),Contract.status.in_(['Rascunho','Gerado','Assinado'])).count(),'alertas':len(oil_alerts)+Alert.query.filter_by(tenant_id=tid(),lido=False).count()}
  return render_template('dashboard.html',cards=cards,veiculos=sorted(vehicles,key=lambda v:v.id,reverse=True)[:6],alertas=system_alerts,oil_alerts=oil_alerts[:8],oil_status=oil_status)
 
 @app.route('/motoristas',methods=['GET','POST'])
@@ -746,6 +810,8 @@ def contratos():
    'data_inicio_formatada':data_br(data_inicio),'hora_inicio':request.form.get('hora_inicio') or '09:00','data_fim_formatada':data_br(data_fim),'prazo_dias':prazo_dias,
    'cidade_assinatura':request.form.get('cidade_assinatura') or 'Carapicuíba/SP','data_assinatura_formatada':data_br(data_inicio),
   }
+  # O número definitivo depende do ID; primeiro preservamos um marcador no texto.
+  repl['numero_contrato']='{{numero_contrato}}'
   texto_final=t.conteudo or ''
   for key,value in repl.items():
    texto_final=texto_final.replace('{{'+key+'}}',str(value))
@@ -757,9 +823,20 @@ def contratos():
    indice_correcao=repl['indice_correcao'],prazo_bloqueio_horas=request.form.get('prazo_bloqueio_horas') or 48,multa_diaria=request.form.get('multa_diaria') or 500,
    taxa_adm_multas_percentual=request.form.get('taxa_adm_multas_percentual') or 20,nacionalidade=repl['nacionalidade'],estado_civil=repl['estado_civil'],
    profissao=repl['profissao'],cidade_assinatura=repl['cidade_assinatura'],texto_final=texto_final,
+   status='Gerado',versao=1,criado_por_id=current_user.id,criado_em=datetime.utcnow(),
   )
-  db.session.add(c); v.status='Alugado'; db.session.commit()
-  flash('Contrato completo gerado com todas as cláusulas da minuta.','success')
+  db.session.add(c)
+  db.session.flush()
+  c.numero_contrato=gerar_numero_contrato(c.id,c.criado_em)
+  c.texto_final=(c.texto_final or '').replace('{{numero_contrato}}',c.numero_contrato)
+  registrar_evento_contrato(
+   db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,
+   evento='CONTRATO_GERADO',descricao=f'Contrato {c.numero_contrato} gerado com o modelo {c.template_nome} v{c.template_versao}.',
+   status_novo='Gerado'
+  )
+  v.status='Alugado'
+  db.session.commit()
+  flash(f'Contrato {c.numero_contrato} gerado com sucesso.','success')
   return redirect(url_for('contrato_detalhe',id=c.id))
  hoje=date.today(); fim=hoje+timedelta(days=90)
  return render_template('contratos.html',items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).order_by(ContractTemplate.padrao.desc(),ContractTemplate.id.desc()).all(),hoje=hoje.isoformat(),fim_padrao=fim.isoformat())
@@ -767,13 +844,40 @@ def contratos():
 @app.route('/contratos/<int:id>')
 @login_required
 def contrato_detalhe(id):
- return render_template('contrato_detalhe.html',c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404())
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle),joinedload(Contract.criado_por)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ eventos=ContractEvent.query.options(joinedload(ContractEvent.user)).filter_by(tenant_id=tid(),contract_id=c.id).order_by(ContractEvent.criado_em.desc()).all()
+ return render_template('contrato_detalhe.html',c=c,eventos=eventos)
+
+@app.route('/contratos/<int:id>/status',methods=['POST'])
+@login_required
+def contrato_status(id):
+ c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ novo=(request.form.get('status') or '').strip()
+ permitidos={'Rascunho','Gerado','Assinado','Cancelado'}
+ if novo not in permitidos:
+  flash('Status inválido.','danger')
+  return redirect(url_for('contrato_detalhe',id=id))
+ anterior=c.status
+ if anterior==novo:
+  flash('O contrato já está com esse status.','info')
+  return redirect(url_for('contrato_detalhe',id=id))
+ c.status=novo
+ if novo=='Assinado' and not c.assinado_em:
+  c.assinado_em=datetime.utcnow()
+ registrar_evento_contrato(
+  db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,
+  evento='STATUS_ALTERADO',descricao=f'Status alterado de {anterior or "-"} para {novo}.',
+  status_anterior=anterior,status_novo=novo
+ )
+ db.session.commit()
+ flash(f'Status do contrato {c.numero_contrato} atualizado para {novo}.','success')
+ return redirect(url_for('contrato_detalhe',id=id))
 
 @app.route('/contratos/<int:id>/texto')
 @login_required
 def contrato_texto(id):
  c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- return send_file(BytesIO((c.texto_final or '').encode('utf-8')),as_attachment=True,download_name=f'contrato_{c.id}.txt',mimetype='text/plain; charset=utf-8')
+ return send_file(BytesIO((c.texto_final or '').encode('utf-8')),as_attachment=True,download_name=f'{c.numero_contrato or ("contrato_"+str(c.id))}.txt',mimetype='text/plain; charset=utf-8')
 
 @app.route('/modelos-contrato')
 @login_required
