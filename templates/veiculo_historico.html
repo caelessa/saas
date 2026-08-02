@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block heading %}{{v.placa}} — Histórico operacional{% endblock %}
+{% block subheading %}{{v.marca_modelo or 'Veículo'}}{% endblock %}
+{% block content %}
+<div class="cards contract-summary"><div class="card"><small>Status atual</small><strong>{{v.status}}</strong></div><div class="card"><small>Motorista atual</small><strong>{{v.current_driver.nome if v.current_driver else '-'}}</strong></div><div class="card"><small>Contrato atual</small><strong>{{v.current_contract.numero_contrato if v.current_contract else '-'}}</strong></div><div class="card"><small>Alterado em</small><strong>{{v.status_changed_at.strftime('%d/%m/%Y %H:%M') if v.status_changed_at else '-'}}</strong></div></div>
+<section class="card"><h2>Linha do tempo</h2><div class="timeline">{% for e in eventos %}<div class="timeline-item"><strong>{{e.status_anterior or '-'}} → {{e.status_novo}}</strong><span>{{e.criado_em.strftime('%d/%m/%Y %H:%M')}}</span><p>{{e.descricao or ''}}</p><small>{% if e.contract %}Contrato {{e.contract.numero_contrato}} · {% endif %}{% if e.driver %}{{e.driver.nome}} · {% endif %}Responsável: {{e.user.nome if e.user else 'Sistema'}}</small></div>{% else %}<p>Nenhum evento operacional registrado.</p>{% endfor %}</div></section>
+<a class="button secondary" href="{{url_for('veiculos')}}">Voltar</a>
+{% endblock %}
