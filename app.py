@@ -17,6 +17,8 @@ from services.contract_state_service import ContractStateService, ContractStateE
 from services.vehicle_state_service import VehicleStateService, VehicleStateError
 from services.pdf_service import gerar_pdf_contrato
 from services.signature_service import SignatureService, SignatureValidationError
+from services.communication_service import CommunicationService, CommunicationError
+from services.signature_provider_service import SignatureProviderService
 from io import BytesIO
 from decimal import Decimal
 
@@ -157,6 +159,36 @@ class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Integration(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); ativo=db.Column(db.Boolean,default=False); configuracao=db.Column(db.Text)
+
+class MessageQueue(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ channel=db.Column(db.String(30),nullable=False,default='whatsapp')
+ provider=db.Column(db.String(40),nullable=False,default='whatsapp_web')
+ recipient=db.Column(db.String(40),nullable=False,index=True)
+ recipient_name=db.Column(db.String(150))
+ message_type=db.Column(db.String(50),default='texto')
+ body=db.Column(db.Text,nullable=False)
+ template_name=db.Column(db.String(120))
+ related_entity=db.Column(db.String(40))
+ related_entity_id=db.Column(db.Integer)
+ status=db.Column(db.String(30),default='PENDENTE',index=True)
+ external_id=db.Column(db.String(180),index=True)
+ attempts=db.Column(db.Integer,default=0)
+ error_message=db.Column(db.Text)
+ scheduled_at=db.Column(db.DateTime,index=True)
+ sent_at=db.Column(db.DateTime)
+ created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ updated_at=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
+
+class MessageEvent(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ message_id=db.Column(db.Integer,db.ForeignKey('message_queue.id'),nullable=False,index=True)
+ event=db.Column(db.String(40),nullable=False)
+ description=db.Column(db.Text)
+ created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ message=db.relationship('MessageQueue',backref=db.backref('events',lazy='dynamic',cascade='all, delete-orphan'))
 @login.user_loader
 def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
@@ -180,7 +212,7 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Alert,Integration]
+ models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Alert,Integration,MessageQueue,MessageEvent]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
@@ -775,8 +807,29 @@ def solicitar_km(id):
   db.session.add(req); db.session.commit()
  link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
  mensagem=f'Olá, {d.nome}! Precisamos da quilometragem atual do veículo {v.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
- from urllib.parse import quote
- return redirect(f'https://wa.me/{telefone}?text={quote(mensagem)}')
+ integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+ fila=MessageQueue(
+  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
+  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,
+  related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
+  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila); db.session.flush()
+ try:
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration)
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
+  fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
+  db.session.commit()
+  if result.redirect_url:
+   return redirect(result.redirect_url)
+  flash('Contrato enviado automaticamente pela WhatsApp Business Platform.','success')
+  return redirect(url_for('contrato_detalhe',id=id))
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  db.session.commit(); flash(str(exc),'danger')
+  return redirect(url_for('contrato_detalhe',id=id))
 
 @app.route('/km/<token>',methods=['GET','POST'])
 def registrar_quilometragem_publica(token):
@@ -1079,8 +1132,29 @@ def contrato_whatsapp(id):
   db.session.commit()
  except (ContractStateError,VehicleStateError) as exc:
   db.session.rollback(); flash(str(exc),'danger'); return redirect(url_for('contrato_detalhe',id=id))
- from urllib.parse import quote
- return redirect(f'https://wa.me/{telefone}?text={quote(mensagem)}')
+ integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+ fila=MessageQueue(
+  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
+  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,
+  related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
+  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila); db.session.flush()
+ try:
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration)
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
+  fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
+  db.session.commit()
+  if result.redirect_url:
+   return redirect(result.redirect_url)
+  flash('Contrato enviado automaticamente pela WhatsApp Business Platform.','success')
+  return redirect(url_for('contrato_detalhe',id=id))
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  db.session.commit(); flash(str(exc),'danger')
+  return redirect(url_for('contrato_detalhe',id=id))
 
 @app.route('/contrato-publico/<codigo>')
 def contrato_publico(codigo):
@@ -1396,9 +1470,77 @@ def baixar_backup_tenant():
  nome=f'backup_frota_facil_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")}.json'
  return send_file(BytesIO(conteudo),as_attachment=True,download_name=nome,mimetype='application/json')
 
-@app.route('/integracoes')
+def _integration(tipo):
+ return Integration.query.filter_by(tenant_id=tid(),tipo=tipo).first()
+
+def _integration_config(item):
+ if not item or not item.configuracao:
+  return {}
+ try:
+  value=json.loads(item.configuracao)
+  return value if isinstance(value,dict) else {}
+ except Exception:
+  return {}
+
+@app.route('/integracoes',methods=['GET','POST'])
 @login_required
-def integracoes(): return render_template('integracoes.html')
+def integracoes():
+ if request.method=='POST':
+  section=request.form.get('section')
+  if section=='whatsapp':
+   item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
+   provider=request.form.get('provider','web')
+   cfg={
+    'provider':provider,
+    'phone_number_id':request.form.get('phone_number_id','').strip(),
+    'business_account_id':request.form.get('business_account_id','').strip(),
+    'access_token':request.form.get('access_token','').strip(),
+    'verify_token':request.form.get('verify_token','').strip(),
+    'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
+    'contract_template_name':request.form.get('contract_template_name','').strip(),
+   }
+   item.ativo=(provider=='business')
+   item.configuracao=json.dumps(cfg,ensure_ascii=False)
+   db.session.add(item); db.session.commit(); flash('Configuração do WhatsApp salva.','success')
+  elif section=='signature':
+   item=_integration('signature') or Integration(tenant_id=tid(),tipo='signature')
+   provider=request.form.get('signature_provider','local')
+   cfg={'provider':provider}
+   if provider=='clicksign':
+    cfg.update({'api_token':request.form.get('clicksign_api_token','').strip(),'workspace_key':request.form.get('clicksign_workspace_key','').strip(),'environment':request.form.get('clicksign_environment','sandbox')})
+   elif provider=='docusign':
+    cfg.update({'account_id':request.form.get('docusign_account_id','').strip(),'integration_key':request.form.get('docusign_integration_key','').strip(),'environment':request.form.get('docusign_environment','demo')})
+   item.ativo=(provider!='local')
+   item.configuracao=json.dumps(cfg,ensure_ascii=False)
+   db.session.add(item); db.session.commit(); flash('Provedor de assinatura salvo.','success')
+  return redirect(url_for('integracoes'))
+ whatsapp_item=_integration('whatsapp'); signature_item=_integration('signature')
+ whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
+ signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
+ recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
+ return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes)
+
+@app.route('/integracoes/whatsapp/testar',methods=['POST'])
+@login_required
+def testar_whatsapp_business():
+ item=_integration('whatsapp')
+ cfg=_integration_config(item)
+ telefone=normalize_phone(request.form.get('telefone'))
+ if not telefone:
+  flash('Informe um telefone para o teste.','danger'); return redirect(url_for('integracoes'))
+ mensagem='Teste de integração enviado pelo Frota Fácil.'
+ fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
+ db.session.add(fila); db.session.flush()
+ try:
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=cfg.get('contract_template_name') or None)
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Teste manual de integração.',created_at=agora_sao_paulo_naive()))
+  db.session.commit(); flash('Teste processado com sucesso.','success')
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=1
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  db.session.commit(); flash(str(exc),'danger')
+ return redirect(url_for('integracoes'))
 
 with app.app_context(): seed()
 if __name__=='__main__': app.run(host='0.0.0.0',port=int(os.getenv('PORT',5000)),debug=True)
