@@ -1048,9 +1048,9 @@ def contrato_whatsapp(id):
   flash('O motorista não possui telefone válido cadastrado.','danger')
   return redirect(url_for('contrato_detalhe',id=id))
  codigo_publico=garantir_codigo_publico_contrato(c)
- link=url_for('validar_contrato_publico',codigo=codigo_publico,_external=True)
+ link=url_for('contrato_publico',codigo=codigo_publico,_external=True)
  mensagem=(f'Olá, {c.driver.nome}! Segue o contrato {c.numero_contrato} referente ao veículo '
-           f'{c.vehicle.marca_modelo} - placa {c.vehicle.placa}. Acesse para visualizar e validar: {link}')
+           f'{c.vehicle.marca_modelo} - placa {c.vehicle.placa}. Clique no link para visualizar o documento oficial: {link}')
  c.enviado_whatsapp_em=agora_sao_paulo_naive()
  try:
   if c.status in ('Gerado','Rascunho'):
@@ -1063,19 +1063,57 @@ def contrato_whatsapp(id):
  from urllib.parse import quote
  return redirect(f'https://wa.me/{telefone}?text={quote(mensagem)}')
 
-@app.route('/validar/contrato/<codigo>')
-def validar_contrato_publico(codigo):
+@app.route('/contrato-publico/<codigo>')
+def contrato_publico(codigo):
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(codigo_publico=codigo).first_or_404()
+ if not c.arquivo_pdf:
+  abort(404)
  if not c.visualizado_em:
   c.visualizado_em=agora_sao_paulo_naive()
   try:
    if c.status in ('Gerado','Enviado'):
     ContractStateService(db.session,ContractEvent,VehicleEvent).transition(contract=c,new_status='Visualizado',user_id=None,now=agora_sao_paulo_naive())
+   registrar_evento_contrato(db.session,ContractEvent,tenant_id=c.tenant_id,contract_id=c.id,user_id=None,
+    evento='CONTRATO_PUBLICO_ABERTO',descricao=f'Página pública do contrato {c.numero_contrato} visualizada.',status_novo=c.status)
    db.session.commit()
   except (ContractStateError,VehicleStateError):
    db.session.rollback()
  documento=Document.query.filter_by(id=c.documento_id,tenant_id=c.tenant_id).first() if c.documento_id else None
+ return render_template('contrato_publico.html',c=c,documento=documento)
+
+@app.route('/contrato-publico/<codigo>/pdf')
+def contrato_publico_pdf(codigo):
+ c=Contract.query.filter_by(codigo_publico=codigo).first_or_404()
+ if not c.arquivo_pdf:
+  abort(404)
+ try:
+  conteudo=storage.download(c.arquivo_pdf)
+ except StorageNotFoundError:
+  abort(404)
+ download=request.args.get('download')=='1'
+ disposition='attachment' if download else 'inline'
+ response=send_file(BytesIO(conteudo),as_attachment=download,download_name=f'{c.numero_contrato}.pdf',mimetype='application/pdf',max_age=0)
+ response.headers['Content-Disposition']=f'{disposition}; filename="{c.numero_contrato}.pdf"'
+ response.headers['X-Content-Type-Options']='nosniff'
+ response.headers['Cache-Control']='private, no-store, max-age=0'
+ return response
+
+@app.route('/validar/contrato/<codigo>')
+def validar_contrato_publico(codigo):
+ # Compatibilidade: links antigos enviados pelo WhatsApp apontavam diretamente
+ # para esta rota. Sem o parâmetro ?verificar=1, eles agora abrem a página
+ # pública completa do contrato em vez de mostrar apenas a autenticação.
+ c=Contract.query.filter_by(codigo_publico=codigo).first_or_404()
+ if request.args.get('verificar') != '1':
+  return redirect(url_for('contrato_publico',codigo=c.codigo_publico))
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=c.id).first_or_404()
+ documento=Document.query.filter_by(id=c.documento_id,tenant_id=c.tenant_id).first() if c.documento_id else None
  return render_template('validar_contrato.html',c=c,documento=documento)
+
+@app.route('/contrato/<codigo>')
+def contrato_publico_alias(codigo):
+ # Alias curto e estável para compartilhamento externo.
+ return redirect(url_for('contrato_publico',codigo=codigo))
 
 @app.route('/modelos-contrato')
 @login_required
