@@ -1,4 +1,4 @@
-import os, uuid, re, json, hashlib, unicodedata
+import os, uuid, re, json, hashlib, unicodedata, base64, binascii
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +16,7 @@ from services.contract_service import gerar_numero_contrato, registrar_evento_co
 from services.contract_state_service import ContractStateService, ContractStateError
 from services.vehicle_state_service import VehicleStateService, VehicleStateError
 from services.pdf_service import gerar_pdf_contrato
+from services.signature_service import SignatureService, SignatureValidationError
 from io import BytesIO
 from decimal import Decimal
 
@@ -99,6 +100,24 @@ class Contract(db.Model):
  vehicle=db.relationship('Vehicle',foreign_keys=[vehicle_id])
  template=db.relationship('ContractTemplate')
  criado_por=db.relationship('User')
+
+class Signature(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ contract_id=db.Column(db.Integer,db.ForeignKey('contract.id'),nullable=False,unique=True,index=True)
+ driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False,index=True)
+ status=db.Column(db.String(30),default='Assinada')
+ signatario_nome=db.Column(db.String(150),nullable=False)
+ cpf_confirmado=db.Column(db.String(14))
+ arquivo_assinatura=db.Column(db.String(255),nullable=False)
+ hash_assinatura=db.Column(db.String(64),nullable=False)
+ hash_documento=db.Column(db.String(64),nullable=False)
+ ip=db.Column(db.String(64))
+ user_agent=db.Column(db.Text)
+ aceite_texto=db.Column(db.Text)
+ assinado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ contract=db.relationship('Contract',backref=db.backref('signature',uselist=False,cascade='all, delete-orphan'))
+ driver=db.relationship('Driver')
 
 class ContractEvent(db.Model):
  id=db.Column(db.Integer,primary_key=True)
@@ -971,7 +990,7 @@ def contrato_detalhe(id):
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle),joinedload(Contract.criado_por)).filter_by(id=id,tenant_id=tid()).first_or_404()
  eventos=ContractEvent.query.options(joinedload(ContractEvent.user)).filter_by(tenant_id=tid(),contract_id=c.id).order_by(ContractEvent.criado_em.desc()).all()
  documento=Document.query.filter_by(id=c.documento_id,tenant_id=tid()).first() if c.documento_id else None
- return render_template('contrato_detalhe.html',c=c,eventos=eventos,documento=documento)
+ return render_template('contrato_detalhe.html',c=c,eventos=eventos,documento=documento,signature=c.signature)
 
 @app.route('/contratos/<int:id>/status',methods=['POST'])
 @login_required
@@ -1079,7 +1098,61 @@ def contrato_publico(codigo):
   except (ContractStateError,VehicleStateError):
    db.session.rollback()
  documento=Document.query.filter_by(id=c.documento_id,tenant_id=c.tenant_id).first() if c.documento_id else None
- return render_template('contrato_publico.html',c=c,documento=documento)
+ return render_template('contrato_publico.html',c=c,documento=documento,signature=c.signature)
+
+@app.route('/contrato-publico/<codigo>/assinar',methods=['POST'])
+def assinar_contrato_publico(codigo):
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(codigo_publico=codigo).first_or_404()
+ if not c.arquivo_pdf or not c.hash_documento:
+  flash('O documento oficial ainda não está disponível para assinatura.','danger')
+  return redirect(url_for('contrato_publico',codigo=codigo))
+ if c.signature or c.status in ('Assinado','Ativo','Encerrado'):
+  flash('Este contrato já foi assinado.','success')
+  return redirect(url_for('contrato_publico',codigo=codigo))
+ assinatura_data=request.form.get('assinatura_data','')
+ nome=(request.form.get('signatario_nome') or '').strip()
+ cpf=(request.form.get('cpf_confirmado') or '').strip()
+ aceite=request.form.get('aceite')=='1'
+ try:
+  service=SignatureService(storage=storage)
+  png_bytes=service.validate_and_decode(assinatura_data)
+  service.validate_identity(driver=c.driver,nome=nome,cpf=cpf,aceite=aceite)
+  now=agora_sao_paulo_naive()
+  key=f'{c.tenant_id}/documentos/assinaturas/{c.numero_contrato}_{uuid.uuid4().hex[:10]}.png'
+  storage.upload(BytesIO(png_bytes),key,'image/png')
+  assinatura=Signature(
+   tenant_id=c.tenant_id,contract_id=c.id,driver_id=c.driver_id,status='Assinada',
+   signatario_nome=nome,cpf_confirmado=cpf,arquivo_assinatura=key,
+   hash_assinatura=hashlib.sha256(png_bytes).hexdigest(),hash_documento=c.hash_documento,
+   ip=service.client_ip(request),user_agent=(request.headers.get('User-Agent') or '')[:1000],
+   aceite_texto='Declaro que li integralmente e concordo com o contrato apresentado.',assinado_em=now,
+  )
+  db.session.add(assinatura)
+  db.session.flush()
+  c.assinatura_id=str(assinatura.id)
+  states=ContractStateService(db.session,ContractEvent,VehicleEvent)
+  states.transition(contract=c,new_status='Assinado',user_id=None,now=now)
+  states.transition(contract=c,new_status='Ativo',user_id=None,now=now)
+  registrar_evento_contrato(db.session,ContractEvent,tenant_id=c.tenant_id,contract_id=c.id,user_id=None,
+   evento='ASSINATURA_ELETRONICA',descricao=f'Contrato assinado eletronicamente por {nome}. IP registrado: {assinatura.ip or "não informado"}.',
+   status_anterior='Visualizado',status_novo='Ativo').criado_em=now
+  db.session.commit()
+ except (SignatureValidationError,ContractStateError,VehicleStateError) as exc:
+  db.session.rollback()
+  try:
+   if 'key' in locals(): storage.delete(key)
+  except Exception: pass
+  flash(str(exc),'danger')
+  return redirect(url_for('contrato_publico',codigo=codigo))
+ except Exception:
+  db.session.rollback()
+  try:
+   if 'key' in locals(): storage.delete(key)
+  except Exception: pass
+  app.logger.exception('Falha ao assinar contrato público')
+  flash('Não foi possível concluir a assinatura. Tente novamente.','danger')
+  return redirect(url_for('contrato_publico',codigo=codigo))
+ return redirect(url_for('contrato_publico',codigo=codigo,assinado='1'))
 
 @app.route('/contrato-publico/<codigo>/pdf')
 def contrato_publico_pdf(codigo):
