@@ -89,6 +89,9 @@ class Contract(db.Model):
  documento_id=db.Column(db.Integer,db.ForeignKey('document.id'))
  arquivo_pdf=db.Column(db.String(255))
  hash_documento=db.Column(db.String(64))
+ codigo_publico=db.Column(db.String(24),unique=True,index=True)
+ enviado_whatsapp_em=db.Column(db.DateTime)
+ visualizado_em=db.Column(db.DateTime)
  gerado_em=db.Column(db.DateTime)
  driver=db.relationship('Driver')
  vehicle=db.relationship('Vehicle')
@@ -275,7 +278,7 @@ def migrate_schema():
    ('estado_civil','VARCHAR(60)'),('profissao','VARCHAR(100)'),('cidade_assinatura','VARCHAR(100)'),
    ('numero_contrato','VARCHAR(30)'),('versao','INTEGER DEFAULT 1'),('criado_por_id','INTEGER'),
    ('criado_em','TIMESTAMP'),('atualizado_em','TIMESTAMP'),('assinado_em','TIMESTAMP'),
-   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('gerado_em','TIMESTAMP'),
+   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('codigo_publico','VARCHAR(24)'),('enviado_whatsapp_em','TIMESTAMP'),('visualizado_em','TIMESTAMP'),('gerado_em','TIMESTAMP'),
   ],
  }
  inspector=inspect(db.engine)
@@ -804,6 +807,18 @@ def foto_quilometragem(id):
   as_attachment=False,
  )
 
+def gerar_codigo_publico_contrato():
+ for _ in range(10):
+  codigo='FF-'+uuid.uuid4().hex[:4].upper()+'-'+uuid.uuid4().hex[:4].upper()+'-'+uuid.uuid4().hex[:4].upper()
+  if not Contract.query.filter_by(codigo_publico=codigo).first():
+   return codigo
+ raise RuntimeError('Não foi possível gerar código público único.')
+
+def telefone_whatsapp(valor):
+ digits=re.sub(r'\D','',valor or '')
+ if len(digits) in (10,11): digits='55'+digits
+ return digits
+
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
 def contratos():
@@ -853,7 +868,7 @@ def contratos():
    indice_correcao=repl['indice_correcao'],prazo_bloqueio_horas=request.form.get('prazo_bloqueio_horas') or 48,multa_diaria=request.form.get('multa_diaria') or 500,
    taxa_adm_multas_percentual=request.form.get('taxa_adm_multas_percentual') or 20,nacionalidade=repl['nacionalidade'],estado_civil=repl['estado_civil'],
    profissao=repl['profissao'],cidade_assinatura=repl['cidade_assinatura'],texto_final=texto_final,
-   status='Gerado',versao=1,criado_por_id=current_user.id,criado_em=agora_sao_paulo_naive(),
+   status='Gerado',versao=1,criado_por_id=current_user.id,criado_em=agora_sao_paulo_naive(),codigo_publico=gerar_codigo_publico_contrato(),
   )
   db.session.add(c)
   db.session.flush()
@@ -861,7 +876,7 @@ def contratos():
   c.texto_final=(c.texto_final or '').replace('{{numero_contrato}}',c.numero_contrato)
   if not c.limite_km:
    c.texto_final=c.texto_final.replace('6.3. A quilometragem semanal fica limitada a  km. A quilometragem excedente será cobrada no valor de R$ '+moeda_br(c.valor_km_excedente)+' por quilômetro.','6.3. Não há limite semanal de quilometragem neste contrato.')
-  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final)
+  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=c.codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True))
   chave_pdf=f'{tid()}/documentos/contratos/{c.numero_contrato}.pdf'
   storage.upload(BytesIO(pdf_bytes),chave_pdf,'application/pdf')
   hash_pdf=hashlib.sha256(pdf_bytes).hexdigest()
@@ -878,7 +893,15 @@ def contratos():
   flash(f'Contrato {c.numero_contrato} gerado com sucesso.','success')
   return redirect(url_for('contrato_detalhe',id=c.id))
  hoje=date.today(); fim=hoje+timedelta(days=90)
- return render_template('contratos.html',items=Contract.query.filter_by(tenant_id=tid()).order_by(Contract.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).order_by(ContractTemplate.padrao.desc(),ContractTemplate.id.desc()).all(),hoje=hoje.isoformat(),fim_padrao=fim.isoformat())
+ q=(request.args.get('q') or '').strip()
+ consulta=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.tenant_id==tid())
+ if q:
+  termo=f'%{q}%'
+  consulta=consulta.join(Driver,Contract.driver_id==Driver.id).join(Vehicle,Contract.vehicle_id==Vehicle.id).filter(db.or_(
+   Contract.numero_contrato.ilike(termo),Contract.status.ilike(termo),Driver.nome.ilike(termo),Driver.cpf.ilike(termo),
+   Driver.numero_cnh.ilike(termo),Vehicle.placa.ilike(termo),Vehicle.marca_modelo.ilike(termo),Vehicle.renavam.ilike(termo)
+  ))
+ return render_template('contratos.html',items=consulta.order_by(Contract.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),modelos=ContractTemplate.query.filter_by(tenant_id=tid(),ativo=True).order_by(ContractTemplate.padrao.desc(),ContractTemplate.id.desc()).all(),hoje=hoje.isoformat(),fim_padrao=fim.isoformat(),q=q)
 
 @app.route('/contratos/<int:id>')
 @login_required
@@ -923,7 +946,7 @@ def gerar_pdf_contrato_existente(id):
   return redirect(url_for('contrato_detalhe',id=id))
  chave_pdf=f'{tid()}/documentos/contratos/{c.numero_contrato}.pdf'
  try:
-  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final)
+  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=c.codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True))
   storage.upload(BytesIO(pdf_bytes),chave_pdf,'application/pdf')
   hash_pdf=hashlib.sha256(pdf_bytes).hexdigest()
   doc=Document(tenant_id=tid(),tipo='Contrato',entidade='Contrato',entidade_id=c.id,identificador=c.numero_contrato,numero_documento=c.numero_contrato,nome_original=f'{c.numero_contrato}.pdf',arquivo=chave_pdf,hash_sha256=hash_pdf,status='Ativo',versao=c.versao or 1,criado_em=agora_sao_paulo_naive())
@@ -954,6 +977,36 @@ def contrato_pdf(id):
 def contrato_texto(id):
  c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  return send_file(BytesIO((c.texto_final or '').encode('utf-8')),as_attachment=True,download_name=f'{c.numero_contrato or ("contrato_"+str(c.id))}.txt',mimetype='text/plain; charset=utf-8')
+
+@app.route('/contratos/<int:id>/whatsapp')
+@login_required
+def contrato_whatsapp(id):
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not c.arquivo_pdf:
+  flash('Gere e armazene o PDF antes de enviá-lo.','warning')
+  return redirect(url_for('contrato_detalhe',id=id))
+ telefone=telefone_whatsapp(c.driver.telefone)
+ if not telefone:
+  flash('O motorista não possui telefone válido cadastrado.','danger')
+  return redirect(url_for('contrato_detalhe',id=id))
+ link=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True)
+ mensagem=(f'Olá, {c.driver.nome}! Segue o contrato {c.numero_contrato} referente ao veículo '
+           f'{c.vehicle.marca_modelo} - placa {c.vehicle.placa}. Acesse para visualizar e validar: {link}')
+ c.enviado_whatsapp_em=agora_sao_paulo_naive()
+ registrar_evento_contrato(db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,
+  evento='WHATSAPP_PREPARADO',descricao=f'Mensagem do contrato {c.numero_contrato} preparada para o WhatsApp de {c.driver.nome}.',status_novo=c.status)
+ db.session.commit()
+ from urllib.parse import quote
+ return redirect(f'https://wa.me/{telefone}?text={quote(mensagem)}')
+
+@app.route('/validar/contrato/<codigo>')
+def validar_contrato_publico(codigo):
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(codigo_publico=codigo).first_or_404()
+ if not c.visualizado_em:
+  c.visualizado_em=agora_sao_paulo_naive()
+  db.session.commit()
+ documento=Document.query.filter_by(id=c.documento_id,tenant_id=c.tenant_id).first() if c.documento_id else None
+ return render_template('validar_contrato.html',c=c,documento=documento)
 
 @app.route('/modelos-contrato')
 @login_required
@@ -1048,10 +1101,14 @@ def documentos():
   return redirect(url_for('documentos'))
  q=(request.args.get('q') or '').strip()
  consulta=Document.query.filter_by(tenant_id=tid())
+ contratos_relacionados={c.id:c for c in Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(tenant_id=tid()).all()}
  if q:
   termo=f'%{q}%'
-  consulta=consulta.filter(db.or_(Document.identificador.ilike(termo),Document.numero_documento.ilike(termo),Document.nome_original.ilike(termo),Document.tipo.ilike(termo),Document.entidade.ilike(termo)))
- return render_template('documentos.html',items=consulta.order_by(Document.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),storage_backend=storage.backend_name,q=q)
+  ids_contratos=[c.id for c in contratos_relacionados.values() if any(q.lower() in (str(v or '').lower()) for v in [c.numero_contrato,c.driver.nome if c.driver else '',c.driver.cpf if c.driver else '',c.vehicle.placa if c.vehicle else '',c.vehicle.marca_modelo if c.vehicle else ''])]
+  filtros=[Document.identificador.ilike(termo),Document.numero_documento.ilike(termo),Document.nome_original.ilike(termo),Document.tipo.ilike(termo),Document.entidade.ilike(termo)]
+  if ids_contratos: filtros.append(db.and_(Document.entidade=='Contrato',Document.entidade_id.in_(ids_contratos)))
+  consulta=consulta.filter(db.or_(*filtros))
+ return render_template('documentos.html',items=consulta.order_by(Document.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),storage_backend=storage.backend_name,q=q,contratos_relacionados=contratos_relacionados)
 
 @app.route('/documentos/<int:id>/baixar')
 @login_required

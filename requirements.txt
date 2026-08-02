@@ -15,3 +15,5 @@ reportlab==4.2.2
 boto3==1.35.99
 
 num2words==0.5.14
+
+qrcode==7.4.2
