@@ -17,6 +17,15 @@
   </header>
 
   <main class="public-contract-main">
+    {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}{% endwith %}
+    {% if request.args.get('assinado')=='1' or signature %}
+    <section class="signature-success">
+      <strong>✓ Contrato assinado eletronicamente</strong>
+      <span>{{signature.assinado_em.strftime('%d/%m/%Y %H:%M') if signature else ''}}</span>
+      <p>O veículo foi alterado automaticamente para <b>Alugado</b> e o contrato está <b>Ativo</b>.</p>
+    </section>
+    {% endif %}
+
     <section class="public-contract-actions">
       <a class="button" href="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico,download=1)}}">Baixar PDF</a>
       <a class="button secondary" href="{{url_for('validar_contrato_publico',codigo=c.codigo_publico,verificar=1)}}">Verificar autenticidade</a>
@@ -24,15 +33,63 @@
     </section>
 
     <section class="public-contract-viewer-card">
-      <iframe
-        class="public-contract-viewer"
-        src="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico)}}#toolbar=1&navpanes=0"
-        title="Visualização do contrato {{c.numero_contrato}}">
-      </iframe>
-      <p class="public-contract-fallback">
-        Caso o documento não apareça, <a href="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico,download=1)}}">baixe o PDF aqui</a>.
-      </p>
+      <iframe class="public-contract-viewer" src="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico)}}#toolbar=1&navpanes=0" title="Visualização do contrato {{c.numero_contrato}}"></iframe>
+      <p class="public-contract-fallback">Caso o documento não apareça, <a href="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico,download=1)}}">baixe o PDF aqui</a>.</p>
     </section>
+
+    {% if not signature and c.status not in ['Assinado','Ativo','Encerrado','Cancelado'] %}
+    <section class="public-signature-card" id="assinatura">
+      <div>
+        <span class="public-contract-kicker">Assinatura eletrônica</span>
+        <h2>Assinar contrato</h2>
+        <p>Confira o documento acima. Em seguida, confirme sua identidade e assine com o dedo ou com o mouse.</p>
+      </div>
+      <form method="post" action="{{url_for('assinar_contrato_publico',codigo=c.codigo_publico)}}" id="signature-form">
+        <div class="signature-fields">
+          <label>Nome completo<input name="signatario_nome" value="{{c.driver.nome}}" required></label>
+          <label>CPF<input name="cpf_confirmado" inputmode="numeric" value="{{c.driver.cpf or ''}}" required></label>
+        </div>
+        <label class="signature-consent"><input type="checkbox" name="aceite" value="1" required> Declaro que li integralmente e concordo com este contrato.</label>
+        <div class="signature-canvas-wrap">
+          <canvas id="signature-canvas" width="900" height="260" aria-label="Área de assinatura"></canvas>
+          <span class="signature-hint">Assine dentro da área acima</span>
+        </div>
+        <input type="hidden" name="assinatura_data" id="assinatura-data">
+        <div class="signature-buttons">
+          <button type="button" class="button secondary" id="clear-signature">Limpar</button>
+          <button type="submit" class="button">Assinar contrato</button>
+        </div>
+        <p class="signature-legal-note">O sistema registrará data, hora, IP, navegador e os hashes do documento e da assinatura para compor a trilha de auditoria.</p>
+      </form>
+    </section>
+    {% elif c.status=='Cancelado' %}
+    <section class="signature-unavailable">Este contrato foi cancelado e não pode ser assinado.</section>
+    {% endif %}
   </main>
+
+<script>
+(() => {
+  const canvas=document.getElementById('signature-canvas');
+  if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  ctx.lineWidth=4; ctx.lineCap='round'; ctx.lineJoin='round'; ctx.strokeStyle='#172033';
+  let drawing=false, hasInk=false;
+  const point=(event)=>{
+    const rect=canvas.getBoundingClientRect();
+    const source=event.touches ? event.touches[0] : event;
+    return {x:(source.clientX-rect.left)*(canvas.width/rect.width),y:(source.clientY-rect.top)*(canvas.height/rect.height)};
+  };
+  const start=(e)=>{e.preventDefault(); drawing=true; const p=point(e); ctx.beginPath(); ctx.moveTo(p.x,p.y)};
+  const move=(e)=>{if(!drawing)return; e.preventDefault(); const p=point(e); ctx.lineTo(p.x,p.y); ctx.stroke(); hasInk=true};
+  const stop=(e)=>{if(drawing){e.preventDefault();drawing=false;ctx.closePath()}};
+  canvas.addEventListener('mousedown',start); canvas.addEventListener('mousemove',move); window.addEventListener('mouseup',stop);
+  canvas.addEventListener('touchstart',start,{passive:false}); canvas.addEventListener('touchmove',move,{passive:false}); canvas.addEventListener('touchend',stop,{passive:false});
+  document.getElementById('clear-signature').addEventListener('click',()=>{ctx.clearRect(0,0,canvas.width,canvas.height);hasInk=false});
+  document.getElementById('signature-form').addEventListener('submit',(e)=>{
+    if(!hasInk){e.preventDefault();alert('Faça sua assinatura antes de continuar.');return;}
+    document.getElementById('assinatura-data').value=canvas.toDataURL('image/png');
+  });
+})();
+</script>
 </body>
 </html>
