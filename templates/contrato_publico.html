@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{c.numero_contrato}} · Frota Fácil</title>
+  <link rel="stylesheet" href="{{url_for('static',filename='style.css')}}">
+</head>
+<body class="public-contract-page">
+  <header class="public-contract-header">
+    <div>
+      <span class="public-contract-kicker">Documento oficial</span>
+      <h1>{{c.numero_contrato}}</h1>
+      <p>{{c.driver.nome}} · {{c.vehicle.marca_modelo}} · {{c.vehicle.placa}}</p>
+    </div>
+    <span class="public-contract-auth">✓ Autêntico</span>
+  </header>
+
+  <main class="public-contract-main">
+    <section class="public-contract-actions">
+      <a class="button" href="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico,download=1)}}">Baixar PDF</a>
+      <a class="button secondary" href="{{url_for('validar_contrato_publico',codigo=c.codigo_publico)}}">Verificar autenticidade</a>
+      <span class="public-contract-status">Status: <strong>{{c.status}}</strong></span>
+    </section>
+
+    <section class="public-contract-viewer-card">
+      <iframe
+        class="public-contract-viewer"
+        src="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico)}}#toolbar=1&navpanes=0"
+        title="Visualização do contrato {{c.numero_contrato}}">
+      </iframe>
+      <p class="public-contract-fallback">
+        Caso o documento não apareça, <a href="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico,download=1)}}">baixe o PDF aqui</a>.
+      </p>
+    </section>
+  </main>
+</body>
+</html>
