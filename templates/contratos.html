@@ -20,7 +20,16 @@
 <label>Nacionalidade<input name="nacionalidade" value="brasileiro"></label><label>Estado civil<input name="estado_civil" value="solteiro"></label><label>Profissão<input name="profissao" value="motorista"></label><label>Cidade assinatura<input name="cidade_assinatura" value="Carapicuíba/SP"></label>
 <button>Preencher e gerar contrato</button></form></section>
 {% endif %}
-<section class="card"><h2>Contratos gerados</h2><div class="table-wrap"><table><thead><tr><th>Número</th><th>Motorista</th><th>Veículo</th><th>Modelo</th><th>Versão</th><th>Valor</th><th>Status</th></tr></thead><tbody>
-{% for x in items %}<tr><td><a href="{{url_for('contrato_detalhe',id=x.id)}}"><strong>{{x.numero_contrato or ('Contrato #' ~ x.id)}}</strong></a></td><td>{{x.driver.nome}}</td><td>{{x.vehicle.placa}}</td><td>{{x.template_nome or '-'}}</td><td>{{x.versao or 1}}</td><td>R$ {{'%.2f'|format(x.valor_locacao or 0)}}</td><td><span class="badge">{{x.status}}</span></td></tr>{% else %}<tr><td colspan="7">Nenhum contrato.</td></tr>{% endfor %}
+<section class="card"><h2>Contratos gerados</h2>
+<form method="get" class="contract-search"><input name="q" value="{{q or ''}}" placeholder="Pesquisar por contrato, motorista, CPF, placa, modelo ou Renavam"><button>Pesquisar</button>{% if q %}<a class="button secondary" href="{{url_for('contratos')}}">Limpar</a>{% endif %}</form>
+<div class="table-wrap"><table><thead><tr><th>Número</th><th>Motorista</th><th>CPF</th><th>Veículo</th><th>Placa</th><th>Período</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+{% for x in items %}<tr>
+<td><a href="{{url_for('contrato_detalhe',id=x.id)}}"><strong>{{x.numero_contrato or ('Contrato #' ~ x.id)}}</strong></a></td>
+<td><strong>{{x.driver.nome}}</strong><br><small>CNH {{x.driver.numero_cnh or '-'}}</small></td>
+<td>{{x.driver.cpf or '-'}}</td>
+<td>{{x.vehicle.marca_modelo or '-'}}</td><td><strong>{{x.vehicle.placa}}</strong></td>
+<td>{{x.data_inicio}}<br><small>até {{x.data_fim}}</small></td><td><span class="badge">{{x.status}}</span></td>
+<td><a class="button small" href="{{url_for('contrato_detalhe',id=x.id)}}">Abrir</a>{% if x.arquivo_pdf %}<a class="button small secondary" href="{{url_for('contrato_pdf',id=x.id)}}">PDF</a>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="8">Nenhum contrato encontrado.</td></tr>{% endfor %}
 </tbody></table></div></section>
 {% endblock %}
