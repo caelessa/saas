@@ -27,3 +27,17 @@ textarea{width:100%;font:inherit;padding:12px;border-radius:8px}
 
 .contract-search{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.contract-search input{min-width:300px;flex:1}.button.whatsapp{background:#128c7e;color:white}.public-validation{min-height:100vh;display:grid;place-items:center;background:#f1f5f9;padding:24px}.validation-card{max-width:680px;background:white;padding:36px;border-radius:18px;box-shadow:0 16px 50px rgba(15,23,42,.12)}.validation-icon{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:#dcfce7;color:#166534;font-size:36px;font-weight:700}.validation-card dl{display:grid;grid-template-columns:150px 1fr;gap:10px 18px}.validation-card dt{color:#64748b}.validation-card dd{margin:0;font-weight:700}.validation-card .hash{word-break:break-all;font-family:monospace;font-size:12px}.validation-note{margin-top:22px;padding:12px;background:#eff6ff;border-radius:10px}
 .operational-metrics{margin-bottom:14px}.status-reservado{background:#fff3cd;color:#7a5a00}.status-alugado{background:#f8d7da;color:#842029}.status-disponivel{background:#d1e7dd;color:#0f5132}.status-manutencao{background:#cff4fc;color:#055160}.small-link{display:block;margin-top:6px;font-size:12px}.status-form{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+
+/* Sprint 0.9.3B — página pública do contrato */
+.public-contract-page{margin:0;background:#f3f6fa;color:#182433;font-family:Arial,sans-serif;min-height:100vh}
+.public-contract-header{display:flex;justify-content:space-between;gap:24px;align-items:center;background:#fff;border-bottom:1px solid #dbe3ec;padding:22px max(20px,calc((100vw - 1180px)/2))}
+.public-contract-header h1{margin:4px 0 6px;font-size:24px}.public-contract-header p{margin:0;color:#617083}
+.public-contract-kicker{text-transform:uppercase;letter-spacing:.08em;font-size:12px;font-weight:700;color:#1473e6}
+.public-contract-auth{background:#e8f7ee;color:#17713a;border:1px solid #b8e2c7;padding:9px 14px;border-radius:999px;font-weight:700;white-space:nowrap}
+.public-contract-main{max-width:1180px;margin:22px auto;padding:0 20px 32px}
+.public-contract-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.public-contract-actions .button{display:inline-flex;text-decoration:none}.public-contract-status{margin-left:auto;background:#fff;border:1px solid #dbe3ec;border-radius:9px;padding:10px 13px}
+.public-contract-viewer-card{background:#fff;border:1px solid #dbe3ec;border-radius:14px;overflow:hidden;box-shadow:0 8px 24px rgba(30,55,80,.08)}
+.public-contract-viewer{display:block;width:100%;height:78vh;min-height:620px;border:0;background:#e9edf2}
+.public-contract-fallback{display:none;padding:14px;margin:0;text-align:center}
+@media(max-width:700px){.public-contract-header{align-items:flex-start;padding:18px}.public-contract-auth{font-size:13px}.public-contract-main{padding:0 10px 20px}.public-contract-status{width:100%;margin-left:0}.public-contract-viewer{height:72vh;min-height:520px}.public-contract-fallback{display:block}}
