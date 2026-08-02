@@ -814,6 +814,15 @@ def gerar_codigo_publico_contrato():
    return codigo
  raise RuntimeError('Não foi possível gerar código público único.')
 
+def garantir_codigo_publico_contrato(contrato):
+ """Garante código público para contratos antigos criados antes da Sprint 0.9.2C."""
+ if contrato.codigo_publico:
+  return contrato.codigo_publico
+ contrato.codigo_publico=gerar_codigo_publico_contrato()
+ db.session.flush()
+ return contrato.codigo_publico
+
+
 def telefone_whatsapp(valor):
  digits=re.sub(r'\D','',valor or '')
  if len(digits) in (10,11): digits='55'+digits
@@ -876,7 +885,8 @@ def contratos():
   c.texto_final=(c.texto_final or '').replace('{{numero_contrato}}',c.numero_contrato)
   if not c.limite_km:
    c.texto_final=c.texto_final.replace('6.3. A quilometragem semanal fica limitada a  km. A quilometragem excedente será cobrada no valor de R$ '+moeda_br(c.valor_km_excedente)+' por quilômetro.','6.3. Não há limite semanal de quilometragem neste contrato.')
-  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=c.codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True))
+  codigo_publico=garantir_codigo_publico_contrato(c)
+  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=codigo_publico,_external=True))
   chave_pdf=f'{tid()}/documentos/contratos/{c.numero_contrato}.pdf'
   storage.upload(BytesIO(pdf_bytes),chave_pdf,'application/pdf')
   hash_pdf=hashlib.sha256(pdf_bytes).hexdigest()
@@ -946,7 +956,8 @@ def gerar_pdf_contrato_existente(id):
   return redirect(url_for('contrato_detalhe',id=id))
  chave_pdf=f'{tid()}/documentos/contratos/{c.numero_contrato}.pdf'
  try:
-  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=c.codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True))
+  codigo_publico=garantir_codigo_publico_contrato(c)
+  pdf_bytes=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=codigo_publico,_external=True))
   storage.upload(BytesIO(pdf_bytes),chave_pdf,'application/pdf')
   hash_pdf=hashlib.sha256(pdf_bytes).hexdigest()
   doc=Document(tenant_id=tid(),tipo='Contrato',entidade='Contrato',entidade_id=c.id,identificador=c.numero_contrato,numero_documento=c.numero_contrato,nome_original=f'{c.numero_contrato}.pdf',arquivo=chave_pdf,hash_sha256=hash_pdf,status='Ativo',versao=c.versao or 1,criado_em=agora_sao_paulo_naive())
@@ -989,7 +1000,8 @@ def contrato_whatsapp(id):
  if not telefone:
   flash('O motorista não possui telefone válido cadastrado.','danger')
   return redirect(url_for('contrato_detalhe',id=id))
- link=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True)
+ codigo_publico=garantir_codigo_publico_contrato(c)
+ link=url_for('validar_contrato_publico',codigo=codigo_publico,_external=True)
  mensagem=(f'Olá, {c.driver.nome}! Segue o contrato {c.numero_contrato} referente ao veículo '
            f'{c.vehicle.marca_modelo} - placa {c.vehicle.placa}. Acesse para visualizar e validar: {link}')
  c.enviado_whatsapp_em=agora_sao_paulo_naive()
