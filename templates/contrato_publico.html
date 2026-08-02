@@ -19,7 +19,7 @@
   <main class="public-contract-main">
     <section class="public-contract-actions">
       <a class="button" href="{{url_for('contrato_publico_pdf',codigo=c.codigo_publico,download=1)}}">Baixar PDF</a>
-      <a class="button secondary" href="{{url_for('validar_contrato_publico',codigo=c.codigo_publico)}}">Verificar autenticidade</a>
+      <a class="button secondary" href="{{url_for('validar_contrato_publico',codigo=c.codigo_publico,verificar=1)}}">Verificar autenticidade</a>
       <span class="public-contract-status">Status: <strong>{{c.status}}</strong></span>
     </section>
 
