@@ -1,1 +1,107 @@
-{% extends 'base.html' %}{% block heading %}Integrações{% endblock %}{% block subheading %}Conectores preparados para ativação por cliente.{% endblock %}{% block content %}<div class="integration-grid">{% for nome,desc,status in [('MeuRastreador','Localização, velocidade, ignição, trajetos e comandos.','Aguardando API'),('Senatran / Serpro','Situação de CNH, veículos, infrações e multas.','Aguardando contrato'),('WhatsApp Business','Cobranças, vencimentos, alertas e confirmações.','Aguardando credenciais'),('Assinatura eletrônica','Envio e assinatura dos contratos.','Planejado'),('Armazenamento em nuvem','S3, R2 ou Azure Blob para documentos.','Preparado')] %}<section class="card"><h2>{{nome}}</h2><p>{{desc}}</p><span class="badge">{{status}}</span></section>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block heading %}Integrações{% endblock %}
+{% block subheading %}Conecte os serviços usados por cada locadora sem prender o Frota Fácil a um único fornecedor.{% endblock %}
+{% block content %}
+<div class="integration-grid">
+  <section class="card integration-card">
+    <h2>WhatsApp</h2>
+    <p>Preserva o WhatsApp Web atual e deixa o envio automático preparado para a WhatsApp Business Platform.</p>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="section" value="whatsapp">
+      <label>Modo de envio
+        <select name="provider">
+          <option value="web" {% if whatsapp_cfg.get('provider','web')=='web' %}selected{% endif %}>WhatsApp Web — confirmação manual</option>
+          <option value="business" {% if whatsapp_cfg.get('provider')=='business' %}selected{% endif %}>WhatsApp Business Platform — automático</option>
+        </select>
+      </label>
+      <label>Business Account ID<input name="business_account_id" value="{{ whatsapp_cfg.get('business_account_id','') }}"></label>
+      <label>Phone Number ID<input name="phone_number_id" value="{{ whatsapp_cfg.get('phone_number_id','') }}"></label>
+      <label>Access Token<input type="password" name="access_token" value="{{ whatsapp_cfg.get('access_token','') }}" autocomplete="new-password"></label>
+      <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"></label>
+      <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
+      <label>Template aprovado para testes<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}" placeholder="ex.: contrato_disponivel"></label>
+      <div class="form-actions"><button class="btn" type="submit">Salvar WhatsApp</button></div>
+    </form>
+    <div class="integration-status">
+      {% if whatsapp_cfg.get('provider')=='business' %}
+        <span class="badge">Business Platform selecionada</span>
+      {% else %}
+        <span class="badge">WhatsApp Web ativo</span>
+      {% endif %}
+    </div>
+    {% if whatsapp_cfg.get('provider')=='business' %}
+    <form method="post" action="{{ url_for('testar_whatsapp_business') }}" class="inline-form">
+      <input name="telefone" placeholder="5511999999999" required>
+      <button class="btn-secondary" type="submit">Testar conexão</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card integration-card">
+    <h2>Assinatura eletrônica</h2>
+    <p>A assinatura local permanece apenas para homologação. A arquitetura já aceita Clicksign e DocuSign por locadora.</p>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="section" value="signature">
+      <label>Provedor
+        <select name="signature_provider">
+          <option value="local" {% if signature_cfg.get('provider','local')=='local' %}selected{% endif %}>Frota Fácil — homologação</option>
+          <option value="clicksign" {% if signature_cfg.get('provider')=='clicksign' %}selected{% endif %}>Clicksign</option>
+          <option value="docusign" {% if signature_cfg.get('provider')=='docusign' %}selected{% endif %}>DocuSign</option>
+        </select>
+      </label>
+      <h3>Clicksign</h3>
+      <label>API Token<input type="password" name="clicksign_api_token" value="{{ signature_cfg.get('api_token','') }}"></label>
+      <label>Workspace Key<input name="clicksign_workspace_key" value="{{ signature_cfg.get('workspace_key','') }}"></label>
+      <label>Ambiente
+        <select name="clicksign_environment">
+          <option value="sandbox" {% if signature_cfg.get('environment','sandbox')=='sandbox' %}selected{% endif %}>Sandbox</option>
+          <option value="production" {% if signature_cfg.get('environment')=='production' %}selected{% endif %}>Produção</option>
+        </select>
+      </label>
+      <h3>DocuSign</h3>
+      <label>Account ID<input name="docusign_account_id" value="{{ signature_cfg.get('account_id','') }}"></label>
+      <label>Integration Key<input type="password" name="docusign_integration_key" value="{{ signature_cfg.get('integration_key','') }}"></label>
+      <label>Ambiente
+        <select name="docusign_environment">
+          <option value="demo" {% if signature_cfg.get('environment','demo')=='demo' %}selected{% endif %}>Demo</option>
+          <option value="production" {% if signature_cfg.get('environment')=='production' %}selected{% endif %}>Produção</option>
+        </select>
+      </label>
+      <div class="form-actions"><button class="btn" type="submit">Salvar assinatura</button></div>
+    </form>
+    <p><strong>Status:</strong> {{ signature_message }}</p>
+  </section>
+
+  <section class="card integration-card">
+    <h2>Próximos conectores</h2>
+    <p>Estrutura preparada para adicionar sem alterar os módulos existentes.</p>
+    <div class="integration-list">
+      <span class="badge">E-mail</span>
+      <span class="badge">SMS</span>
+      <span class="badge">SERPRO</span>
+      <span class="badge">Rastreadores</span>
+    </div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:20px">
+  <h2>Histórico recente de mensagens</h2>
+  {% if recentes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Erro</th></tr></thead>
+    <tbody>
+      {% for item in recentes %}
+      <tr>
+        <td>{{ item.created_at.strftime('%d/%m/%Y %H:%M') if item.created_at else '-' }}</td>
+        <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
+        <td>{{ item.message_type }}</td>
+        <td>{{ item.provider }}</td>
+        <td><span class="badge">{{ item.status }}</span></td>
+        <td>{{ item.error_message or '-' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p>Nenhuma mensagem registrada ainda.</p>{% endif %}
+</section>
+{% endblock %}
