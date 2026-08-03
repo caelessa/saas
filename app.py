@@ -810,8 +810,8 @@ def solicitar_km(id):
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
-  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,
-  related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
+  recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,
+  related_entity='Veiculo',related_entity_id=v.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
  )
  db.session.add(fila); db.session.flush()
@@ -819,17 +819,17 @@ def solicitar_km(id):
   result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration)
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
   fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
-  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Solicitação de quilometragem processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
   db.session.commit()
   if result.redirect_url:
    return redirect(result.redirect_url)
-  flash('Contrato enviado automaticamente pela WhatsApp Business Platform.','success')
-  return redirect(url_for('contrato_detalhe',id=id))
+  flash('Solicitação de quilometragem enviada automaticamente pela WhatsApp Business Platform.','success')
+  return redirect(url_for('veiculos'))
  except CommunicationError as exc:
   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
   db.session.commit(); flash(str(exc),'danger')
-  return redirect(url_for('contrato_detalhe',id=id))
+  return redirect(url_for('veiculos'))
 
 @app.route('/km/<token>',methods=['GET','POST'])
 def registrar_quilometragem_publica(token):
