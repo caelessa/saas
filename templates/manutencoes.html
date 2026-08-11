@@ -21,21 +21,50 @@
 
 {% if alertas %}
 <section class="card">
-  <div class="section-heading"><div><h2>Alertas ativos de manutenção</h2><p class="muted">Os alertas são recalculados automaticamente quando o sistema é acessado ou a quilometragem muda.</p></div><a class="button secondary" href="{{url_for('alertas')}}">Abrir Central de Alertas</a></div>
+  <div class="section-heading"><div><h2>Alertas ativos de manutenção</h2><p class="muted">Marcar como lido apenas confirma que o alerta foi visto. Para encerrá-lo, registre a manutenção como concluída.</p></div><a class="button secondary" href="{{url_for('alertas')}}">Abrir Central de Alertas</a></div>
   {% for a in alertas %}<div class="smart-alert {{a.nivel}}"><div><b>{{a.titulo}}</b><p>{{a.mensagem}}</p></div></div>{% endfor %}
 </section>
 {% endif %}
 
 <section class="card">
   <h2>Histórico e próximas manutenções</h2>
-  <div class="table-wrap"><table><tr><th>Veículo</th><th>Serviço</th><th>Realizada</th><th>Próxima</th><th>Alerta</th><th>Situação</th></tr>
-  {% for x in items %}{% set st=maintenance_indicator(x) %}<tr id="manutencao-{{x.id}}" class="alert-target-row">
-    <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
-    <td>{{x.tipo}}</td>
-    <td>{{x.data or '-'}}<br>{{x.km or '-'}} km</td>
-    <td>{{x.proxima_data or '-'}}<br>{{x.proxima_km or '-'}} km</td>
-    <td>{{x.alerta_dias_antes or 7}} dias<br>{{x.alerta_km_antes or 500}} km</td>
-    <td><span class="alert-status {{st.state}}">{{st.label}}</span>{% if st.detail %}<small class="status-detail">{{st.detail}}</small>{% endif %}</td>
-  </tr>{% else %}<tr><td colspan="6">Nenhuma manutenção.</td></tr>{% endfor %}</table></div>
+  <div class="table-wrap"><table><tr><th>Veículo</th><th>Serviço</th><th>Realizada</th><th>Próxima</th><th>Alerta</th><th>Situação</th><th>Ação</th></tr>
+  {% for x in items %}
+    {% set concluida=(x.status == 'Concluída') %}
+    {% set st=maintenance_indicator(x) if not concluida else {'state':'ok','label':'Concluída','detail':''} %}
+    <tr id="manutencao-{{x.id}}" class="alert-target-row">
+      <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
+      <td>{{x.tipo}}{% if x.oficina %}<br><small>{{x.oficina}}</small>{% endif %}</td>
+      <td>{{x.data or '-'}}<br>{{x.km or '-'}} km{% if x.custo %}<br><small>R$ {{'%.2f'|format(x.custo)|replace('.',',')}}</small>{% endif %}</td>
+      <td>{% if concluida %}-{% else %}{{x.proxima_data or '-'}}<br>{{x.proxima_km or '-'}} km{% endif %}</td>
+      <td>{% if concluida %}-{% else %}{{x.alerta_dias_antes or 7}} dias<br>{{x.alerta_km_antes or 500}} km{% endif %}</td>
+      <td><span class="alert-status {{st.state}}">{{st.label}}</span>{% if st.detail %}<small class="status-detail">{{st.detail}}</small>{% endif %}</td>
+      <td>
+        {% if not concluida %}
+        <details class="maintenance-finish">
+          <summary class="button">Concluir manutenção</summary>
+          <form method="post" action="{{url_for('concluir_manutencao',id=x.id)}}" class="maintenance-finish-form">
+            <strong>Registrar execução</strong>
+            <label>Data realizada<input type="date" name="data_realizada" value="{{hoje_sp}}" required></label>
+            <label>Km realizada<input type="number" name="km_realizada" value="{{x.vehicle.km_atual or ''}}"></label>
+            <label>Custo (R$)<input name="custo_realizado" inputmode="decimal" placeholder="350,00"></label>
+            <label>Oficina / fornecedor<input name="oficina" placeholder="Nome da oficina"></label>
+            <label class="wide">Observações<textarea name="observacoes_conclusao" placeholder="Serviços executados, peças, garantia..."></textarea></label>
+            <hr>
+            <strong>Próxima manutenção (opcional)</strong>
+            <small class="muted">Preencha data e/ou km para o sistema criar automaticamente um novo ciclo e novos alertas.</small>
+            <label>Próxima em km<input type="number" name="nova_proxima_km"></label>
+            <label>Alertar km antes<input type="number" name="novo_alerta_km_antes" value="{{x.alerta_km_antes or 500}}" min="0"></label>
+            <label>Próxima data<input type="date" name="nova_proxima_data"></label>
+            <label>Alertar dias antes<input type="number" name="novo_alerta_dias_antes" value="{{x.alerta_dias_antes or 7}}" min="0"></label>
+            <button type="submit">Confirmar conclusão</button>
+          </form>
+        </details>
+        {% else %}
+          <a class="button secondary" href="{{url_for('historico_veiculo',id=x.vehicle_id)}}">Ver histórico</a>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}<tr><td colspan="7">Nenhuma manutenção.</td></tr>{% endfor %}</table></div>
 </section>
 {% endblock %}
