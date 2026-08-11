@@ -29,7 +29,7 @@
 <section class="card">
   <h2>Histórico e próximas manutenções</h2>
   <div class="table-wrap"><table><tr><th>Veículo</th><th>Serviço</th><th>Realizada</th><th>Próxima</th><th>Alerta</th><th>Situação</th></tr>
-  {% for x in items %}{% set st=maintenance_indicator(x) %}<tr>
+  {% for x in items %}{% set st=maintenance_indicator(x) %}<tr id="manutencao-{{x.id}}" class="alert-target-row">
     <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
     <td>{{x.tipo}}</td>
     <td>{{x.data or '-'}}<br>{{x.km or '-'}} km</td>
