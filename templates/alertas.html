@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block heading %}Central de Alertas{% endblock %}
+{% block subheading %}Tudo o que exige atenção da locadora em um único lugar.{% endblock %}
+{% block content %}
+<section class="card">
+ <div class="section-heading">
+  <div><h2>Alertas ativos</h2><p class="muted">Manutenção por data, quilometragem e troca de óleo já utilizam esta central. Novos módulos serão adicionados à mesma infraestrutura.</p></div>
+  <form method="post" action="{{url_for('atualizar_alertas')}}"><button class="secondary">Atualizar agora</button></form>
+ </div>
+ <div class="alert-filters">
+  <a class="button {% if not nivel %}active{% else %}secondary{% endif %}" href="{{url_for('alertas')}}">Todos</a>
+  <a class="button {% if nivel=='danger' %}active{% else %}secondary{% endif %}" href="{{url_for('alertas',nivel='danger')}}">🔴 Críticos</a>
+  <a class="button {% if nivel=='warning' %}active{% else %}secondary{% endif %}" href="{{url_for('alertas',nivel='warning')}}">🟡 Atenção</a>
+ </div>
+</section>
+<section class="card alerts-list">
+ {% for a in items %}
+  <article class="smart-alert {{a.nivel}} {% if a.lido %}read{% endif %}">
+   <div class="alert-icon">{% if a.nivel=='danger' %}!{% elif a.nivel=='warning' %}⚠{% else %}i{% endif %}</div>
+   <div class="alert-body"><b>{{a.titulo}}</b><p>{{a.mensagem}}</p><small>{{a.criado_em.strftime('%d/%m/%Y %H:%M') if a.criado_em else ''}}</small></div>
+   <div class="alert-actions">{% if a.action_url %}<a class="button secondary" href="{{a.action_url}}">Abrir</a>{% endif %}{% if not a.lido %}<form method="post" action="{{url_for('alerta_lido',id=a.id)}}"><button class="secondary">Marcar como lido</button></form>{% else %}<span class="muted">Lido</span>{% endif %}</div>
+  </article>
+ {% else %}<div class="empty-state"><b>Nenhum alerta ativo.</b><p>Quando uma manutenção se aproximar ou vencer, ela aparecerá aqui automaticamente.</p></div>{% endfor %}
+</section>
+{% endblock %}

@@ -1,1 +1,41 @@
-{% extends 'base.html' %}{% block heading %}Manutenções{% endblock %}{% block subheading %}Histórico, custos e próximas revisões por data ou quilometragem.{% endblock %}{% block content %}<section class="card"><form method="post" class="form-grid"><label>Veículo<select name="vehicle_id">{% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}</select></label><label>Serviço<input name="tipo" required></label><label>Data<input type="date" name="data"></label><label>Km<input type="number" name="km"></label><label>Custo<input type="number" step="0.01" name="custo"></label><label>Próxima em km<input type="number" name="proxima_km"></label><label>Próxima data<input type="date" name="proxima_data"></label><label class="wide">Observações<textarea name="observacoes"></textarea></label><button>Registrar manutenção</button></form></section><section class="card"><table><tr><th>Veículo</th><th>Serviço</th><th>Data/km</th><th>Custo</th><th>Próxima</th></tr>{% for x in items %}<tr><td>{{x.vehicle.placa}}</td><td>{{x.tipo}}</td><td>{{x.data}} / {{x.km or '-'}} km</td><td>R$ {{x.custo}}</td><td>{{x.proxima_data or '-'}} / {{x.proxima_km or '-'}} km</td></tr>{% else %}<tr><td colspan="5">Nenhuma manutenção.</td></tr>{% endfor %}</table></section>{% endblock %}
+{% extends 'base.html' %}
+{% block heading %}Manutenções{% endblock %}
+{% block subheading %}Histórico, custos e próximas revisões por data ou quilometragem com alertas automáticos.{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Registrar manutenção e próxima previsão</h2>
+  <form method="post" class="form-grid">
+    <label>Veículo<select name="vehicle_id">{% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}</select></label>
+    <label>Serviço<input name="tipo" required placeholder="Ex.: revisão, pneus, óleo"></label>
+    <label>Data realizada<input type="date" name="data"></label>
+    <label>Km realizada<input type="number" name="km"></label>
+    <label>Custo<input type="number" step="0.01" name="custo"></label>
+    <label>Próxima em km<input type="number" name="proxima_km"></label>
+    <label>Alertar quantos km antes<input type="number" name="alerta_km_antes" value="500" min="0"></label>
+    <label>Próxima data<input type="date" name="proxima_data"></label>
+    <label>Alertar quantos dias antes<input type="number" name="alerta_dias_antes" value="7" min="0"></label>
+    <label class="wide">Observações<textarea name="observacoes"></textarea></label>
+    <button>Registrar manutenção</button>
+  </form>
+</section>
+
+{% if alertas %}
+<section class="card">
+  <div class="section-heading"><div><h2>Alertas ativos de manutenção</h2><p class="muted">Os alertas são recalculados automaticamente quando o sistema é acessado ou a quilometragem muda.</p></div><a class="button secondary" href="{{url_for('alertas')}}">Abrir Central de Alertas</a></div>
+  {% for a in alertas %}<div class="smart-alert {{a.nivel}}"><div><b>{{a.titulo}}</b><p>{{a.mensagem}}</p></div></div>{% endfor %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Histórico e próximas manutenções</h2>
+  <div class="table-wrap"><table><tr><th>Veículo</th><th>Serviço</th><th>Realizada</th><th>Próxima</th><th>Alerta</th><th>Situação</th></tr>
+  {% for x in items %}{% set st=maintenance_indicator(x) %}<tr>
+    <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
+    <td>{{x.tipo}}</td>
+    <td>{{x.data or '-'}}<br>{{x.km or '-'}} km</td>
+    <td>{{x.proxima_data or '-'}}<br>{{x.proxima_km or '-'}} km</td>
+    <td>{{x.alerta_dias_antes or 7}} dias<br>{{x.alerta_km_antes or 500}} km</td>
+    <td><span class="alert-status {{st.state}}">{{st.label}}</span>{% if st.detail %}<small class="status-detail">{{st.detail}}</small>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="6">Nenhuma manutenção.</td></tr>{% endfor %}</table></div>
+</section>
+{% endblock %}
