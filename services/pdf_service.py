@@ -18,7 +18,7 @@ def _footer(canvas, doc):
     canvas.restoreState()
 
 
-def gerar_pdf_contrato(numero_contrato: str, texto: str, codigo_publico: str | None=None, url_validacao: str | None=None) -> bytes:
+def gerar_pdf_contrato(numero_contrato: str, texto: str, codigo_publico: str | None=None, url_validacao: str | None=None, assinatura_png: bytes | None=None, assinatura_info: dict | None=None) -> bytes:
     buffer=BytesIO()
     doc=SimpleDocTemplate(buffer,pagesize=A4,rightMargin=22*mm,leftMargin=22*mm,topMargin=20*mm,bottomMargin=18*mm,title=numero_contrato,author='Frota Fácil')
     styles=getSampleStyleSheet()
@@ -45,6 +45,12 @@ def gerar_pdf_contrato(numero_contrato: str, texto: str, codigo_publico: str | N
         if s.startswith('________________________________'):
             em_assinaturas=True
         target=assinatura if em_assinaturas else story
+        # Marcador opcional: a locadora pode posicionar a assinatura no modelo TXT.
+        # Se ele não existir, o bloco de assinatura é anexado ao final do documento.
+        if s == '{{assinatura_motorista}}' and assinatura_png:
+            sig_buffer=BytesIO(assinatura_png)
+            target.append(Image(sig_buffer,width=55*mm,height=16*mm,hAlign='LEFT'))
+            continue
         safe=s.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
         if s.startswith('CONTRATO PARTICULAR'):
             target.append(Paragraph(safe,titulo))
@@ -56,5 +62,19 @@ def gerar_pdf_contrato(numero_contrato: str, texto: str, codigo_publico: str | N
     if assinatura:
         story.append(PageBreak())
         story.append(KeepTogether(assinatura))
+    if assinatura_png and '{{assinatura_motorista}}' not in (texto or ''):
+        story.append(PageBreak())
+        story.append(Paragraph('ASSINATURA ELETRÔNICA',titulo))
+        sig_buffer=BytesIO(assinatura_png)
+        story.append(Image(sig_buffer,width=65*mm,height=19*mm,hAlign='CENTER'))
+        info=assinatura_info or {}
+        detalhes=[]
+        if info.get('nome'): detalhes.append(f"<b>Signatário:</b> {info['nome']}")
+        if info.get('cpf'): detalhes.append(f"<b>CPF:</b> {info['cpf']}")
+        if info.get('assinado_em'): detalhes.append(f"<b>Assinado em:</b> {info['assinado_em']}")
+        if info.get('codigo'): detalhes.append(f"<b>Código de verificação:</b> {info['codigo']}")
+        if info.get('hash_assinatura'): detalhes.append(f"<b>Hash da assinatura:</b> {info['hash_assinatura']}")
+        for detalhe in detalhes:
+            story.append(Paragraph(detalhe,normal))
     doc.build(story,onFirstPage=_footer,onLaterPages=_footer)
     return buffer.getvalue()
