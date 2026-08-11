@@ -95,6 +95,9 @@ class Contract(db.Model):
  documento_id=db.Column(db.Integer,db.ForeignKey('document.id'))
  arquivo_pdf=db.Column(db.String(255))
  hash_documento=db.Column(db.String(64))
+ arquivo_pdf_assinado=db.Column(db.String(255))
+ hash_documento_assinado=db.Column(db.String(64))
+ documento_assinado_id=db.Column(db.Integer)
  codigo_publico=db.Column(db.String(24),unique=True,index=True)
  enviado_whatsapp_em=db.Column(db.DateTime)
  visualizado_em=db.Column(db.DateTime)
@@ -360,7 +363,7 @@ def migrate_schema():
    ('estado_civil','VARCHAR(60)'),('profissao','VARCHAR(100)'),('cidade_assinatura','VARCHAR(100)'),
    ('numero_contrato','VARCHAR(30)'),('versao','INTEGER DEFAULT 1'),('criado_por_id','INTEGER'),
    ('criado_em','TIMESTAMP'),('atualizado_em','TIMESTAMP'),('assinado_em','TIMESTAMP'),
-   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('codigo_publico','VARCHAR(24)'),('enviado_whatsapp_em','TIMESTAMP'),('visualizado_em','TIMESTAMP'),('gerado_em','TIMESTAMP'),
+   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('arquivo_pdf_assinado','VARCHAR(255)'),('hash_documento_assinado','VARCHAR(64)'),('documento_assinado_id','INTEGER'),('codigo_publico','VARCHAR(24)'),('enviado_whatsapp_em','TIMESTAMP'),('visualizado_em','TIMESTAMP'),('gerado_em','TIMESTAMP'),
   ],
  }
  inspector=inspect(db.engine)
@@ -1111,9 +1114,12 @@ def gerar_pdf_contrato_existente(id):
 def contrato_pdf(id):
  c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if not c.arquivo_pdf: abort(404)
- try: conteudo=storage.download(c.arquivo_pdf)
+ usar_assinado=bool(c.arquivo_pdf_assinado) and request.args.get('original')!='1'
+ chave=c.arquivo_pdf_assinado if usar_assinado else c.arquivo_pdf
+ nome=f'{c.numero_contrato}_ASSINADO.pdf' if usar_assinado else f'{c.numero_contrato}.pdf'
+ try: conteudo=storage.download(chave)
  except StorageNotFoundError: abort(404)
- return send_file(BytesIO(conteudo),as_attachment=True,download_name=f'{c.numero_contrato}.pdf',mimetype='application/pdf')
+ return send_file(BytesIO(conteudo),as_attachment=True,download_name=nome,mimetype='application/pdf')
 
 @app.route('/contratos/<int:id>/texto')
 @login_required
@@ -1217,6 +1223,30 @@ def assinar_contrato_publico(codigo):
   db.session.add(assinatura)
   db.session.flush()
   c.assinatura_id=str(assinatura.id)
+
+  # Gera uma segunda versão do documento contendo a assinatura visual.
+  # O PDF original permanece preservado para auditoria.
+  assinado_em_br=now.strftime('%d/%m/%Y %H:%M')
+  pdf_assinado=gerar_pdf_contrato(
+   c.numero_contrato,c.texto_final,codigo_publico=c.codigo_publico,
+   url_validacao=url_for('validar_contrato_publico',codigo=c.codigo_publico,_external=True),
+   assinatura_png=png_bytes,
+   assinatura_info={'nome':nome,'cpf':cpf,'assinado_em':assinado_em_br,'codigo':c.codigo_publico,'hash_assinatura':hashlib.sha256(png_bytes).hexdigest()},
+  )
+  chave_pdf_assinado=f'{c.tenant_id}/documentos/contratos/{c.numero_contrato}_ASSINADO.pdf'
+  storage.upload(BytesIO(pdf_assinado),chave_pdf_assinado,'application/pdf')
+  hash_pdf_assinado=hashlib.sha256(pdf_assinado).hexdigest()
+  doc_assinado=Document(
+   tenant_id=c.tenant_id,tipo='Contrato Assinado',entidade='Contrato',entidade_id=c.id,
+   identificador=f'{c.numero_contrato} - Assinado',numero_documento=c.numero_contrato,
+   nome_original=f'{c.numero_contrato}_ASSINADO.pdf',arquivo=chave_pdf_assinado,hash_sha256=hash_pdf_assinado,
+   status='Ativo',versao=(c.versao or 1),criado_em=now,
+  )
+  db.session.add(doc_assinado); db.session.flush()
+  c.arquivo_pdf_assinado=chave_pdf_assinado
+  c.hash_documento_assinado=hash_pdf_assinado
+  c.documento_assinado_id=doc_assinado.id
+
   states=ContractStateService(db.session,ContractEvent,VehicleEvent)
   states.transition(contract=c,new_status='Assinado',user_id=None,now=now)
   states.transition(contract=c,new_status='Ativo',user_id=None,now=now)
@@ -1228,6 +1258,7 @@ def assinar_contrato_publico(codigo):
   db.session.rollback()
   try:
    if 'key' in locals(): storage.delete(key)
+   if 'chave_pdf_assinado' in locals(): storage.delete(chave_pdf_assinado)
   except Exception: pass
   flash(str(exc),'danger')
   return redirect(url_for('contrato_publico',codigo=codigo))
@@ -1235,6 +1266,7 @@ def assinar_contrato_publico(codigo):
   db.session.rollback()
   try:
    if 'key' in locals(): storage.delete(key)
+   if 'chave_pdf_assinado' in locals(): storage.delete(chave_pdf_assinado)
   except Exception: pass
   app.logger.exception('Falha ao assinar contrato público')
   flash('Não foi possível concluir a assinatura. Tente novamente.','danger')
@@ -1246,14 +1278,16 @@ def contrato_publico_pdf(codigo):
  c=Contract.query.filter_by(codigo_publico=codigo).first_or_404()
  if not c.arquivo_pdf:
   abort(404)
+ chave=c.arquivo_pdf_assinado or c.arquivo_pdf
+ nome=f'{c.numero_contrato}_ASSINADO.pdf' if c.arquivo_pdf_assinado else f'{c.numero_contrato}.pdf'
  try:
-  conteudo=storage.download(c.arquivo_pdf)
+  conteudo=storage.download(chave)
  except StorageNotFoundError:
   abort(404)
  download=request.args.get('download')=='1'
  disposition='attachment' if download else 'inline'
- response=send_file(BytesIO(conteudo),as_attachment=download,download_name=f'{c.numero_contrato}.pdf',mimetype='application/pdf',max_age=0)
- response.headers['Content-Disposition']=f'{disposition}; filename="{c.numero_contrato}.pdf"'
+ response=send_file(BytesIO(conteudo),as_attachment=download,download_name=nome,mimetype='application/pdf',max_age=0)
+ response.headers['Content-Disposition']=f'{disposition}; filename="{nome}"'
  response.headers['X-Content-Type-Options']='nosniff'
  response.headers['Cache-Control']='private, no-store, max-age=0'
  return response
