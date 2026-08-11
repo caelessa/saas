@@ -155,7 +155,7 @@ class VehicleEvent(db.Model):
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); alerta_km_antes=db.Column(db.Integer,default=500); alerta_dias_antes=db.Column(db.Integer,default=7); observacoes=db.Column(db.Text); vehicle=db.relationship('Vehicle')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); alerta_km_antes=db.Column(db.Integer,default=500); alerta_dias_antes=db.Column(db.Integer,default=7); observacoes=db.Column(db.Text); status=db.Column(db.String(20),default='Ativa',index=True); oficina=db.Column(db.String(160)); concluida_em=db.Column(db.DateTime); concluida_por_id=db.Column(db.Integer,db.ForeignKey('user.id')); vehicle=db.relationship('Vehicle'); concluida_por=db.relationship('User',foreign_keys=[concluida_por_id])
 class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow); source_key=db.Column(db.String(120),index=True); entidade=db.Column(db.String(40)); entidade_id=db.Column(db.Integer); action_url=db.Column(db.String(255)); atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow); resolvido_em=db.Column(db.DateTime)
 class Integration(db.Model):
@@ -350,7 +350,7 @@ def migrate_schema():
    ('gestora_cnpj','VARCHAR(30)'),('gestora_endereco','VARCHAR(255)'),('parceira_nome','VARCHAR(180)'),
    ('parceira_cnpj','VARCHAR(30)'),('parceira_endereco','VARCHAR(255)'),
   ],
-  'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7')],
+  'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
@@ -949,7 +949,8 @@ def telefone_whatsapp(valor):
 def historico_veiculo(id):
  v=Vehicle.query.options(joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)).filter_by(id=id,tenant_id=tid()).first_or_404()
  eventos=VehicleEvent.query.options(joinedload(VehicleEvent.user),joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(VehicleEvent.criado_em.desc()).all()
- return render_template('veiculo_historico.html',v=v,eventos=eventos)
+ manutencoes_concluidas=Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id,status='Concluída').order_by(Maintenance.concluida_em.desc(),Maintenance.id.desc()).all()
+ return render_template('veiculo_historico.html',v=v,eventos=eventos,manutencoes_concluidas=manutencoes_concluidas)
 
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
@@ -1422,7 +1423,71 @@ def manutencoes():
  recalcular_alertas(tid())
  items=Maintenance.query.filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()).all()
  alerts=Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None),Alert.entidade=='Manutenção').order_by(Alert.criado_em.desc()).all()
- return render_template('manutencoes.html',items=items,veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),alertas=alerts,maintenance_indicator=maintenance_indicator)
+ hoje_sp=datetime.now(ZoneInfo('America/Sao_Paulo')).date().isoformat()
+ return render_template('manutencoes.html',items=items,veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),alertas=alerts,maintenance_indicator=maintenance_indicator,hoje_sp=hoje_sp)
+
+@app.route('/manutencoes/<int:id>/concluir',methods=['POST'])
+@login_required
+def concluir_manutencao(id):
+ m=Maintenance.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if (m.status or 'Ativa') == 'Concluída':
+  flash('Esta manutenção já foi concluída.','info')
+  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
+
+ v=Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tid()).first_or_404()
+ data_realizada=(request.form.get('data_realizada') or datetime.now(ZoneInfo('America/Sao_Paulo')).date().isoformat()).strip()
+ km_realizada=request.form.get('km_realizada') or v.km_atual or None
+ custo_txt=(request.form.get('custo_realizado') or '').strip()
+ try:
+  custo_realizado=Decimal(custo_txt.replace('.','').replace(',','.')) if custo_txt else (m.custo or Decimal('0'))
+ except Exception:
+  flash('Custo inválido. Use, por exemplo, 350,00.','danger')
+  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
+
+ oficina=(request.form.get('oficina') or '').strip()
+ obs_conclusao=(request.form.get('observacoes_conclusao') or '').strip()
+ m.data=data_realizada
+ m.km=int(km_realizada) if km_realizada not in (None,'') else None
+ m.custo=custo_realizado
+ m.oficina=oficina or m.oficina
+ if obs_conclusao:
+  m.observacoes=((m.observacoes + '\n') if m.observacoes else '') + 'Conclusão: ' + obs_conclusao
+ m.status='Concluída'
+ m.concluida_em=datetime.utcnow()
+ m.concluida_por_id=current_user.id
+
+ # A previsão antiga pertence à manutenção concluída e não deve continuar gerando alerta.
+ m.proxima_km=None
+ m.proxima_data=None
+
+ descricao=f"{m.tipo or 'Manutenção'} concluída em {data_realizada}"
+ if m.km is not None:
+  descricao+=f" com {m.km:,} km".replace(',','.')
+ if custo_realizado:
+  descricao+=f". Custo R$ {custo_realizado:.2f}".replace('.',',')
+ if oficina:
+  descricao+=f". Oficina: {oficina}"
+ if obs_conclusao:
+  descricao+=f". {obs_conclusao}"
+ db.session.add(VehicleEvent(tenant_id=tid(),vehicle_id=v.id,user_id=current_user.id,evento='Manutenção concluída',descricao=descricao,status_anterior=v.status,status_novo=v.status))
+
+ # Se o usuário informar uma nova previsão, cria um novo ciclo sem apagar o histórico.
+ nova_km=request.form.get('nova_proxima_km') or None
+ nova_data=(request.form.get('nova_proxima_data') or '').strip() or None
+ if nova_km or nova_data:
+  prox=Maintenance(
+   tenant_id=tid(),vehicle_id=v.id,tipo=m.tipo,status='Ativa',
+   proxima_km=int(nova_km) if nova_km else None,proxima_data=nova_data,
+   alerta_km_antes=request.form.get('novo_alerta_km_antes') or m.alerta_km_antes or 500,
+   alerta_dias_antes=request.form.get('novo_alerta_dias_antes') or m.alerta_dias_antes or 7,
+   observacoes='Gerada automaticamente após conclusão da manutenção anterior.'
+  )
+  db.session.add(prox)
+
+ db.session.commit()
+ recalcular_alertas(tid())
+ flash('Manutenção concluída e registrada no histórico do veículo.','success')
+ return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
 
 @app.route('/alertas')
 @login_required
