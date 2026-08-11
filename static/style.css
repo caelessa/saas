@@ -62,3 +62,13 @@ textarea{width:100%;font:inherit;padding:12px;border-radius:8px}
 .alert-target:target { outline: 3px solid rgba(245,158,11,.55); outline-offset: 4px; border-radius: 12px; animation: alertTargetPulse 1.4s ease-out 2; }
 .alert-target-row:target td { background: rgba(245,158,11,.12); }
 @keyframes alertTargetPulse { 0% { box-shadow: 0 0 0 0 rgba(245,158,11,.35); } 100% { box-shadow: 0 0 0 14px rgba(245,158,11,0); } }
+
+/* RC 1.0.3 hotfix - conclusão e histórico de manutenção */
+.maintenance-finish{min-width:180px}
+.maintenance-finish summary{cursor:pointer;list-style:none;display:inline-block}
+.maintenance-finish summary::-webkit-details-marker{display:none}
+.maintenance-finish[open]{position:relative}
+.maintenance-finish-form{position:absolute;right:0;z-index:20;width:min(620px,85vw);padding:18px;margin-top:8px;background:#fff;border:1px solid #dce3ec;border-radius:14px;box-shadow:0 18px 45px rgba(15,23,42,.18);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.maintenance-finish-form label{display:flex;flex-direction:column;gap:5px}
+.maintenance-finish-form .wide,.maintenance-finish-form hr,.maintenance-finish-form strong,.maintenance-finish-form small,.maintenance-finish-form button{grid-column:1/-1}
+@media(max-width:720px){.maintenance-finish-form{position:fixed;left:5vw;right:5vw;top:8vh;width:90vw;max-height:84vh;overflow:auto;grid-template-columns:1fr}}
