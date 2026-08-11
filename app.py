@@ -19,6 +19,7 @@ from services.pdf_service import gerar_pdf_contrato
 from services.signature_service import SignatureService, SignatureValidationError
 from services.communication_service import CommunicationService, CommunicationError
 from services.signature_provider_service import SignatureProviderService
+from services.alert_service import sync_operational_alerts, maintenance_indicator
 from io import BytesIO
 from decimal import Decimal
 
@@ -154,9 +155,9 @@ class VehicleEvent(db.Model):
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); observacoes=db.Column(db.Text); vehicle=db.relationship('Vehicle')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); alerta_km_antes=db.Column(db.Integer,default=500); alerta_dias_antes=db.Column(db.Integer,default=7); observacoes=db.Column(db.Text); vehicle=db.relationship('Vehicle')
 class Alert(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow); source_key=db.Column(db.String(120),index=True); entidade=db.Column(db.String(40)); entidade_id=db.Column(db.Integer); action_url=db.Column(db.String(255)); atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow); resolvido_em=db.Column(db.DateTime)
 class Integration(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); ativo=db.Column(db.Boolean,default=False); configuracao=db.Column(db.Text)
 
@@ -327,6 +328,14 @@ def oil_status(v):
   return {'state':'warning','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
  return {'state':'ok','label':f'Faltam {remaining:,} km'.replace(',','.'),'remaining':remaining,'next_km':next_km}
 
+def recalcular_alertas(tenant_id):
+ try:
+  return sync_operational_alerts(db.session,Alert,Maintenance,Vehicle,tenant_id,'/manutencoes','/veiculos')
+ except Exception:
+  db.session.rollback()
+  app.logger.exception('Falha ao recalcular alertas do tenant %s',tenant_id)
+  return []
+
 def migrate_schema():
  additions={
   'vehicle':[
@@ -341,6 +350,8 @@ def migrate_schema():
    ('gestora_cnpj','VARCHAR(30)'),('gestora_endereco','VARCHAR(255)'),('parceira_nome','VARCHAR(180)'),
    ('parceira_cnpj','VARCHAR(30)'),('parceira_endereco','VARCHAR(255)'),
   ],
+  'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7')],
+  'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
    ('periodicidade','VARCHAR(30)'),('dia_vencimento','VARCHAR(30)'),('multa_atraso_percentual','NUMERIC(6,2)'),
@@ -575,20 +586,20 @@ def sair(): logout_user(); return redirect(url_for('entrar'))
 @app.route('/')
 @login_required
 def dashboard():
+ recalcular_alertas(tid())
  vehicles=Vehicle.query.filter_by(tenant_id=tid()).all()
- oil_alerts=[(v,oil_status(v)) for v in vehicles if oil_status(v)['state'] in ('warning','overdue')]
- system_alerts=Alert.query.filter_by(tenant_id=tid(),lido=False).limit(5).all()
+ system_alerts=Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None)).order_by(Alert.nivel.desc(),Alert.criado_em.desc()).limit(8).all()
  status_counts={status:0 for status in ['Disponível','Reservado','Alugado','Devolução','Manutenção','Inativo']}
  for vehicle in vehicles:
   status_counts[vehicle.status or 'Disponível']=status_counts.get(vehicle.status or 'Disponível',0)+1
  cards={
   'veiculos':len(vehicles),'motoristas':Driver.query.filter_by(tenant_id=tid()).count(),
   'contratos':Contract.query.filter(Contract.tenant_id==tid(),Contract.status.in_(['Rascunho','Gerado','Enviado','Visualizado','Assinado','Ativo'])).count(),
-  'alertas':len(oil_alerts)+Alert.query.filter_by(tenant_id=tid(),lido=False).count(),
+  'alertas':Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None)).count(),
   'disponiveis':status_counts.get('Disponível',0),'reservados':status_counts.get('Reservado',0),
   'alugados':status_counts.get('Alugado',0),'manutencao':status_counts.get('Manutenção',0),
  }
- return render_template('dashboard.html',cards=cards,veiculos=sorted(vehicles,key=lambda v:v.id,reverse=True)[:6],alertas=system_alerts,oil_alerts=oil_alerts[:8],oil_status=oil_status)
+ return render_template('dashboard.html',cards=cards,veiculos=sorted(vehicles,key=lambda v:v.id,reverse=True)[:6],alertas=system_alerts,oil_status=oil_status)
 
 @app.route('/motoristas',methods=['GET','POST'])
 @login_required
@@ -781,7 +792,7 @@ def excluir_veiculo(id):
 @app.route('/veiculos/<int:id>/km',methods=['POST'])
 @login_required
 def atualizar_km(id):
- v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404(); km=int(request.form['km']); v.km_atual=km; db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=km,origem=request.form.get('origem','Manual'))); db.session.commit(); flash('Quilometragem atualizada.','success'); return redirect(url_for('veiculos'))
+ v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404(); km=int(request.form['km']); v.km_atual=km; db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=km,origem=request.form.get('origem','Manual'))); db.session.commit(); recalcular_alertas(tid()); flash('Quilometragem atualizada e alertas recalculados.','success'); return redirect(url_for('veiculos'))
 
 @app.route('/veiculos/<int:id>/oleo',methods=['POST'])
 @login_required
@@ -869,6 +880,7 @@ def registrar_quilometragem_publica(token):
     pass
    flash('Não foi possível armazenar a foto do painel. Tente novamente.','danger')
    return render_template('quilometragem_publica.html',req=req,expirado=False)
+  recalcular_alertas(req.tenant_id)
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
 
@@ -1396,8 +1408,46 @@ def excluir_documento(id):
 @login_required
 def manutencoes():
  if request.method=='POST':
-  m=Maintenance(tenant_id=tid(),vehicle_id=request.form['vehicle_id'],tipo=request.form['tipo'],data=request.form.get('data'),km=request.form.get('km') or None,custo=request.form.get('custo') or 0,proxima_km=request.form.get('proxima_km') or None,proxima_data=request.form.get('proxima_data'),observacoes=request.form.get('observacoes')); db.session.add(m); db.session.commit(); flash('Manutenção registrada.','success'); return redirect(url_for('manutencoes'))
- return render_template('manutencoes.html',items=Maintenance.query.filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all())
+  m=Maintenance(
+   tenant_id=tid(),vehicle_id=request.form['vehicle_id'],tipo=request.form['tipo'],
+   data=request.form.get('data'),km=request.form.get('km') or None,custo=request.form.get('custo') or 0,
+   proxima_km=request.form.get('proxima_km') or None,proxima_data=request.form.get('proxima_data'),
+   alerta_km_antes=request.form.get('alerta_km_antes') or 500,
+   alerta_dias_antes=request.form.get('alerta_dias_antes') or 7,
+   observacoes=request.form.get('observacoes')
+  )
+  db.session.add(m); db.session.commit()
+  recalcular_alertas(tid())
+  flash('Manutenção registrada e monitoramento de alertas ativado.','success'); return redirect(url_for('manutencoes'))
+ recalcular_alertas(tid())
+ items=Maintenance.query.filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()).all()
+ alerts=Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None),Alert.entidade=='Manutenção').order_by(Alert.criado_em.desc()).all()
+ return render_template('manutencoes.html',items=items,veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),alertas=alerts,maintenance_indicator=maintenance_indicator)
+
+@app.route('/alertas')
+@login_required
+def alertas():
+ recalcular_alertas(tid())
+ nivel=(request.args.get('nivel') or '').strip()
+ q=Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None))
+ if nivel in ('danger','warning','info'):
+  q=q.filter(Alert.nivel==nivel)
+ items=q.order_by(Alert.criado_em.desc()).all()
+ return render_template('alertas.html',items=items,nivel=nivel)
+
+@app.route('/alertas/<int:id>/lido',methods=['POST'])
+@login_required
+def alerta_lido(id):
+ a=Alert.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ a.lido=True; db.session.commit()
+ return redirect(request.referrer or url_for('alertas'))
+
+@app.route('/alertas/atualizar',methods=['POST'])
+@login_required
+def atualizar_alertas():
+ recalcular_alertas(tid())
+ flash('Alertas atualizados.','success')
+ return redirect(request.referrer or url_for('alertas'))
 
 @app.route('/administracao/armazenamento')
 @login_required
