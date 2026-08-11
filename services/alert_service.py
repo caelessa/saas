@@ -87,7 +87,7 @@ def sync_operational_alerts(session, Alert, Maintenance, Vehicle, tenant_id,
     active_keys = set()
 
     # Manutenções futuras por data e/ou quilometragem.
-    maintenances = Maintenance.query.filter_by(tenant_id=tenant_id).all()
+    maintenances = Maintenance.query.filter_by(tenant_id=tenant_id).filter(Maintenance.status != 'Concluída').all()
     for m in maintenances:
         vehicle = m.vehicle
         if not vehicle:
