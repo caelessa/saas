@@ -1435,6 +1435,32 @@ def alertas():
  items=q.order_by(Alert.criado_em.desc()).all()
  return render_template('alertas.html',items=items,nivel=nivel)
 
+@app.route('/alertas/<int:id>/abrir')
+@login_required
+def alerta_abrir(id):
+ a=Alert.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+
+ # O destino é resolvido pela entidade do alerta, evitando links genéricos.
+ if a.entidade == 'Manutenção' and a.entidade_id:
+  m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=tid()).first()
+  if m:
+   return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
+
+ if a.entidade == 'Veículo' and a.entidade_id:
+  v=Vehicle.query.filter_by(id=a.entidade_id,tenant_id=tid()).first()
+  if v:
+   return redirect(url_for('editar_veiculo',id=v.id) + '#troca-oleo')
+
+ if a.entidade == 'Contrato' and a.entidade_id:
+  c=Contract.query.filter_by(id=a.entidade_id,tenant_id=tid()).first()
+  if c:
+   return redirect(url_for('contrato_detalhe',id=c.id))
+
+ # Fallback para alertas antigos ou integrações futuras.
+ if a.action_url:
+  return redirect(a.action_url)
+ return redirect(url_for('alertas'))
+
 @app.route('/alertas/<int:id>/lido',methods=['POST'])
 @login_required
 def alerta_lido(id):
