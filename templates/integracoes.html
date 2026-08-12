@@ -19,7 +19,11 @@
       <label>Access Token<input type="password" name="access_token" value="{{ whatsapp_cfg.get('access_token','') }}" autocomplete="new-password"></label>
       <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"></label>
       <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
-      <label>Template aprovado para testes<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}" placeholder="ex.: contrato_disponivel"></label>
+      <label>Template de contrato<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}" placeholder="ex.: contrato_disponivel"></label>
+      <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}" placeholder="ex.: solicitar_quilometragem"></label>
+      <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}" placeholder="ex.: manutencao_agendada"></label>
+      <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}" placeholder="ex.: lembrete_manutencao"></label>
+      <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
       <div class="form-actions"><button class="btn" type="submit">Salvar WhatsApp</button></div>
     </form>
     <div class="integration-status">
@@ -83,6 +87,10 @@
     </div>
   </section>
 </div>
+
+<section class="card" style="margin-top:20px">
+  <div class="section-heading"><div><h2>Fila de automações</h2><p class="muted">Em produção, o endpoint protegido pode ser chamado por um Cron Job. O botão abaixo serve para testes.</p></div><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button class="btn-secondary" type="submit">Processar mensagens agendadas agora</button></form></div>
+</section>
 
 <section class="card" style="margin-top:20px">
   <h2>Histórico recente de mensagens</h2>

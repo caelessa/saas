@@ -9,12 +9,16 @@
     <label>Serviço<input name="tipo" required placeholder="Ex.: revisão, pneus, óleo"></label>
     <label>Data realizada<input type="date" name="data"></label>
     <label>Km realizada<input type="number" name="km"></label>
-    <label>Custo<input type="number" step="0.01" name="custo"></label>
+    <label>Custo<input name="custo" inputmode="decimal" placeholder="350,00"></label>
     <label>Próxima em km<input type="number" name="proxima_km"></label>
     <label>Alertar quantos km antes<input type="number" name="alerta_km_antes" value="500" min="0"></label>
     <label>Próxima data<input type="date" name="proxima_data"></label>
+    <label>Horário agendado<input type="time" name="proxima_hora"></label>
     <label>Alertar quantos dias antes<input type="number" name="alerta_dias_antes" value="7" min="0"></label>
+    <label>Oficina / local<input name="oficina" placeholder="Ex.: Oficina Gutos Car"></label>
     <label class="wide">Observações<textarea name="observacoes"></textarea></label>
+    <label class="check wide"><input type="checkbox" name="notificar_motorista" value="1" checked> Enviar confirmação da manutenção ao motorista por WhatsApp</label>
+    <label class="check wide"><input type="checkbox" name="lembrete_um_dia" value="1" checked> Enviar lembrete 1 dia antes</label>
     <button>Registrar manutenção</button>
   </form>
 </section>
@@ -34,9 +38,9 @@
     {% set st=maintenance_indicator(x) if not concluida else {'state':'ok','label':'Concluída','detail':''} %}
     <tr id="manutencao-{{x.id}}" class="alert-target-row">
       <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
-      <td>{{x.tipo}}{% if x.oficina %}<br><small>{{x.oficina}}</small>{% endif %}</td>
+      <td>{{x.tipo}}{% if x.oficina %}<br><small>{{x.oficina}}</small>{% endif %}{% if x.notificar_motorista %}<br><small class="muted">WhatsApp: confirmação + {% if x.lembrete_um_dia %}lembrete 1 dia antes{% else %}sem lembrete{% endif %}</small>{% endif %}</td>
       <td>{{x.data or '-'}}<br>{{x.km or '-'}} km{% if x.custo %}<br><small>R$ {{'%.2f'|format(x.custo)|replace('.',',')}}</small>{% endif %}</td>
-      <td>{% if concluida %}-{% else %}{{x.proxima_data or '-'}}<br>{{x.proxima_km or '-'}} km{% endif %}</td>
+      <td>{% if concluida %}-{% else %}{{x.proxima_data or '-'}}{% if x.proxima_hora %} às {{x.proxima_hora}}{% endif %}<br>{{x.proxima_km or '-'}} km{% endif %}</td>
       <td>{% if concluida %}-{% else %}{{x.alerta_dias_antes or 7}} dias<br>{{x.alerta_km_antes or 500}} km{% endif %}</td>
       <td><span class="alert-status {{st.state}}">{{st.label}}</span>{% if st.detail %}<small class="status-detail">{{st.detail}}</small>{% endif %}</td>
       <td>
@@ -56,6 +60,7 @@
             <label>Próxima em km<input type="number" name="nova_proxima_km"></label>
             <label>Alertar km antes<input type="number" name="novo_alerta_km_antes" value="{{x.alerta_km_antes or 500}}" min="0"></label>
             <label>Próxima data<input type="date" name="nova_proxima_data"></label>
+            <label>Horário<input type="time" name="nova_proxima_hora" value="{{x.proxima_hora or ''}}"></label>
             <label>Alertar dias antes<input type="number" name="novo_alerta_dias_antes" value="{{x.alerta_dias_antes or 7}}" min="0"></label>
             <button type="submit">Confirmar conclusão</button>
           </form>

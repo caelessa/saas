@@ -18,7 +18,7 @@
   <article class="smart-alert {{a.nivel}} {% if a.lido %}read{% endif %}">
    <div class="alert-icon">{% if a.nivel=='danger' %}!{% elif a.nivel=='warning' %}⚠{% else %}i{% endif %}</div>
    <div class="alert-body"><b>{{a.titulo}}</b><p>{{a.mensagem}}</p><small>{{a.criado_em.strftime('%d/%m/%Y %H:%M') if a.criado_em else ''}}</small></div>
-   <div class="alert-actions"><a class="button secondary" href="{{url_for('alerta_abrir',id=a.id)}}">Abrir</a>{% if not a.lido %}<form method="post" action="{{url_for('alerta_lido',id=a.id)}}"><button class="secondary">Marcar como lido</button></form>{% else %}<span class="muted">Lido</span>{% endif %}</div>
+   <div class="alert-actions"><a class="button secondary" href="{{url_for('alerta_abrir',id=a.id)}}">Abrir</a>{% if a.entidade in ['Manutenção','Veículo'] %}<form method="post" action="{{url_for('alerta_whatsapp_motorista',id=a.id)}}"><button class="whatsapp" type="submit">WhatsApp motorista</button></form>{% endif %}{% if not a.lido %}<form method="post" action="{{url_for('alerta_lido',id=a.id)}}"><button class="secondary">Marcar como lido</button></form>{% else %}<span class="muted">Lido</span>{% endif %}</div>
   </article>
  {% else %}<div class="empty-state"><b>Nenhum alerta ativo.</b><p>Quando uma manutenção se aproximar ou vencer, ela aparecerá aqui automaticamente.</p></div>{% endfor %}
 </section>
