@@ -72,3 +72,7 @@ textarea{width:100%;font:inherit;padding:12px;border-radius:8px}
 .maintenance-finish-form label{display:flex;flex-direction:column;gap:5px}
 .maintenance-finish-form .wide,.maintenance-finish-form hr,.maintenance-finish-form strong,.maintenance-finish-form small,.maintenance-finish-form button{grid-column:1/-1}
 @media(max-width:720px){.maintenance-finish-form{position:fixed;left:5vw;right:5vw;top:8vh;width:90vw;max-height:84vh;overflow:auto;grid-template-columns:1fr}}
+
+/* RC 1.0.4 — automações */
+.auto-driver{display:block;margin-bottom:6px;line-height:1.25;font-weight:600}
+.alert-actions form{display:inline-block;margin:2px}
