@@ -20,6 +20,7 @@ from services.signature_service import SignatureService, SignatureValidationErro
 from services.communication_service import CommunicationService, CommunicationError
 from services.signature_provider_service import SignatureProviderService
 from services.alert_service import sync_operational_alerts, maintenance_indicator
+from services.maintenance_notification_service import maintenance_message, reminder_datetime
 from io import BytesIO
 from decimal import Decimal
 
@@ -158,7 +159,7 @@ class VehicleEvent(db.Model):
 class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); alerta_km_antes=db.Column(db.Integer,default=500); alerta_dias_antes=db.Column(db.Integer,default=7); observacoes=db.Column(db.Text); status=db.Column(db.String(20),default='Ativa',index=True); oficina=db.Column(db.String(160)); concluida_em=db.Column(db.DateTime); concluida_por_id=db.Column(db.Integer,db.ForeignKey('user.id')); vehicle=db.relationship('Vehicle'); concluida_por=db.relationship('User',foreign_keys=[concluida_por_id])
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); proxima_hora=db.Column(db.String(5)); alerta_km_antes=db.Column(db.Integer,default=500); alerta_dias_antes=db.Column(db.Integer,default=7); observacoes=db.Column(db.Text); status=db.Column(db.String(20),default='Ativa',index=True); oficina=db.Column(db.String(160)); notificar_motorista=db.Column(db.Boolean,default=False); lembrete_um_dia=db.Column(db.Boolean,default=True); notificacao_agendamento_id=db.Column(db.Integer); notificacao_lembrete_id=db.Column(db.Integer); concluida_em=db.Column(db.DateTime); concluida_por_id=db.Column(db.Integer,db.ForeignKey('user.id')); vehicle=db.relationship('Vehicle'); concluida_por=db.relationship('User',foreign_keys=[concluida_por_id])
 class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow); source_key=db.Column(db.String(120),index=True); entidade=db.Column(db.String(40)); entidade_id=db.Column(db.Integer); action_url=db.Column(db.String(255)); atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow); resolvido_em=db.Column(db.DateTime)
 class Integration(db.Model):
@@ -174,6 +175,7 @@ class MessageQueue(db.Model):
  message_type=db.Column(db.String(50),default='texto')
  body=db.Column(db.Text,nullable=False)
  template_name=db.Column(db.String(120))
+ template_parameters=db.Column(db.Text)
  related_entity=db.Column(db.String(40))
  related_entity_id=db.Column(db.Integer)
  status=db.Column(db.String(30),default='PENDENTE',index=True)
@@ -319,6 +321,69 @@ def normalize_phone(value):
 def active_request(vehicle_id, driver_id):
  return MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id,driver_id=driver_id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
 
+
+
+def motorista_atual_veiculo(vehicle):
+ # O vínculo gravado pela máquina de estados é a fonte primária.
+ if vehicle.current_driver_id and vehicle.current_contract_id and vehicle.status in ('Reservado','Alugado'):
+  return Driver.query.filter_by(id=vehicle.current_driver_id,tenant_id=vehicle.tenant_id).first()
+ # Fallback para bases antigas que ainda não possuem current_driver_id preenchido.
+ contrato=Contract.query.filter(Contract.tenant_id==vehicle.tenant_id,Contract.vehicle_id==vehicle.id,Contract.status.in_(['Gerado','Enviado','Visualizado','Assinado','Ativo'])).order_by(Contract.id.desc()).first()
+ return contrato.driver if contrato else None
+
+def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_entity, related_entity_id, scheduled_at=None, template_name=None, template_parameters=None):
+ telefone=normalize_phone(driver.telefone if driver else None)
+ if not telefone:
+  return None, None, 'Motorista sem telefone/WhatsApp válido.'
+ integration=Integration.query.filter_by(tenant_id=tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ provider_cfg=(cfg.get('provider') or 'web').lower()
+ fila=MessageQueue(
+  tenant_id=tenant_id,channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',
+  recipient=telefone,recipient_name=driver.nome,message_type=message_type,body=body,template_name=template_name,template_parameters=json.dumps(template_parameters or [],ensure_ascii=False),
+  related_entity=related_entity,related_entity_id=related_entity_id,status='AGENDADA' if scheduled_at else 'PENDENTE',
+  scheduled_at=scheduled_at,created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila); db.session.flush()
+ if scheduled_at:
+  return fila, None, None
+ try:
+  result=CommunicationService().send_whatsapp(phone=telefone,message=body,integration=integration,template_name=template_name,template_parameters=template_parameters or [])
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1
+  fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event=result.status,description='Mensagem processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
+  return fila, result.redirect_url, None
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
+  db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  return fila, None, str(exc)
+
+def processar_mensagens_agendadas(tenant_id=None, limit=100):
+ now=agora_sao_paulo_naive()
+ q=MessageQueue.query.filter(MessageQueue.status=='AGENDADA',MessageQueue.scheduled_at.isnot(None),MessageQueue.scheduled_at<=now)
+ if tenant_id is not None: q=q.filter(MessageQueue.tenant_id==tenant_id)
+ items=q.order_by(MessageQueue.scheduled_at.asc()).limit(limit).all()
+ processed=0
+ for fila in items:
+  integration=Integration.query.filter_by(tenant_id=fila.tenant_id,tipo='whatsapp').first()
+  cfg=CommunicationService.parse_config(integration)
+  if (cfg.get('provider') or 'web').lower()!='business':
+   fila.status='AGUARDANDO_MANUAL'; fila.updated_at=now
+   db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='AGUARDANDO_MANUAL',description='WhatsApp Web não permite envio agendado automático.',created_at=now))
+   processed+=1; continue
+  try:
+   try: params=json.loads(fila.template_parameters or '[]')
+   except Exception: params=[]
+   result=CommunicationService().send_whatsapp(phone=fila.recipient,message=fila.body,integration=integration,template_name=fila.template_name,template_parameters=params)
+   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1; fila.sent_at=now; fila.updated_at=now
+   db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event=result.status,description='Mensagem agendada enviada automaticamente.',created_at=now))
+  except CommunicationError as exc:
+   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1; fila.updated_at=now
+   db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=now))
+  processed+=1
+ db.session.commit()
+ return processed
+
 def oil_status(v):
  if not v.controlar_oleo or v.ultima_troca_oleo_km is None or not v.intervalo_oleo_km:
   return {'state':'off','label':'Não configurado','remaining':None,'next_km':None}
@@ -353,8 +418,9 @@ def migrate_schema():
    ('gestora_cnpj','VARCHAR(30)'),('gestora_endereco','VARCHAR(255)'),('parceira_nome','VARCHAR(180)'),
    ('parceira_cnpj','VARCHAR(30)'),('parceira_endereco','VARCHAR(255)'),
   ],
-  'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
+  'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('proxima_hora','VARCHAR(5)'),('notificar_motorista','BOOLEAN DEFAULT FALSE'),('lembrete_um_dia','BOOLEAN DEFAULT TRUE'),('notificacao_agendamento_id','INTEGER'),('notificacao_lembrete_id','INTEGER'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
+  'message_queue':[('template_parameters','TEXT')],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
    ('periodicidade','VARCHAR(30)'),('dia_vencimento','VARCHAR(30)'),('multa_atraso_percentual','NUMERIC(6,2)'),
@@ -811,7 +877,13 @@ def configurar_oleo(id):
 @login_required
 def solicitar_km(id):
  v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- d=Driver.query.filter_by(id=request.form.get('driver_id'),tenant_id=tid()).first_or_404()
+ d=motorista_atual_veiculo(v)
+ # Seleção manual permanece como fallback para veículos sem contrato vigente.
+ if not d and request.form.get('driver_id'):
+  d=Driver.query.filter_by(id=request.form.get('driver_id'),tenant_id=tid()).first()
+ if not d:
+  flash('Não encontrei motorista vinculado a contrato vigente deste veículo. Selecione um motorista manualmente.','warning')
+  return redirect(url_for('veiculos'))
  telefone=normalize_phone(d.telefone)
  if not telefone:
   flash('Cadastre um telefone/WhatsApp válido para o motorista.','danger'); return redirect(url_for('veiculos'))
@@ -822,15 +894,18 @@ def solicitar_km(id):
  link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
  mensagem=f'Olá, {d.nome}! Precisamos da quilometragem atual do veículo {v.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ template_name=(cfg.get('mileage_template_name') or '').strip() or None
+ template_params=[d.nome,v.placa,link]
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
-  recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,
+  recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,template_name=template_name,template_parameters=json.dumps(template_params,ensure_ascii=False),
   related_entity='Veiculo',related_entity_id=v.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
  )
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration)
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR',template_parameters=template_params)
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
   fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Solicitação de quilometragem processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
@@ -1443,17 +1518,54 @@ def excluir_documento(id):
 @login_required
 def manutencoes():
  if request.method=='POST':
+  custo_txt=(request.form.get('custo') or '').strip()
+  try:
+   custo=Decimal(custo_txt.replace('.','').replace(',','.')) if custo_txt else Decimal('0')
+  except Exception:
+   flash('Custo inválido. Use, por exemplo, 350,00.','danger'); return redirect(url_for('manutencoes'))
   m=Maintenance(
    tenant_id=tid(),vehicle_id=request.form['vehicle_id'],tipo=request.form['tipo'],
-   data=request.form.get('data'),km=request.form.get('km') or None,custo=request.form.get('custo') or 0,
-   proxima_km=request.form.get('proxima_km') or None,proxima_data=request.form.get('proxima_data'),
+   data=request.form.get('data'),km=request.form.get('km') or None,custo=custo,
+   proxima_km=request.form.get('proxima_km') or None,proxima_data=request.form.get('proxima_data'),proxima_hora=(request.form.get('proxima_hora') or '').strip() or None,
    alerta_km_antes=request.form.get('alerta_km_antes') or 500,
    alerta_dias_antes=request.form.get('alerta_dias_antes') or 7,
-   observacoes=request.form.get('observacoes')
+   observacoes=request.form.get('observacoes'),oficina=(request.form.get('oficina') or '').strip() or None,
+   notificar_motorista=bool(request.form.get('notificar_motorista')),lembrete_um_dia=bool(request.form.get('lembrete_um_dia')),
   )
-  db.session.add(m); db.session.commit()
+  db.session.add(m); db.session.flush()
+  redirect_whatsapp=None
+  notification_warning=None
+  if m.notificar_motorista:
+   v=Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tid()).first()
+   d=motorista_atual_veiculo(v) if v else None
+   if not d:
+    notification_warning='Manutenção salva, mas não há motorista vinculado a contrato vigente para receber o WhatsApp.'
+   else:
+    integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+    cfg=CommunicationService.parse_config(integration)
+    template_name=(cfg.get('maintenance_template_name') or '').strip() or None
+    params=[d.nome,v.marca_modelo or 'Veículo',v.placa,m.tipo or 'Manutenção',data_br(m.proxima_data) if m.proxima_data else 'a definir',m.proxima_hora or 'a definir']
+    body=maintenance_message(driver_name=d.nome,vehicle=v,maintenance=m,reminder=False)
+    fila,redirect_whatsapp,err=criar_mensagem_whatsapp(tenant_id=tid(),driver=d,body=body,message_type='manutencao_agendada',related_entity='Manutencao',related_entity_id=m.id,template_name=template_name,template_parameters=params)
+    if fila: m.notificacao_agendamento_id=fila.id
+    if err: notification_warning='Manutenção salva, mas o envio imediato falhou: '+err
+    if m.lembrete_um_dia and m.proxima_data:
+     reminder_at=reminder_datetime(m)
+     if reminder_at and reminder_at>agora_sao_paulo_naive():
+      reminder_template=(cfg.get('maintenance_reminder_template_name') or template_name or '').strip() or None
+      reminder_body=maintenance_message(driver_name=d.nome,vehicle=v,maintenance=m,reminder=True)
+      rfila,_,_=criar_mensagem_whatsapp(tenant_id=tid(),driver=d,body=reminder_body,message_type='lembrete_manutencao',related_entity='Manutencao',related_entity_id=m.id,scheduled_at=reminder_at,template_name=reminder_template,template_parameters=params)
+      if rfila: m.notificacao_lembrete_id=rfila.id
+  db.session.commit()
   recalcular_alertas(tid())
-  flash('Manutenção registrada e monitoramento de alertas ativado.','success'); return redirect(url_for('manutencoes'))
+  flash('Manutenção registrada e monitoramento de alertas ativado.','success')
+  if notification_warning: flash(notification_warning,'warning')
+  if redirect_whatsapp:
+   return redirect(redirect_whatsapp)
+  return redirect(url_for('manutencoes'))
+ # Processa automaticamente a fila vencida quando o gestor acessa o módulo; em produção o mesmo serviço pode ser chamado por cron.
+ try: processar_mensagens_agendadas(tid(),limit=50)
+ except Exception: app.logger.exception('Falha ao processar lembretes agendados')
  recalcular_alertas(tid())
  items=Maintenance.query.filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()).all()
  alerts=Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None),Alert.entidade=='Manutenção').order_by(Alert.criado_em.desc()).all()
@@ -1511,10 +1623,11 @@ def concluir_manutencao(id):
  if nova_km or nova_data:
   prox=Maintenance(
    tenant_id=tid(),vehicle_id=v.id,tipo=m.tipo,status='Ativa',
-   proxima_km=int(nova_km) if nova_km else None,proxima_data=nova_data,
+   proxima_km=int(nova_km) if nova_km else None,proxima_data=nova_data,proxima_hora=(request.form.get('nova_proxima_hora') or m.proxima_hora or '').strip() or None,
    alerta_km_antes=request.form.get('novo_alerta_km_antes') or m.alerta_km_antes or 500,
    alerta_dias_antes=request.form.get('novo_alerta_dias_antes') or m.alerta_dias_antes or 7,
-   observacoes='Gerada automaticamente após conclusão da manutenção anterior.'
+   observacoes='Gerada automaticamente após conclusão da manutenção anterior.',
+   notificar_motorista=m.notificar_motorista,lembrete_um_dia=m.lembrete_um_dia,
   )
   db.session.add(prox)
 
@@ -1558,6 +1671,38 @@ def alerta_abrir(id):
  # Fallback para alertas antigos ou integrações futuras.
  if a.action_url:
   return redirect(a.action_url)
+ return redirect(url_for('alertas'))
+
+@app.route('/alertas/<int:id>/whatsapp-motorista',methods=['POST'])
+@login_required
+def alerta_whatsapp_motorista(id):
+ a=Alert.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ v=None; m=None
+ if a.entidade=='Manutenção':
+  m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=tid()).first()
+  v=m.vehicle if m else None
+ elif a.entidade=='Veículo':
+  v=Vehicle.query.filter_by(id=a.entidade_id,tenant_id=tid()).first()
+ if not v:
+  flash('Este alerta não possui veículo associado.','warning'); return redirect(url_for('alertas'))
+ d=motorista_atual_veiculo(v)
+ if not d:
+  flash('O veículo não possui motorista vinculado a contrato vigente.','warning'); return redirect(url_for('alertas'))
+ if m:
+  body=maintenance_message(driver_name=d.nome,vehicle=v,maintenance=m,reminder=False)
+  msg_type='alerta_manutencao'
+ else:
+  body=f'Olá, {d.nome}! A locadora identificou um alerta no veículo {v.marca_modelo or "Veículo"} — {v.placa}: {a.titulo}. {a.mensagem}'
+  msg_type='alerta_veiculo'
+ integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ template_name=(cfg.get('maintenance_template_name') or '').strip() or None
+ params=[d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo,a.mensagem]
+ fila,redirect_url,err=criar_mensagem_whatsapp(tenant_id=tid(),driver=d,body=body,message_type=msg_type,related_entity=a.entidade or 'Alerta',related_entity_id=a.entidade_id or a.id,template_name=template_name,template_parameters=params)
+ db.session.commit()
+ if err: flash('Não foi possível enviar o alerta: '+err,'danger')
+ elif redirect_url: return redirect(redirect_url)
+ else: flash('Alerta enviado ao motorista pelo WhatsApp Business.','success')
  return redirect(url_for('alertas'))
 
 @app.route('/alertas/<int:id>/lido',methods=['POST'])
@@ -1673,6 +1818,10 @@ def integracoes():
     'verify_token':request.form.get('verify_token','').strip(),
     'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
     'contract_template_name':request.form.get('contract_template_name','').strip(),
+    'mileage_template_name':request.form.get('mileage_template_name','').strip(),
+    'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
+    'maintenance_reminder_template_name':request.form.get('maintenance_reminder_template_name','').strip(),
+    'template_language':request.form.get('template_language','pt_BR').strip() or 'pt_BR',
    }
    item.ativo=(provider=='business')
    item.configuracao=json.dumps(cfg,ensure_ascii=False)
@@ -1694,6 +1843,22 @@ def integracoes():
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes)
+
+@app.route('/automacoes/processar-mensagens',methods=['POST'])
+@login_required
+def processar_mensagens_manual():
+ quantidade=processar_mensagens_agendadas(tid(),limit=200)
+ flash(f'{quantidade} mensagem(ns) agendada(s) processada(s).','success')
+ return redirect(url_for('integracoes'))
+
+@app.route('/jobs/processar-mensagens',methods=['GET','POST'])
+def processar_mensagens_job():
+ token=(request.args.get('token') or request.headers.get('X-Automation-Token') or '').strip()
+ expected=(os.getenv('AUTOMATION_JOB_TOKEN') or '').strip()
+ if not expected or token != expected:
+  abort(403)
+ quantidade=processar_mensagens_agendadas(None,limit=500)
+ return {'ok':True,'processadas':quantidade,'executado_em':agora_sao_paulo_naive().isoformat()}
 
 @app.route('/integracoes/whatsapp/testar',methods=['POST'])
 @login_required
