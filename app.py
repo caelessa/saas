@@ -21,6 +21,7 @@ from services.communication_service import CommunicationService, CommunicationEr
 from services.signature_provider_service import SignatureProviderService
 from services.alert_service import sync_operational_alerts, maintenance_indicator
 from services.maintenance_notification_service import maintenance_message, reminder_datetime
+from services.odometer_ocr_service import read_odometer
 from io import BytesIO
 from decimal import Decimal
 
@@ -961,6 +962,34 @@ def registrar_quilometragem_publica(token):
   recalcular_alertas(req.tenant_id)
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
+
+@app.route('/ferramentas/ocr-painel', methods=['GET','POST'])
+@login_required
+def ocr_painel_teste():
+ resultado=None
+ veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
+ veiculo_id=request.form.get('vehicle_id',type=int) if request.method=='POST' else None
+ veiculo=None
+ if veiculo_id:
+  veiculo=Vehicle.query.filter_by(id=veiculo_id,tenant_id=tid()).first()
+ if request.method=='POST':
+  foto=request.files.get('foto')
+  if not foto or not foto.filename:
+   flash('Selecione uma foto do painel.','danger')
+  else:
+   ext=Path(secure_filename(foto.filename)).suffix.lower()
+   if ext not in ('.jpg','.jpeg','.png','.webp'):
+    flash('Envie uma foto JPG, PNG ou WEBP.','danger')
+   else:
+    try:
+     data=foto.read()
+     if not data:
+      raise ValueError('arquivo vazio')
+     resultado=read_odometer(data, previous_km=(veiculo.km_atual if veiculo else None))
+    except Exception:
+     app.logger.exception('Falha no teste OCR do painel')
+     flash('Não foi possível processar a imagem. Tente outra foto.','danger')
+ return render_template('ocr_painel_teste.html',veiculos=veiculos,veiculo=veiculo,resultado=resultado)
 
 @app.route('/quilometragens')
 @login_required
