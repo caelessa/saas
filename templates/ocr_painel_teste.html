@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}Teste OCR do painel · Frota Fácil{% endblock %}
+{% block heading %}Teste OCR do painel{% endblock %}
+{% block subheading %}Envie uma foto real e veja qual quilometragem o Frota Fácil consegue identificar automaticamente.{% endblock %}
+{% block content %}
+<section class="card">
+  <form method="post" enctype="multipart/form-data" class="form-grid">
+    <label>Veículo para comparação (opcional)
+      <select name="vehicle_id">
+        <option value="">Sem veículo / teste livre</option>
+        {% for v in veiculos %}
+        <option value="{{v.id}}" {% if veiculo and veiculo.id==v.id %}selected{% endif %}>{{v.placa}} — {{v.marca_modelo or 'Veículo'}} — {{'{:,}'.format(v.km_atual or 0).replace(',','.')}} km</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Foto do painel
+      <input type="file" name="foto" accept="image/*" capture="environment" required>
+    </label>
+    <div><button type="submit">Ler quilometragem</button></div>
+  </form>
+</section>
+
+{% if resultado %}
+<section class="card" style="margin-top:16px">
+  <h2>Resultado do OCR</h2>
+  {% if resultado.suggested_km is not none %}
+  <div class="alert-highlight">
+    <div><small>Quilometragem sugerida</small><br><strong style="font-size:30px">{{'{:,}'.format(resultado.suggested_km).replace(',','.')}} km</strong></div>
+    <div><small>Confiança</small><br><strong>{{resultado.confidence|upper}}</strong></div>
+  </div>
+  {% else %}
+  <div class="flash warning">Não foi possível sugerir uma quilometragem com segurança.</div>
+  {% endif %}
+
+  {% if resultado.warning %}<div class="flash warning">{{resultado.warning}}</div>{% endif %}
+
+  {% if veiculo %}
+  <p><b>KM atual cadastrado:</b> {{'{:,}'.format(veiculo.km_atual or 0).replace(',','.')}} km</p>
+  {% endif %}
+
+  <p><b>Candidatos encontrados:</b>
+  {% if resultado.candidates %}
+    {% for km in resultado.candidates %}<span class="badge">{{'{:,}'.format(km).replace(',','.')}}</span> {% endfor %}
+  {% else %}nenhum{% endif %}
+  </p>
+
+  <details>
+    <summary>Ver texto bruto reconhecido</summary>
+    <pre style="white-space:pre-wrap;max-height:320px;overflow:auto">{{resultado.raw_text or 'Nenhum texto reconhecido.'}}</pre>
+  </details>
+  <p class="muted">Esta tela é somente de teste. Ela não altera a quilometragem do veículo nem cria movimentações.</p>
+</section>
+{% endif %}
+{% endblock %}
