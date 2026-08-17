@@ -1,0 +1,23 @@
+const FF_HELP=[
+['/dashboard','Dashboard','Visão geral da operação. Acompanhe veículos, motoristas, contratos e alertas. Use os cartões e alertas para abrir rapidamente o item que exige atenção.'],
+['/motoristas','Motoristas','Cadastre e mantenha os dados do motorista. Preencha documentos e contato; depois ele poderá ser vinculado a contratos e receber links pelo WhatsApp.'],
+['/veiculos','Veículos','Cadastre os veículos e seus dados operacionais. Configure KM, óleo, proprietário/investidor e consulte o status. O motorista ativo pode ser obtido pelo contrato.'],
+['/quilometragens/conferencia','Conferência de KM','Quando a conferência estiver ativada, compare a foto com a KM informada. Você pode confirmar, corrigir ou rejeitar e solicitar nova foto. Só após a aprovação a KM oficial é atualizada.'],
+['/quilometragens','Quilometragens','Consulte solicitações e histórico de leituras. Gere o link pelo veículo; o motorista envia foto e KM. A aprovação depende da preferência definida pela locadora.'],
+['/ferramentas/ocr-painel','Teste OCR do painel','Laboratório para testar leitura automática do odômetro. O teste não altera a KM do veículo. Use fotos reais para avaliar acertos e limitações.'],
+['/investidores','Investidores','Cadastre proprietários/investidores e a regra de repasse. Depois associe o investidor ao veículo para apoiar o controle financeiro.'],
+['/modelos','Modelos de contrato','Crie modelos flexíveis com marcadores. Ao gerar um contrato, o Frota Fácil substitui os marcadores pelos dados do motorista, veículo e locação.'],
+['/contratos','Contratos','Gere e acompanhe contratos. Selecione motorista, veículo e modelo; revise os dados, gere o documento, envie para assinatura e acompanhe o status.'],
+['/documentos','Documentos','Central de documentos armazenados. Consulte arquivos de motoristas, veículos e contratos preservando o vínculo com a locadora.'],
+['/manutencoes','Manutenções','Registre manutenções realizadas ou futuras. Defina data/KM e alertas. Ao concluir, informe os dados realizados para entrar no histórico e encerrar os alertas relacionados.'],
+['/alertas','Alertas','Centralize avisos de manutenção e operação. Marque como lido, abra o item relacionado e resolva a causa do alerta no módulo correspondente.'],
+['/integracoes','Integrações','Configure serviços externos, como WhatsApp. Credenciais sensíveis não devem ser publicadas no GitHub. Use o teste da integração antes de ativar automações.'],
+['/administracao/armazenamento','Armazenamento','Acompanhe o armazenamento de documentos e fotos da locadora e as configurações relacionadas ao serviço de arquivos.'],
+['/configuracoes/quilometragem','Configuração de quilometragem','Escolha se a KM enviada pelo motorista é aceita automaticamente ou se deve passar por conferência do administrador. A preferência é independente para cada locadora.']
+];
+function ffHelpForPath(){const p=location.pathname;return FF_HELP.find(x=>p===x[0]||p.startsWith(x[0]+'/'))||['','Ajuda do Frota Fácil','Use esta tela para executar a função indicada no título. Consulte a Central de Ajuda para os tutoriais dos módulos principais.'];}
+function openFFHelp(){const h=ffHelpForPath();document.getElementById('ffHelpTitle').textContent=h[1];document.getElementById('ffHelpText').textContent=h[2];document.getElementById('ffHelpModal').classList.add('open');}
+function closeFFHelp(){document.getElementById('ffHelpModal').classList.remove('open');}
+function openFFHelpCenter(){const box=document.getElementById('ffHelpCenterList');box.innerHTML=FF_HELP.map(x=>`<div class="help-item"><strong>${x[1]}</strong><p>${x[2]}</p></div>`).join('');document.getElementById('ffHelpCenter').classList.add('open');}
+function closeFFHelpCenter(){document.getElementById('ffHelpCenter').classList.remove('open');}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeFFHelp();closeFFHelpCenter();}});
