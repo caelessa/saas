@@ -42,7 +42,7 @@ app.config['MAX_CONTENT_LENGTH']=12*1024*1024
 db=SQLAlchemy(app); login=LoginManager(app); login.login_view='entrar'
 
 class Tenant(db.Model):
- id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True)
+ id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False)
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
@@ -407,6 +407,7 @@ def recalcular_alertas(tenant_id):
 
 def migrate_schema():
  additions={
+  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE')],
   'vehicle':[
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
@@ -924,7 +925,7 @@ def solicitar_km(id):
 @app.route('/km/<token>',methods=['GET','POST'])
 def registrar_quilometragem_publica(token):
  req=MileageRequest.query.options(joinedload(MileageRequest.vehicle),joinedload(MileageRequest.driver)).filter_by(token=token).first_or_404()
- if req.status=='Concluído': return render_template('quilometragem_sucesso.html',req=req,ja_enviado=True)
+ if req.status in ('Concluído','Aguardando conferência'): return render_template('quilometragem_sucesso.html',req=req,ja_enviado=True)
  if req.expires_at and req.expires_at<datetime.utcnow():
   return render_template('quilometragem_publica.html',req=req,expirado=True),410
  if request.method=='POST':
@@ -945,10 +946,17 @@ def registrar_quilometragem_publica(token):
    req.km=km
    req.photo=chave
    req.notes=request.form.get('observacoes')
-   req.status='Concluído'
    req.submitted_at=datetime.utcnow()
-   req.vehicle.km_atual=km
-   db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,km=km,origem='Motorista via link'))
+   if req.vehicle and req.vehicle.id:
+    tenant=Tenant.query.get(req.tenant_id)
+   else:
+    tenant=None
+   if tenant and tenant.conferir_km_motorista:
+    req.status='Aguardando conferência'
+   else:
+    req.status='Concluído'
+    req.vehicle.km_atual=km
+    db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,km=km,origem='Motorista via link'))
    db.session.commit()
   except Exception:
    db.session.rollback()
@@ -962,6 +970,47 @@ def registrar_quilometragem_publica(token):
   recalcular_alertas(req.tenant_id)
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
+
+@app.route('/configuracoes/quilometragem',methods=['GET','POST'])
+@login_required
+def configuracoes_quilometragem():
+ tenant=Tenant.query.get_or_404(tid())
+ if request.method=='POST':
+  tenant.conferir_km_motorista=request.form.get('conferir_km_motorista')=='1'
+  db.session.commit()
+  flash('Preferência de conferência de quilometragem atualizada.','success')
+  return redirect(url_for('configuracoes_quilometragem'))
+ return render_template('configuracoes_quilometragem.html',tenant=tenant)
+
+@app.route('/quilometragens/conferencia')
+@login_required
+def conferencia_quilometragens():
+ items=MileageRequest.query.options(joinedload(MileageRequest.vehicle),joinedload(MileageRequest.driver)).filter_by(tenant_id=tid(),status='Aguardando conferência').order_by(MileageRequest.submitted_at.asc()).all()
+ return render_template('conferencia_quilometragens.html',items=items)
+
+@app.route('/quilometragens/<int:id>/conferir',methods=['POST'])
+@login_required
+def conferir_quilometragem(id):
+ req=MileageRequest.query.options(joinedload(MileageRequest.vehicle)).filter_by(id=id,tenant_id=tid(),status='Aguardando conferência').first_or_404()
+ acao=request.form.get('acao')
+ if acao=='rejeitar':
+  req.status='Rejeitado'
+  req.notes=((req.notes or '')+'\nRejeitado pelo administrador: '+(request.form.get('motivo') or 'Solicitada nova foto.')).strip()
+  db.session.commit()
+  flash('Leitura rejeitada. Gere uma nova solicitação de KM para o motorista.','success')
+  return redirect(url_for('conferencia_quilometragens'))
+ try:
+  km=int(request.form.get('km') or req.km or 0)
+ except ValueError:
+  flash('Informe uma quilometragem válida.','danger'); return redirect(url_for('conferencia_quilometragens'))
+ if km < (req.previous_km or 0):
+  flash(f'A KM confirmada não pode ser menor que a leitura anterior ({req.previous_km:,} km).','danger'); return redirect(url_for('conferencia_quilometragens'))
+ req.km=km; req.status='Concluído'; req.vehicle.km_atual=km
+ origem='Administrador confirmou KM do motorista' if km==request.form.get('km_original',type=int) else 'Administrador corrigiu KM do motorista'
+ db.session.add(Odometer(tenant_id=tid(),vehicle_id=req.vehicle_id,km=km,origem=origem))
+ db.session.commit(); recalcular_alertas(tid())
+ flash('Quilometragem conferida e veículo atualizado.','success')
+ return redirect(url_for('conferencia_quilometragens'))
 
 @app.route('/ferramentas/ocr-painel', methods=['GET','POST'])
 @login_required
