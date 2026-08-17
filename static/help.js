@@ -1,10 +1,9 @@
 const FF_HELP=[
 ['/dashboard','Dashboard','Visão geral da operação. Acompanhe veículos, motoristas, contratos e alertas. Use os cartões e alertas para abrir rapidamente o item que exige atenção.'],
-['/motoristas','Motoristas','Cadastre e mantenha os dados do motorista. Preencha documentos e contato; depois ele poderá ser vinculado a contratos e receber links pelo WhatsApp.'],
-['/veiculos','Veículos','Cadastre os veículos e seus dados operacionais. Configure KM, óleo, proprietário/investidor e consulte o status. O motorista ativo pode ser obtido pelo contrato.'],
+['/motoristas','Motoristas','O cadastro pode ser feito manualmente ou carregando a CNH em PDF. Ao importar a CNH, o Frota Fácil tenta ler e preencher automaticamente os dados encontrados; confira as informações antes de confirmar o cadastro. Depois, mantenha telefone e demais dados atualizados para contratos, solicitações de KM e comunicações pelo WhatsApp.'],
+['/veiculos','Veículos','O cadastro pode ser feito manualmente ou carregando o CRLV-e em PDF. Ao importar o CRLV-e, o Frota Fácil tenta ler e preencher automaticamente os dados do veículo; confira as informações antes de salvar. Depois, configure KM, óleo, proprietário/investidor e acompanhe o status do veículo.'],
 ['/quilometragens/conferencia','Conferência de KM','Quando a conferência estiver ativada, compare a foto com a KM informada. Você pode confirmar, corrigir ou rejeitar e solicitar nova foto. Só após a aprovação a KM oficial é atualizada.'],
 ['/quilometragens','Quilometragens','Consulte solicitações e histórico de leituras. Gere o link pelo veículo; o motorista envia foto e KM. A aprovação depende da preferência definida pela locadora.'],
-['/ferramentas/ocr-painel','Teste OCR do painel','Laboratório para testar leitura automática do odômetro. O teste não altera a KM do veículo. Use fotos reais para avaliar acertos e limitações.'],
 ['/investidores','Investidores','Cadastre proprietários/investidores e a regra de repasse. Depois associe o investidor ao veículo para apoiar o controle financeiro.'],
 ['/modelos','Modelos de contrato','Crie modelos flexíveis com marcadores. Ao gerar um contrato, o Frota Fácil substitui os marcadores pelos dados do motorista, veículo e locação.'],
 ['/contratos','Contratos','Gere e acompanhe contratos. Selecione motorista, veículo e modelo; revise os dados, gere o documento, envie para assinatura e acompanhe o status.'],
