@@ -111,7 +111,7 @@ class CommunicationService:
             message_id = body["messages"][0].get("id")
         return CommunicationResult(
             provider="whatsapp_business",
-            status="ENVIADA",
+            status="ACEITA_META",
             external_id=message_id,
             response_payload=body,
         )
