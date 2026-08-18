@@ -55,7 +55,7 @@
       </label>
       <h3>Clicksign</h3>
       <label>API Token<input type="password" name="clicksign_api_token" value="{{ signature_cfg.get('api_token','') }}"></label>
-      <label>Workspace Key<input name="clicksign_workspace_key" value="{{ signature_cfg.get('workspace_key','') }}"></label>
+      <label>Workspace Key (legado/opcional)<input name="clicksign_workspace_key" value="{{ signature_cfg.get('workspace_key','') }}"><small>A API Clicksign v3 usa o Access Token; este campo é mantido apenas por compatibilidade.</small></label>
       <label>Ambiente
         <select name="clicksign_environment">
           <option value="sandbox" {% if signature_cfg.get('environment','sandbox')=='sandbox' %}selected{% endif %}>Sandbox</option>
@@ -74,6 +74,10 @@
       <div class="form-actions"><button class="btn" type="submit">Salvar assinatura</button></div>
     </form>
     <p><strong>Status:</strong> {{ signature_message }}</p>
+    {% if signature_cfg.get('provider')=='clicksign' %}
+    <form method="post" action="{{url_for('testar_clicksign')}}" style="margin-top:10px"><button class="btn-secondary" type="submit">Testar conexão Clicksign</button></form>
+    <p class="muted">No Sandbox, documentos são apenas para desenvolvimento e não têm valor jurídico.</p>
+    {% endif %}
   </section>
 
   <section class="card integration-card">

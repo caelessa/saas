@@ -9,6 +9,24 @@
 {% if c.arquivo_pdf %}{% if c.arquivo_pdf_assinado %}<a class="button" href="{{url_for('contrato_pdf',id=c.id)}}">Baixar PDF assinado</a><a class="button secondary" href="{{url_for('contrato_pdf',id=c.id,original=1)}}">PDF original</a>{% else %}<a class="button" href="{{url_for('contrato_pdf',id=c.id)}}">Baixar PDF</a>{% endif %}<a class="button whatsapp" href="{{url_for('contrato_whatsapp',id=c.id)}}">Enviar por WhatsApp</a>{% else %}<form method="post" action="{{url_for('gerar_pdf_contrato_existente',id=c.id)}}" style="display:inline"><button type="submit">Gerar PDF e armazenar</button></form>{% endif %}<a class="button secondary" href="{{url_for('contrato_texto',id=c.id)}}">Baixar texto</a><a class="button secondary" href="{{url_for('contratos')}}">Voltar</a>
 <form method="post" action="{{url_for('contrato_status',id=c.id)}}" class="status-form"><label>Alterar status<select name="status">{% for s in ['Rascunho','Gerado','Enviado','Visualizado','Assinado','Ativo','Encerrado','Cancelado'] %}<option {% if c.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}</select></label>{% if c.status in ['Assinado','Ativo'] %}<label>Após encerrar<select name="vehicle_destination"><option>Disponível</option><option>Manutenção</option></select></label>{% endif %}<button type="submit">Atualizar</button></form>
 </section>
+{% if signature_cfg.get('provider')=='clicksign' %}
+<section class="card no-print">
+ <h2>Assinatura pela Clicksign</h2>
+ <p><strong>{{ signature_message }}</strong></p>
+ {% if c.clicksign_envelope_id %}
+   <div class="detail-grid"><div><small>Envelope</small><strong>{{c.clicksign_envelope_id}}</strong></div><div><small>Status</small><strong>{{c.clicksign_status or '-'}}</strong></div><div><small>Enviado em</small><strong>{{c.clicksign_sent_at.strftime('%d/%m/%Y %H:%M') if c.clicksign_sent_at else '-'}}</strong></div></div>
+   <form method="post" action="{{url_for('contrato_clicksign_status',id=c.id)}}"><button type="submit">Atualizar status Clicksign</button></form>
+ {% elif signature_ready and c.arquivo_pdf %}
+   <form method="post" action="{{url_for('contrato_clicksign_enviar',id=c.id)}}" class="form-grid">
+    <label>E-mail do motorista / signatário<input type="email" name="signer_email" value="{{c.driver.email or ''}}" required placeholder="motorista@exemplo.com"></label>
+    <div class="form-actions"><button type="submit">Enviar para Clicksign Sandbox</button></div>
+   </form>
+   <p class="muted">O teste cria envelope, envia o PDF, cadastra o motorista, configura autenticação por e-mail, ativa o envelope e dispara a solicitação de assinatura.</p>
+ {% else %}
+   <p>Configure a Clicksign em Integrações e gere o PDF deste contrato antes do envio.</p>
+ {% endif %}
+</section>
+{% endif %}
 <section class="card"><h2>Informações</h2><div class="detail-grid"><div><small>Número</small><strong>{{c.numero_contrato}}</strong></div><div><small>Criado em</small><strong>{{c.criado_em.strftime('%d/%m/%Y %H:%M') if c.criado_em else '-'}}</strong></div><div><small>Período</small><strong>{{c.data_inicio}} a {{c.data_fim}}</strong></div><div><small>Assinado em</small><strong>{{c.assinado_em.strftime('%d/%m/%Y %H:%M') if c.assinado_em else '-'}}</strong></div></div><div class="detail-grid"><div><small>Código público</small><strong>{{c.codigo_publico or '-'}}</strong></div><div><small>Enviado por WhatsApp</small><strong>{{c.enviado_whatsapp_em.strftime('%d/%m/%Y %H:%M') if c.enviado_whatsapp_em else '-'}}</strong></div><div><small>Primeira visualização</small><strong>{{c.visualizado_em.strftime('%d/%m/%Y %H:%M') if c.visualizado_em else '-'}}</strong></div></div></section>
 {% if signature %}<section class="card"><h2>Assinatura eletrônica</h2>{% if c.arquivo_pdf_assinado %}<p><strong>PDF assinado gerado e armazenado.</strong> A assinatura visual está incorporada ao documento final.</p>{% endif %}<div class="detail-grid"><div><small>Signatário</small><strong>{{signature.signatario_nome}}</strong></div><div><small>Assinado em</small><strong>{{signature.assinado_em.strftime('%d/%m/%Y %H:%M')}}</strong></div><div><small>IP</small><strong>{{signature.ip or '-'}}</strong></div><div><small>Hash da assinatura</small><strong title="{{signature.hash_assinatura}}">{{signature.hash_assinatura[:16]}}…</strong></div></div></section>{% endif %}
 {% if documento %}<section class="card"><h2>Documento armazenado</h2><p><strong>{{documento.identificador}}</strong> · Cloudflare R2 · SHA-256 {{documento.hash_sha256[:16]}}…</p><a class="button" href="{{url_for('baixar_documento',id=documento.id)}}">Baixar pela Central de Documentos</a></section>{% endif %}
