@@ -18,7 +18,7 @@ from services.vehicle_state_service import VehicleStateService, VehicleStateErro
 from services.pdf_service import gerar_pdf_contrato
 from services.signature_service import SignatureService, SignatureValidationError
 from services.communication_service import CommunicationService, CommunicationError
-from services.signature_provider_service import SignatureProviderService
+from services.signature_provider_service import SignatureProviderService, SignatureProviderError
 from services.alert_service import sync_operational_alerts, maintenance_indicator
 from services.maintenance_notification_service import maintenance_message, reminder_datetime
 from services.odometer_ocr_service import read_odometer
@@ -104,6 +104,11 @@ class Contract(db.Model):
  enviado_whatsapp_em=db.Column(db.DateTime)
  visualizado_em=db.Column(db.DateTime)
  gerado_em=db.Column(db.DateTime)
+ clicksign_envelope_id=db.Column(db.String(80),index=True)
+ clicksign_document_id=db.Column(db.String(80))
+ clicksign_signer_id=db.Column(db.String(80))
+ clicksign_status=db.Column(db.String(30))
+ clicksign_sent_at=db.Column(db.DateTime)
  driver=db.relationship('Driver')
  vehicle=db.relationship('Vehicle',foreign_keys=[vehicle_id])
  template=db.relationship('ContractTemplate')
@@ -431,7 +436,7 @@ def migrate_schema():
    ('estado_civil','VARCHAR(60)'),('profissao','VARCHAR(100)'),('cidade_assinatura','VARCHAR(100)'),
    ('numero_contrato','VARCHAR(30)'),('versao','INTEGER DEFAULT 1'),('criado_por_id','INTEGER'),
    ('criado_em','TIMESTAMP'),('atualizado_em','TIMESTAMP'),('assinado_em','TIMESTAMP'),
-   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('arquivo_pdf_assinado','VARCHAR(255)'),('hash_documento_assinado','VARCHAR(64)'),('documento_assinado_id','INTEGER'),('codigo_publico','VARCHAR(24)'),('enviado_whatsapp_em','TIMESTAMP'),('visualizado_em','TIMESTAMP'),('gerado_em','TIMESTAMP'),
+   ('assinatura_id','VARCHAR(120)'),('documento_id','INTEGER'),('arquivo_pdf','VARCHAR(255)'),('hash_documento','VARCHAR(64)'),('arquivo_pdf_assinado','VARCHAR(255)'),('hash_documento_assinado','VARCHAR(64)'),('documento_assinado_id','INTEGER'),('codigo_publico','VARCHAR(24)'),('enviado_whatsapp_em','TIMESTAMP'),('visualizado_em','TIMESTAMP'),('gerado_em','TIMESTAMP'),('clicksign_envelope_id','VARCHAR(80)'),('clicksign_document_id','VARCHAR(80)'),('clicksign_signer_id','VARCHAR(80)'),('clicksign_status','VARCHAR(30)'),('clicksign_sent_at','TIMESTAMP'),
   ],
  }
  inspector=inspect(db.engine)
@@ -1212,7 +1217,88 @@ def contrato_detalhe(id):
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle),joinedload(Contract.criado_por)).filter_by(id=id,tenant_id=tid()).first_or_404()
  eventos=ContractEvent.query.options(joinedload(ContractEvent.user)).filter_by(tenant_id=tid(),contract_id=c.id).order_by(ContractEvent.criado_em.desc()).all()
  documento=Document.query.filter_by(id=c.documento_id,tenant_id=tid()).first() if c.documento_id else None
- return render_template('contrato_detalhe.html',c=c,eventos=eventos,documento=documento,signature=c.signature)
+ signature_item=_integration('signature')
+ signature_cfg=_integration_config(signature_item)
+ signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
+ return render_template('contrato_detalhe.html',c=c,eventos=eventos,documento=documento,signature=c.signature,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message)
+
+
+@app.route('/integracoes/clicksign/testar',methods=['POST'])
+@login_required
+def testar_clicksign():
+ item=_integration('signature')
+ try:
+  client=SignatureProviderService.clicksign_client(item)
+  ok,message=client.test_connection()
+  flash(message,'success' if ok else 'danger')
+ except SignatureProviderError as exc:
+  flash(str(exc),'danger')
+ return redirect(url_for('integracoes'))
+
+@app.route('/contratos/<int:id>/clicksign/enviar',methods=['POST'])
+@login_required
+def contrato_clicksign_enviar(id):
+ c=Contract.query.options(joinedload(Contract.driver)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not c.arquivo_pdf:
+  flash('Gere o PDF do contrato antes de enviá-lo à Clicksign.','danger')
+  return redirect(url_for('contrato_detalhe',id=id))
+ if c.clicksign_envelope_id:
+  flash('Este contrato já possui um envelope Clicksign. Use Atualizar status.','info')
+  return redirect(url_for('contrato_detalhe',id=id))
+ signer_email=(request.form.get('signer_email') or c.driver.email or '').strip()
+ try:
+  pdf_bytes=storage.download(c.arquivo_pdf)
+  integration=_integration('signature')
+  client=SignatureProviderService.clicksign_client(integration)
+  result=client.create_signature_flow(
+   envelope_name=f'Frota Fácil - {c.numero_contrato}',
+   filename=f'{c.numero_contrato}.pdf',pdf_bytes=pdf_bytes,
+   signer_name=c.driver.nome,signer_email=signer_email,signer_cpf=c.driver.cpf,
+  )
+  c.clicksign_envelope_id=result.envelope_id
+  c.clicksign_document_id=result.document_id
+  c.clicksign_signer_id=result.signer_id
+  c.clicksign_status=result.status
+  c.clicksign_sent_at=agora_sao_paulo_naive()
+  if not c.driver.email and signer_email:
+   c.driver.email=signer_email
+  registrar_evento_contrato(db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,
+   evento='CLICKSIGN_ENVIADO',descricao=f'Contrato enviado para assinatura pela Clicksign. Envelope {result.envelope_id}.',status_novo=c.status)
+  db.session.commit()
+  flash(f'Contrato enviado para a Clicksign ({result.status}). Verifique o e-mail do signatário.','success')
+ except StorageNotFoundError:
+  flash('O PDF oficial não foi encontrado no armazenamento.','danger')
+ except SignatureProviderError as exc:
+  db.session.rollback(); flash(str(exc),'danger')
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha ao enviar contrato à Clicksign'); flash('Falha inesperada ao enviar o contrato à Clicksign.','danger')
+ return redirect(url_for('contrato_detalhe',id=id))
+
+@app.route('/contratos/<int:id>/clicksign/status',methods=['POST'])
+@login_required
+def contrato_clicksign_status(id):
+ c=Contract.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not c.clicksign_envelope_id:
+  flash('Este contrato ainda não possui envelope Clicksign.','danger')
+  return redirect(url_for('contrato_detalhe',id=id))
+ try:
+  client=SignatureProviderService.clicksign_client(_integration('signature'))
+  body=client.envelope_details(c.clicksign_envelope_id)
+  attrs=((body.get('data') or {}).get('attributes') or {}) if isinstance(body,dict) else {}
+  status=str(attrs.get('status') or c.clicksign_status or 'desconhecido')
+  c.clicksign_status=status
+  registrar_evento_contrato(db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,
+   evento='CLICKSIGN_STATUS',descricao=f'Status Clicksign consultado: {status}.',status_novo=c.status)
+  # Quando o envelope fecha, consideramos a assinatura externa concluída.
+  if status=='closed' and c.status not in ('Assinado','Ativo','Encerrado'):
+   now=agora_sao_paulo_naive()
+   states=ContractStateService(db.session,ContractEvent,VehicleEvent)
+   states.transition(contract=c,new_status='Assinado',user_id=current_user.id,now=now)
+   states.transition(contract=c,new_status='Ativo',user_id=current_user.id,now=now)
+  db.session.commit(); flash(f'Status Clicksign: {status}.','success')
+ except (SignatureProviderError,ContractStateError,VehicleStateError) as exc:
+  db.session.rollback(); flash(str(exc),'danger')
+ return redirect(url_for('contrato_detalhe',id=id))
 
 @app.route('/contratos/<int:id>/status',methods=['POST'])
 @login_required
