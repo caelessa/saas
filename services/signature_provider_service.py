@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -133,9 +134,15 @@ class ClicksignClient:
                 "signature_reminder": "email",
             },
         }
-        cpf = (cpf or "").strip()
-        if cpf:
-            attributes["documentation"] = cpf
+        # A API v3 valida rigidamente o campo `documentation` como CPF.
+        # Para não bloquear o envio por um CPF antigo, incompleto ou de teste,
+        # só pré-preenchemos quando houver exatamente 11 dígitos. Caso contrário,
+        # omitimos o campo e a própria Clicksign poderá solicitar o CPF ao signatário.
+        cpf_digits = re.sub(r"\D", "", cpf or "")
+        if len(cpf_digits) == 11:
+            attributes["documentation"] = (
+                f"{cpf_digits[:3]}.{cpf_digits[3:6]}.{cpf_digits[6:9]}-{cpf_digits[9:]}"
+            )
             attributes["has_documentation"] = True
         payload = {"data": {"type": "signers", "attributes": attributes}}
         body = self._request("POST", f"/envelopes/{envelope_id}/signers", payload, expected=(201,))
