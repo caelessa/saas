@@ -4,7 +4,8 @@
 {% block content %}
 <section class="card">
   <h2>Registrar manutenção e próxima previsão</h2>
-  <form method="post" class="form-grid">
+  <form method="post" class="form-grid" id="maintenance-form">
+    <label>Situação<select name="situacao" id="maintenance-situacao"><option value="Agendada">Agendada / futura</option><option value="Realizada">Já realizada / histórico</option></select></label>
     <label>Veículo<select name="vehicle_id">{% for x in veiculos %}<option value="{{x.id}}">{{x.placa}} — {{x.marca_modelo}}</option>{% endfor %}</select></label>
     <label>Serviço<input name="tipo" required placeholder="Ex.: revisão, pneus, óleo"></label>
     <label>Data realizada<input type="date" name="data"></label>
@@ -21,6 +22,7 @@
     <label class="check wide"><input type="checkbox" name="lembrete_um_dia" value="1" checked> Enviar lembrete 1 dia antes</label>
     <button>Registrar manutenção</button>
   </form>
+  <p class="muted">Use <b>Já realizada / histórico</b> para cadastrar serviços feitos antes ou fora do Frota Fácil. Esses registros entram diretamente no histórico do veículo e não geram alerta da execução passada.</p>
 </section>
 
 {% if alertas %}
