@@ -2159,6 +2159,108 @@ def _integration_config(item):
  except Exception:
   return {}
 
+def _whatsapp_verify_token_valido(token):
+ token=(token or '').strip()
+ if not token:
+  return False
+ global_token=(os.getenv('WHATSAPP_WEBHOOK_VERIFY_TOKEN') or '').strip()
+ if global_token and token == global_token:
+  return True
+ # Compatibilidade com a configuração atual por locadora.
+ for item in Integration.query.filter_by(tipo='whatsapp').all():
+  cfg=_integration_config(item)
+  if (cfg.get('verify_token') or '').strip() == token:
+   return True
+ return False
+
+
+def _whatsapp_status_rank(status):
+ return {'PENDENTE':0,'ACEITA_META':1,'ENVIADA':2,'ENTREGUE':3,'LIDA':4}.get((status or '').upper(),-1)
+
+
+def _whatsapp_error_description(status_item):
+ errors=status_item.get('errors') or []
+ partes=[]
+ for erro in errors:
+  if not isinstance(erro,dict):
+   continue
+  code=erro.get('code')
+  title=erro.get('title') or erro.get('message')
+  detalhe=((erro.get('error_data') or {}).get('details') if isinstance(erro.get('error_data'),dict) else None)
+  trecho=' / '.join(str(v) for v in (code,title,detalhe) if v not in (None,''))
+  if trecho:
+   partes.append(trecho)
+ return ' | '.join(partes)
+
+
+@app.route('/webhooks/whatsapp',methods=['GET','POST'])
+def whatsapp_webhook():
+ # GET: verificação do callback feita pela Meta.
+ if request.method=='GET':
+  mode=(request.args.get('hub.mode') or '').strip()
+  token=(request.args.get('hub.verify_token') or '').strip()
+  challenge=request.args.get('hub.challenge') or ''
+  if mode == 'subscribe' and _whatsapp_verify_token_valido(token):
+   return challenge,200,{'Content-Type':'text/plain; charset=utf-8'}
+  abort(403)
+
+ payload=request.get_json(silent=True) or {}
+ try:
+  for entry in payload.get('entry') or []:
+   for change in entry.get('changes') or []:
+    value=change.get('value') or {}
+    metadata=value.get('metadata') or {}
+    phone_number_id=str(metadata.get('phone_number_id') or '')
+    for st in value.get('statuses') or []:
+     external_id=str(st.get('id') or '')
+     meta_status=(st.get('status') or '').lower()
+     recipient_id=str(st.get('recipient_id') or '')
+     status_map={'sent':'ENVIADA','delivered':'ENTREGUE','read':'LIDA','failed':'FALHA'}
+     novo=status_map.get(meta_status)
+     if not external_id or not novo:
+      continue
+     fila=MessageQueue.query.filter_by(external_id=external_id).order_by(MessageQueue.id.desc()).first()
+     if not fila:
+      app.logger.warning('Webhook WhatsApp sem mensagem local correspondente: %s',external_id)
+      continue
+
+     erro=_whatsapp_error_description(st)
+     meta_ts=str(st.get('timestamp') or '')
+     descricao=(
+      f'Status Meta: {meta_status} | destinatário: {recipient_id or fila.recipient} | '
+      f'phone_number_id: {phone_number_id or "-"} | timestamp Meta: {meta_ts or "-"}'
+     )
+     if erro:
+      descricao += f' | erro: {erro}'
+
+     # Registra todos os eventos, mesmo quando chegam fora de ordem.
+     db.session.add(MessageEvent(
+      tenant_id=fila.tenant_id,message_id=fila.id,event=novo,
+      description=descricao,created_at=agora_sao_paulo_naive()
+     ))
+
+     atual=(fila.status or '').upper()
+     if novo == 'FALHA':
+      # Não rebaixa uma mensagem que a Meta já confirmou como entregue/lida.
+      if _whatsapp_status_rank(atual) < _whatsapp_status_rank('ENTREGUE'):
+       fila.status='FALHA'
+       fila.error_message=erro or 'A Meta informou falha na entrega.'
+     elif _whatsapp_status_rank(novo) > _whatsapp_status_rank(atual):
+      fila.status=novo
+      if novo == 'ENVIADA' and not fila.sent_at:
+       fila.sent_at=agora_sao_paulo_naive()
+      if novo in ('ENTREGUE','LIDA'):
+       fila.error_message=None
+     fila.updated_at=agora_sao_paulo_naive()
+  db.session.commit()
+ except Exception:
+  db.session.rollback()
+  app.logger.exception('Falha ao processar webhook do WhatsApp')
+  # Retorna 200 para evitar tempestade de retries por erro interno inesperado.
+  return {'ok':False},200
+ return {'ok':True},200
+
+
 @app.route('/integracoes',methods=['GET','POST'])
 @login_required
 def integracoes():
@@ -2203,7 +2305,7 @@ def integracoes():
  for mensagem_recente in recentes:
   ultimo_evento=MessageEvent.query.filter_by(tenant_id=tid(),message_id=mensagem_recente.id).order_by(MessageEvent.id.desc()).first()
   mensagem_recente.diagnostico=(ultimo_evento.description if ultimo_evento else None)
- return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes)
+ return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,whatsapp_webhook_url=url_for('whatsapp_webhook',_external=True))
 
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
@@ -2255,7 +2357,7 @@ def testar_whatsapp_business():
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description=diagnostico,created_at=agora_sao_paulo_naive()))
   db.session.commit()
-  flash(f'Teste enviado. Frota Fácil enviou para {telefone}. Meta reconheceu wa_id {meta_wa_id or "não retornado"}.','success')
+  flash(f'Teste aceito pela Meta para {telefone}. wa_id reconhecido: {meta_wa_id or "não retornado"}. Aguarde o webhook para confirmar entrega.','success')
  except CommunicationError as exc:
   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=1
   diagnostico=f'Destino digitado: {telefone_informado or "-"} | Destino normalizado/enviado: {telefone} | Template: {template_teste or "texto livre"} | Erro Meta: {exc}'
