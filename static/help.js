@@ -8,6 +8,7 @@ const FF_HELP=[
 ['/modelos','Modelos de contrato','Crie modelos flexíveis com marcadores. Ao gerar um contrato, o Frota Fácil substitui os marcadores pelos dados do motorista, veículo e locação.'],
 ['/contratos','Contratos','Gere e acompanhe contratos. Selecione motorista, veículo e modelo; revise os dados, gere o documento, envie para assinatura e acompanhe o status.'],
 ['/documentos','Documentos','Central de documentos armazenados. Consulte arquivos de motoristas, veículos e contratos preservando o vínculo com a locadora.'],
+['/vistorias','Vistorias','Gere um link exclusivo para o motorista gravar a vistoria na hora pelo celular. O Frota Fácil guia a gravação por voz e etapas, verifica iluminação mínima, armazena o vídeo no Cloudflare R2 e permite ao administrador aprovar ou pedir nova gravação. Não há envio de vídeo pronto pela galeria.'],
 ['/manutencoes','Manutenções','Registre manutenções realizadas ou futuras. Defina data/KM e alertas. Ao concluir, informe os dados realizados para entrar no histórico e encerrar os alertas relacionados.'],
 ['/alertas','Alertas','Centralize avisos de manutenção e operação. Marque como lido, abra o item relacionado e resolva a causa do alerta no módulo correspondente.'],
 ['/integracoes','Integrações','Configure serviços externos, como WhatsApp. Credenciais sensíveis não devem ser publicadas no GitHub. Use o teste da integração antes de ativar automações.'],
