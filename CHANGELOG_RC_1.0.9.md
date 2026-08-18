@@ -1,0 +1,15 @@
+# Changelog RC 1.0.9
+- Cadastro de manutenção já realizada/histórica.
+- Próximo ciclo opcional ao cadastrar manutenção histórica.
+- Novo modelo Inspection/Vistoria.
+- Novo módulo Vistorias no menu.
+- Link público temporário de vistoria.
+- Gravação ao vivo por câmera/microfone via MediaRecorder.
+- Roteiro guiado por voz e etapas.
+- Verificação inicial de luminosidade.
+- Vídeo armazenado pelo StorageService/R2.
+- Aprovação e solicitação de regravação pelo administrador.
+- Evento de vistoria no histórico do veículo.
+- Ajuda contextual para Vistorias.
+- Limite de upload ampliado para 120 MB.
+- Preservada a correção do menu lateral e botão Sair da RC 1.0.8.

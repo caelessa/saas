@@ -38,7 +38,7 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS']={
  'pool_recycle': 240,
  'pool_timeout': 20,
 }
-app.config['MAX_CONTENT_LENGTH']=12*1024*1024
+app.config['MAX_CONTENT_LENGTH']=120*1024*1024
 db=SQLAlchemy(app); login=LoginManager(app); login.login_view='entrar'
 
 class Tenant(db.Model):
@@ -166,6 +166,28 @@ class Document(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); tipo=db.Column(db.String(40)); entidade=db.Column(db.String(30)); entidade_id=db.Column(db.Integer); identificador=db.Column(db.String(180),index=True); numero_documento=db.Column(db.String(60),index=True); nome_original=db.Column(db.String(255)); arquivo=db.Column(db.String(255)); hash_sha256=db.Column(db.String(64)); status=db.Column(db.String(20),default='Ativo'); versao=db.Column(db.Integer,default=1); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Maintenance(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); tipo=db.Column(db.String(100)); data=db.Column(db.String(10)); km=db.Column(db.Integer); custo=db.Column(db.Numeric(12,2)); proxima_km=db.Column(db.Integer); proxima_data=db.Column(db.String(10)); proxima_hora=db.Column(db.String(5)); alerta_km_antes=db.Column(db.Integer,default=500); alerta_dias_antes=db.Column(db.Integer,default=7); observacoes=db.Column(db.Text); status=db.Column(db.String(20),default='Ativa',index=True); oficina=db.Column(db.String(160)); notificar_motorista=db.Column(db.Boolean,default=False); lembrete_um_dia=db.Column(db.Boolean,default=True); notificacao_agendamento_id=db.Column(db.Integer); notificacao_lembrete_id=db.Column(db.Integer); concluida_em=db.Column(db.DateTime); concluida_por_id=db.Column(db.Integer,db.ForeignKey('user.id')); vehicle=db.relationship('Vehicle'); concluida_por=db.relationship('User',foreign_keys=[concluida_por_id])
+class Inspection(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False,index=True)
+ driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'))
+ contract_id=db.Column(db.Integer,db.ForeignKey('contract.id'))
+ token=db.Column(db.String(64),unique=True,nullable=False,index=True)
+ status=db.Column(db.String(30),default='Pendente',index=True)
+ requested_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ expires_at=db.Column(db.DateTime,index=True)
+ started_at=db.Column(db.DateTime)
+ submitted_at=db.Column(db.DateTime)
+ video_key=db.Column(db.String(255))
+ video_mime=db.Column(db.String(80))
+ duration_seconds=db.Column(db.Integer)
+ brightness_avg=db.Column(db.Numeric(8,2))
+ brightness_status=db.Column(db.String(30))
+ notes=db.Column(db.Text)
+ vehicle=db.relationship('Vehicle',foreign_keys=[vehicle_id])
+ driver=db.relationship('Driver',foreign_keys=[driver_id])
+ contract=db.relationship('Contract',foreign_keys=[contract_id])
+
 class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow); source_key=db.Column(db.String(120),index=True); entidade=db.Column(db.String(40)); entidade_id=db.Column(db.Integer); action_url=db.Column(db.String(255)); atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow); resolvido_em=db.Column(db.DateTime)
 class Integration(db.Model):
@@ -224,7 +246,7 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Alert,Integration,MessageQueue,MessageEvent]
+ models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
@@ -1687,6 +1709,8 @@ def manutencoes():
    custo=Decimal(custo_txt.replace('.','').replace(',','.')) if custo_txt else Decimal('0')
   except Exception:
    flash('Custo inválido. Use, por exemplo, 350,00.','danger'); return redirect(url_for('manutencoes'))
+  situacao=(request.form.get('situacao') or 'Agendada').strip()
+  ja_realizada=(situacao == 'Realizada')
   m=Maintenance(
    tenant_id=tid(),vehicle_id=request.form['vehicle_id'],tipo=request.form['tipo'],
    data=request.form.get('data'),km=request.form.get('km') or None,custo=custo,
@@ -1694,12 +1718,28 @@ def manutencoes():
    alerta_km_antes=request.form.get('alerta_km_antes') or 500,
    alerta_dias_antes=request.form.get('alerta_dias_antes') or 7,
    observacoes=request.form.get('observacoes'),oficina=(request.form.get('oficina') or '').strip() or None,
-   notificar_motorista=bool(request.form.get('notificar_motorista')),lembrete_um_dia=bool(request.form.get('lembrete_um_dia')),
+   notificar_motorista=(False if ja_realizada else bool(request.form.get('notificar_motorista'))),lembrete_um_dia=(False if ja_realizada else bool(request.form.get('lembrete_um_dia'))),
+   status=('Concluída' if ja_realizada else 'Ativa'),
+   concluida_em=(datetime.utcnow() if ja_realizada else None),
+   concluida_por_id=(current_user.id if ja_realizada else None),
   )
   db.session.add(m); db.session.flush()
   redirect_whatsapp=None
   notification_warning=None
-  if m.notificar_motorista:
+  if ja_realizada and (m.proxima_km or m.proxima_data):
+   prox=Maintenance(tenant_id=tid(),vehicle_id=m.vehicle_id,tipo=m.tipo,status='Ativa',proxima_km=m.proxima_km,proxima_data=m.proxima_data,proxima_hora=m.proxima_hora,alerta_km_antes=m.alerta_km_antes or 500,alerta_dias_antes=m.alerta_dias_antes or 7,observacoes='Próximo ciclo criado a partir de manutenção histórica.',oficina=m.oficina,notificar_motorista=False,lembrete_um_dia=False)
+   db.session.add(prox)
+   m.proxima_km=None; m.proxima_data=None; m.proxima_hora=None
+  if ja_realizada:
+   v=Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tid()).first()
+   descricao=f"{m.tipo or 'Manutenção'} cadastrada como já realizada"
+   if m.data: descricao+=f" em {data_br(m.data)}"
+   if m.km is not None: descricao+=f" com {int(m.km):,} km".replace(',','.')
+   if m.custo: descricao+=f". Custo R$ {m.custo:.2f}".replace('.',',')
+   if m.oficina: descricao+=f". Oficina: {m.oficina}"
+   if v:
+    db.session.add(VehicleEvent(tenant_id=tid(),vehicle_id=v.id,user_id=current_user.id,evento='Manutenção histórica',descricao=descricao,status_anterior=v.status,status_novo=v.status))
+  if (not ja_realizada) and m.notificar_motorista:
    v=Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tid()).first()
    d=motorista_atual_veiculo(v) if v else None
    if not d:
@@ -1722,7 +1762,7 @@ def manutencoes():
       if rfila: m.notificacao_lembrete_id=rfila.id
   db.session.commit()
   recalcular_alertas(tid())
-  flash('Manutenção registrada e monitoramento de alertas ativado.','success')
+  flash(('Manutenção já realizada registrada no histórico do veículo.' if ja_realizada else 'Manutenção registrada e monitoramento de alertas ativado.'),'success')
   if notification_warning: flash(notification_warning,'warning')
   if redirect_whatsapp:
    return redirect(redirect_whatsapp)
@@ -1799,6 +1839,95 @@ def concluir_manutencao(id):
  recalcular_alertas(tid())
  flash('Manutenção concluída e registrada no histórico do veículo.','success')
  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
+
+@app.route('/vistorias',methods=['GET','POST'])
+@login_required
+def vistorias():
+ if request.method=='POST':
+  v=Vehicle.query.filter_by(id=request.form.get('vehicle_id'),tenant_id=tid()).first_or_404()
+  d=motorista_atual_veiculo(v)
+  c=v.current_contract if v.current_contract and v.current_contract.tenant_id==tid() else None
+  if not d:
+   flash('O veículo precisa ter motorista vinculado a um contrato vigente para gerar a vistoria.','warning')
+   return redirect(url_for('vistorias'))
+  token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
+  expira_horas=int(request.form.get('expira_horas') or 48)
+  item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
+  db.session.add(item); db.session.commit()
+  link=url_for('vistoria_publica',token=item.token,_external=True)
+  flash('Solicitação de vistoria criada. Link: '+link,'success')
+  return redirect(url_for('vistorias'))
+ items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
+ veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
+ return render_template('vistorias.html',items=items,veiculos=veiculos)
+
+@app.route('/vistorias/<int:id>/aprovar',methods=['POST'])
+@login_required
+def aprovar_vistoria(id):
+ item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not item.video_key:
+  flash('A vistoria ainda não possui vídeo.','warning'); return redirect(url_for('vistorias'))
+ item.status='Aprovada'; db.session.commit()
+ flash('Vistoria aprovada.','success'); return redirect(url_for('vistorias'))
+
+@app.route('/vistorias/<int:id>/rejeitar',methods=['POST'])
+@login_required
+def rejeitar_vistoria(id):
+ item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ item.status='Regravar'; item.notes=(request.form.get('motivo') or 'Nova gravação solicitada pelo administrador.').strip()
+ item.token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
+ item.expires_at=datetime.utcnow()+timedelta(hours=48)
+ db.session.commit()
+ flash('Vistoria rejeitada. Um novo link foi gerado para regravação.','warning'); return redirect(url_for('vistorias'))
+
+@app.route('/vistorias/<int:id>/video')
+@login_required
+def vistoria_video(id):
+ item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not item.video_key: abort(404)
+ try: conteudo=storage.download(item.video_key)
+ except StorageNotFoundError: abort(404)
+ return send_file(BytesIO(conteudo),mimetype=item.video_mime or 'video/webm',download_name=f'vistoria-{item.id}.webm',conditional=True)
+
+@app.route('/vistoria/<token>')
+def vistoria_publica(token):
+ item=Inspection.query.filter_by(token=token).first_or_404()
+ if item.expires_at and item.expires_at < datetime.utcnow():
+  return render_template('vistoria_publica.html',item=item,expired=True),410
+ if item.status in ('Aprovada','Recebida') and item.video_key:
+  return render_template('vistoria_publica.html',item=item,done=True)
+ return render_template('vistoria_publica.html',item=item)
+
+@app.route('/vistoria/<token>/upload',methods=['POST'])
+def vistoria_upload(token):
+ item=Inspection.query.filter_by(token=token).first_or_404()
+ if item.expires_at and item.expires_at < datetime.utcnow():
+  return {'ok':False,'error':'Link expirado.'},410
+ video=request.files.get('video')
+ if not video:
+  return {'ok':False,'error':'Vídeo não recebido.'},400
+ mime=(video.mimetype or '').lower()
+ if not (mime.startswith('video/webm') or mime.startswith('video/mp4') or mime.startswith('video/quicktime')):
+  return {'ok':False,'error':'Formato de vídeo não suportado.'},400
+ try: brilho=float(request.form.get('brightness_avg') or 0)
+ except Exception: brilho=0
+ try: duracao=max(0,int(float(request.form.get('duration_seconds') or 0)))
+ except Exception: duracao=0
+ if duracao < 15:
+  return {'ok':False,'error':'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'},400
+ if brilho < 38:
+  return {'ok':False,'error':'Iluminação insuficiente. Grave novamente em local bem iluminado, preferencialmente durante o dia.'},400
+ ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
+ chave=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}/{uuid.uuid4().hex}{ext}"
+ try:
+  storage.upload(video.stream,chave,mime)
+ except Exception:
+  app.logger.exception('Falha ao armazenar vídeo da vistoria %s',item.id)
+  return {'ok':False,'error':'Não foi possível armazenar o vídeo. Tente novamente.'},503
+ item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao; item.brightness_avg=Decimal(str(round(brilho,2))); item.brightness_status='Adequada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'
+ db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=f'Vídeo gravado pelo link de vistoria #{item.id}; duração {duracao}s; luminosidade média {brilho:.1f}.'))
+ db.session.commit()
+ return {'ok':True,'message':'Vistoria enviada com sucesso.'}
 
 @app.route('/alertas')
 @login_required
