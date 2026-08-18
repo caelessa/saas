@@ -19,6 +19,7 @@
       <label>Access Token<input type="password" name="access_token" value="{{ whatsapp_cfg.get('access_token','') }}" autocomplete="new-password"></label>
       <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"></label>
       <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
+      <label>Template de teste<input name="test_template_name" value="{{ whatsapp_cfg.get('test_template_name','') }}" placeholder="ex.: teste_frota_facil"><small>Usado pelo botão Testar conexão. Se vazio, usa o template de solicitação de KM.</small></label>
       <label>Template de contrato<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}" placeholder="ex.: contrato_disponivel"></label>
       <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}" placeholder="ex.: solicitar_quilometragem"></label>
       <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}" placeholder="ex.: manutencao_agendada"></label>
@@ -38,6 +39,7 @@
       <input name="telefone" placeholder="5511999999999" required>
       <button class="btn-secondary" type="submit">Testar conexão</button>
     </form>
+    <p class="muted"><small>O teste registra o número digitado, o número normalizado enviado à Meta, o <code>wa_id</code> reconhecido e o <code>message_id</code>.</small></p>
     {% endif %}
   </section>
 
@@ -100,15 +102,16 @@
   <h2>Histórico recente de mensagens</h2>
   {% if recentes %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Erro</th></tr></thead>
+    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Diagnóstico</th><th>Erro</th></tr></thead>
     <tbody>
       {% for item in recentes %}
       <tr>
-        <td>{{ item.created_at.strftime('%d/%m/%Y %H:%M') if item.created_at else '-' }}</td>
+        <td>{{ item.created_at|sp_datetime if item.created_at else '-' }}</td>
         <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
         <td>{{ item.message_type }}</td>
         <td>{{ item.provider }}</td>
         <td><span class="badge">{{ item.status }}</span></td>
+        <td><small>{{ item.diagnostico or '-' }}</small></td>
         <td>{{ item.error_message or '-' }}</td>
       </tr>
       {% endfor %}
