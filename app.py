@@ -41,6 +41,23 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS']={
 app.config['MAX_CONTENT_LENGTH']=120*1024*1024
 db=SQLAlchemy(app); login=LoginManager(app); login.login_view='entrar'
 
+SAO_PAULO_TZ=ZoneInfo('America/Sao_Paulo')
+
+def _as_sao_paulo(value):
+ if not value:
+  return None
+ if isinstance(value,date) and not isinstance(value,datetime):
+  return value
+ if value.tzinfo is None:
+  value=value.replace(tzinfo=timezone.utc)
+ return value.astimezone(SAO_PAULO_TZ)
+
+@app.template_filter('sp_datetime')
+def sp_datetime(value,fmt='%d/%m/%Y %H:%M'):
+ local=_as_sao_paulo(value)
+ return local.strftime(fmt) if local else '-'
+
+
 class Tenant(db.Model):
  id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False)
 class User(UserMixin,db.Model):
@@ -187,6 +204,22 @@ class Inspection(db.Model):
  vehicle=db.relationship('Vehicle',foreign_keys=[vehicle_id])
  driver=db.relationship('Driver',foreign_keys=[driver_id])
  contract=db.relationship('Contract',foreign_keys=[contract_id])
+
+class InspectionAttempt(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ inspection_id=db.Column(db.Integer,db.ForeignKey('inspection.id'),nullable=False,index=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ video_key=db.Column(db.String(255),nullable=False)
+ video_mime=db.Column(db.String(80))
+ duration_seconds=db.Column(db.Integer)
+ brightness_avg=db.Column(db.Numeric(8,2))
+ brightness_min=db.Column(db.Numeric(8,2))
+ dark_ratio=db.Column(db.Numeric(8,4))
+ submitted_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ decision=db.Column(db.String(30),default='Pendente')
+ decision_notes=db.Column(db.Text)
+ decided_at=db.Column(db.DateTime)
+ inspection=db.relationship('Inspection',backref=db.backref('attempts',lazy=True,order_by='InspectionAttempt.id.desc()'))
 
 class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow); source_key=db.Column(db.String(120),index=True); entidade=db.Column(db.String(40)); entidade_id=db.Column(db.Integer); action_url=db.Column(db.String(255)); atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow); resolvido_em=db.Column(db.DateTime)
@@ -1867,7 +1900,14 @@ def aprovar_vistoria(id):
  item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if not item.video_key:
   flash('A vistoria ainda não possui vídeo.','warning'); return redirect(url_for('vistorias'))
- item.status='Aprovada'; db.session.commit()
+ item.status='Aprovada'
+ tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
+ if not tentativa and item.video_key:
+  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
+  db.session.add(tentativa)
+ if tentativa:
+  tentativa.decision='Aprovada'; tentativa.decided_at=datetime.utcnow()
+ db.session.commit()
  flash('Vistoria aprovada.','success'); return redirect(url_for('vistorias'))
 
 @app.route('/vistorias/<int:id>/rejeitar',methods=['POST'])
@@ -1875,6 +1915,12 @@ def aprovar_vistoria(id):
 def rejeitar_vistoria(id):
  item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  item.status='Regravar'; item.notes=(request.form.get('motivo') or 'Nova gravação solicitada pelo administrador.').strip()
+ tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
+ if not tentativa and item.video_key:
+  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
+  db.session.add(tentativa)
+ if tentativa:
+  tentativa.decision='Regravar'; tentativa.decision_notes=item.notes; tentativa.decided_at=datetime.utcnow()
  item.token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
  item.expires_at=datetime.utcnow()+timedelta(hours=48)
  db.session.commit()
@@ -1888,6 +1934,15 @@ def vistoria_video(id):
  try: conteudo=storage.download(item.video_key)
  except StorageNotFoundError: abort(404)
  return send_file(BytesIO(conteudo),mimetype=item.video_mime or 'video/webm',download_name=f'vistoria-{item.id}.webm',conditional=True)
+
+@app.route('/vistorias/<int:id>/tentativas/<int:attempt_id>/video')
+@login_required
+def vistoria_tentativa_video(id,attempt_id):
+ item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ tentativa=InspectionAttempt.query.filter_by(id=attempt_id,inspection_id=item.id,tenant_id=tid()).first_or_404()
+ try: conteudo=storage.download(tentativa.video_key)
+ except StorageNotFoundError: abort(404)
+ return send_file(BytesIO(conteudo),mimetype=tentativa.video_mime or 'video/webm',download_name=f'vistoria-{item.id}-tentativa-{tentativa.id}.webm',conditional=True)
 
 @app.route('/vistoria/<token>')
 def vistoria_publica(token):
@@ -1911,12 +1966,19 @@ def vistoria_upload(token):
   return {'ok':False,'error':'Formato de vídeo não suportado.'},400
  try: brilho=float(request.form.get('brightness_avg') or 0)
  except Exception: brilho=0
+ try: brilho_min=float(request.form.get('brightness_min') or brilho)
+ except Exception: brilho_min=brilho
+ try: dark_ratio=float(request.form.get('dark_ratio') or 0)
+ except Exception: dark_ratio=0
+ try: sample_count=max(0,int(float(request.form.get('brightness_samples') or 0)))
+ except Exception: sample_count=0
  try: duracao=max(0,int(float(request.form.get('duration_seconds') or 0)))
  except Exception: duracao=0
  if duracao < 15:
   return {'ok':False,'error':'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'},400
- if brilho < 38:
-  return {'ok':False,'error':'Iluminação insuficiente. Grave novamente em local bem iluminado, preferencialmente durante o dia.'},400
+ # Avalia o vídeo ao longo de toda a gravação, e não apenas por uma amostra isolada.
+ if sample_count < 5 or brilho < 45 or dark_ratio > 0.35:
+  return {'ok':False,'error':'Iluminação insuficiente durante parte relevante do vídeo. Grave novamente em local bem iluminado.'},400
  ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
  chave=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}/{uuid.uuid4().hex}{ext}"
  try:
@@ -1924,8 +1986,10 @@ def vistoria_upload(token):
  except Exception:
   app.logger.exception('Falha ao armazenar vídeo da vistoria %s',item.id)
   return {'ok':False,'error':'Não foi possível armazenar o vídeo. Tente novamente.'},503
- item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao; item.brightness_avg=Decimal(str(round(brilho,2))); item.brightness_status='Adequada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'
- db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=f'Vídeo gravado pelo link de vistoria #{item.id}; duração {duracao}s; luminosidade média {brilho:.1f}.'))
+ item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao; item.brightness_avg=Decimal(str(round(brilho,2))); item.brightness_status='Adequada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'; item.notes=None
+ tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,brightness_avg=Decimal(str(round(brilho,2))),brightness_min=Decimal(str(round(brilho_min,2))),dark_ratio=Decimal(str(round(dark_ratio,4))),submitted_at=item.submitted_at,decision='Pendente')
+ db.session.add(tentativa)
+ db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=f'Vídeo gravado pelo link de vistoria #{item.id}; duração {duracao}s; luminosidade média {brilho:.1f}; trechos escuros {dark_ratio*100:.0f}%. Aguardando aprovação.'))
  db.session.commit()
  return {'ok':True,'message':'Vistoria enviada com sucesso.'}
 
@@ -2110,6 +2174,7 @@ def integracoes():
     'access_token':request.form.get('access_token','').strip(),
     'verify_token':request.form.get('verify_token','').strip(),
     'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
+    'test_template_name':request.form.get('test_template_name','').strip(),
     'contract_template_name':request.form.get('contract_template_name','').strip(),
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
@@ -2135,6 +2200,9 @@ def integracoes():
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
+ for mensagem_recente in recentes:
+  ultimo_evento=MessageEvent.query.filter_by(tenant_id=tid(),message_id=mensagem_recente.id).order_by(MessageEvent.id.desc()).first()
+  mensagem_recente.diagnostico=(ultimo_evento.description if ultimo_evento else None)
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes)
 
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
@@ -2158,20 +2226,40 @@ def processar_mensagens_job():
 def testar_whatsapp_business():
  item=_integration('whatsapp')
  cfg=_integration_config(item)
- telefone=normalize_phone(request.form.get('telefone'))
+ telefone_informado=(request.form.get('telefone') or '').strip()
+ telefone=normalize_phone(telefone_informado)
  if not telefone:
   flash('Informe um telefone para o teste.','danger'); return redirect(url_for('integracoes'))
  mensagem='Teste de integração enviado pelo Frota Fácil.'
- fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
+ # Template dedicado ao teste. Mantém fallback para configurações já existentes.
+ template_teste=(cfg.get('test_template_name') or cfg.get('mileage_template_name') or cfg.get('contract_template_name') or '').strip() or None
+ idioma=(cfg.get('template_language') or 'pt_BR').strip() or 'pt_BR'
+ fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,template_name=template_teste,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=cfg.get('contract_template_name') or None)
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=template_teste,template_language=idioma)
+  body=result.response_payload if isinstance(result.response_payload,dict) else {}
+  contato=(body.get('contacts') or [{}])[0] if body.get('contacts') else {}
+  mensagem_meta=(body.get('messages') or [{}])[0] if body.get('messages') else {}
+  meta_input=str(contato.get('input') or '')
+  meta_wa_id=str(contato.get('wa_id') or '')
+  meta_message_id=str(mensagem_meta.get('id') or result.external_id or '')
+  diagnostico=(
+   f'Destino digitado: {telefone_informado or "-"} | '
+   f'Destino normalizado/enviado: {telefone} | '
+   f'Meta input: {meta_input or "não retornado"} | '
+   f'Meta wa_id: {meta_wa_id or "não retornado"} | '
+   f'Message ID: {meta_message_id or "não retornado"} | '
+   f'Template: {template_teste or "texto livre"} | Idioma: {idioma}'
+  )
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
-  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Teste manual de integração.',created_at=agora_sao_paulo_naive()))
-  db.session.commit(); flash('Teste processado com sucesso.','success')
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description=diagnostico,created_at=agora_sao_paulo_naive()))
+  db.session.commit()
+  flash(f'Teste enviado. Frota Fácil enviou para {telefone}. Meta reconheceu wa_id {meta_wa_id or "não retornado"}.','success')
  except CommunicationError as exc:
   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=1
-  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  diagnostico=f'Destino digitado: {telefone_informado or "-"} | Destino normalizado/enviado: {telefone} | Template: {template_teste or "texto livre"} | Erro Meta: {exc}'
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=diagnostico,created_at=agora_sao_paulo_naive()))
   db.session.commit(); flash(str(exc),'danger')
  return redirect(url_for('integracoes'))
 
