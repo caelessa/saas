@@ -330,6 +330,24 @@ def parse_cnh(text):
     cpf_digits = re.sub(r"\D", "", cpf)
     cpf = cpf_digits if len(cpf_digits) == 11 else ""
 
+    # RG / documento de identidade. Nas CNHs-e atuais o OCR regional costuma
+    # devolver o RG como uma linha numérica isolada antes da linha CPF/CNH.
+    rg = first([
+        r"(?:DOC(?:UMENTO)?\s+IDENTIDADE|IDENTIDADE|RG)\s*[:\-]?\s*([0-9.\-]{5,20})",
+    ], t)
+    if not rg:
+        ids_section = t
+        if "--- CPF CNH CATEGORIA ---" in t:
+            ids_section = t.split("--- CPF CNH CATEGORIA ---", 1)[1].split("--- ZONA DE LEITURA MECÂNICA ---", 1)[0]
+        for line in ids_section.splitlines():
+            candidate = re.sub(r"\D", "", line)
+            # RG brasileiro não tem tamanho único. Evita confundir CPF (11) e CNH (9-12)
+            # usando apenas uma linha isolada curta que aparece antes da linha compacta CPF/CNH.
+            if re.fullmatch(r"\s*[0-9.\-]{6,10}\s*", line) and 6 <= len(candidate) <= 10:
+                rg = candidate
+                break
+    rg = re.sub(r"[^0-9A-Za-z.-]", "", rg or "")
+
     registro = first([
         r"(?:N[ºO°]?\s*REGISTRO|REGISTRO)\s*[:\-]?\s*([0-9OIL| ]{9,16})",
         r"(?:N[ºO°]?\s*CNH|CNH)\s*[:\-]?\s*([0-9OIL| ]{9,16})",
@@ -444,6 +462,7 @@ def parse_cnh(text):
     return {
         "nome": nome,
         "cpf": cpf,
+        "rg": rg,
         "numero_cnh": registro,
         "categoria": categoria,
         "data_nascimento": nascimento,
