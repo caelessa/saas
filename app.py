@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, or_
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -25,6 +25,7 @@ from services.odometer_ocr_service import read_odometer
 from io import BytesIO
 from decimal import Decimal
 from urllib.parse import quote
+from docx import Document as DocxDocument
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
 storage=StorageService(UPLOAD)
@@ -769,7 +770,23 @@ def motoristas():
    return redirect(url_for('motoristas'))
   flash('Motorista cadastrado e CNH armazenada automaticamente.','success')
   return redirect(url_for('motoristas'))
- return render_template('motoristas.html',items=Driver.query.filter_by(tenant_id=tid()).order_by(Driver.nome))
+ q=(request.args.get('q') or '').strip()
+ query=Driver.query.filter_by(tenant_id=tid())
+ if q:
+  like=f'%{q}%'
+  query=query.filter(or_(Driver.nome.ilike(like),Driver.cpf.ilike(like),Driver.rg.ilike(like),Driver.numero_cnh.ilike(like),Driver.telefone.ilike(like)))
+ return render_template('motoristas.html',items=query.order_by(Driver.nome).all(),q=q)
+
+@app.route('/motoristas/<int:id>/editar',methods=['GET','POST'])
+@login_required
+def editar_motorista(id):
+ d=Driver.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if request.method=='POST':
+  for campo in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','telefone2','contato2_nome','contato2_parentesco','telefone3','contato3_nome','contato3_parentesco','email','endereco','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','status']:
+   setattr(d,campo,request.form.get(campo))
+  db.session.commit(); flash('Motorista atualizado com sucesso.','success'); return redirect(url_for('motoristas'))
+ return render_template('editar_motorista.html',d=d)
+
 @app.route('/motoristas/importar',methods=['POST'])
 @login_required
 def importar_motorista():
@@ -808,7 +825,22 @@ def excluir_motorista(id):
 def investidores():
  if request.method=='POST':
   x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=request.form.get('telefone'),email=request.form.get('email'),regra_repasse=request.form.get('regra_repasse'),observacoes=request.form.get('observacoes')); db.session.add(x); db.session.commit(); flash('Investidor cadastrado.','success'); return redirect(url_for('investidores'))
- return render_template('investidores.html',items=Investor.query.filter_by(tenant_id=tid()).order_by(Investor.nome))
+ q=(request.args.get('q') or '').strip()
+ query=Investor.query.filter_by(tenant_id=tid())
+ if q:
+  like=f'%{q}%'
+  query=query.filter(or_(Investor.nome.ilike(like),Investor.cpf_cnpj.ilike(like),Investor.telefone.ilike(like),Investor.email.ilike(like)))
+ return render_template('investidores.html',items=query.order_by(Investor.nome).all(),q=q)
+
+@app.route('/investidores/<int:id>/editar',methods=['GET','POST'])
+@login_required
+def editar_investidor(id):
+ x=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if request.method=='POST':
+  for campo in ['nome','cpf_cnpj','telefone','email','regra_repasse','observacoes']:
+   setattr(x,campo,request.form.get(campo))
+  db.session.commit(); flash('Investidor atualizado com sucesso.','success'); return redirect(url_for('investidores'))
+ return render_template('editar_investidor.html',x=x)
 
 @app.route('/veiculos',methods=['GET','POST'])
 @login_required
@@ -840,7 +872,12 @@ def veiculos():
    return redirect(url_for('veiculos'))
   flash('Veículo cadastrado e CRLV armazenado automaticamente.','success')
   return redirect(url_for('veiculos'))
- return render_template('veiculos.html',items=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),oil_status=oil_status)
+ q=(request.args.get('q') or '').strip()
+ query=Vehicle.query.filter_by(tenant_id=tid())
+ if q:
+  like=f'%{q}%'
+  query=query.filter(or_(Vehicle.placa.ilike(like),Vehicle.renavam.ilike(like),Vehicle.chassi.ilike(like),Vehicle.marca_modelo.ilike(like),Vehicle.proprietario_legal.ilike(like)))
+ return render_template('veiculos.html',items=query.order_by(Vehicle.placa).all(),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),oil_status=oil_status,q=q)
 @app.route('/veiculos/importar',methods=['POST'])
 @login_required
 def importar_veiculo():
@@ -1315,7 +1352,7 @@ def contratos():
  consulta=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.tenant_id==tid())
  if q:
   termo=f'%{q}%'
-  consulta=consulta.join(Driver,Contract.driver_id==Driver.id).join(Vehicle,Contract.vehicle_id==Vehicle.id).filter(db.or_(
+  consulta=consulta.join(Driver,Contract.driver_id==Driver.id).join(Vehicle,Contract.vehicle_id==Vehicle.id).filter(or_(
    Contract.numero_contrato.ilike(termo),Contract.status.ilike(termo),Driver.nome.ilike(termo),Driver.cpf.ilike(termo),
    Driver.numero_cnh.ilike(termo),Vehicle.placa.ilike(termo),Vehicle.marca_modelo.ilike(termo),Vehicle.renavam.ilike(termo)
   ))
@@ -1694,6 +1731,21 @@ def salvar_modelo_contrato(modelo):
   nome_original=secure_filename(arquivo.filename)
   if nome_original.lower().endswith('.txt'):
    conteudo=arquivo.read().decode('utf-8',errors='replace')
+  elif nome_original.lower().endswith('.docx'):
+   try:
+    doc=DocxDocument(BytesIO(arquivo.read()))
+    blocos=[]
+    for par in doc.paragraphs:
+     if par.text.strip(): blocos.append(par.text)
+    for tabela in doc.tables:
+     for linha in tabela.rows:
+      celulas=[c.text.strip() for c in linha.cells]
+      if any(celulas): blocos.append(' | '.join(celulas))
+    conteudo='\n'.join(blocos).strip()
+    if not conteudo: flash('O DOCX não contém texto legível. Verifique se o contrato é composto apenas por imagens.','warning')
+   except Exception as exc:
+    app.logger.exception('Falha ao extrair DOCX do modelo de contrato')
+    flash(f'Não foi possível ler o DOCX: {exc}','warning')
   elif nome_original.lower().endswith('.pdf'):
    try: conteudo=extract_text(arquivo,document_type='contract')
    except Exception: flash('Não foi possível extrair o PDF. Cole o texto no campo conteúdo.','warning')
@@ -1757,7 +1809,7 @@ def documentos():
   ids_contratos=[c.id for c in contratos_relacionados.values() if any(q.lower() in (str(v or '').lower()) for v in [c.numero_contrato,c.driver.nome if c.driver else '',c.driver.cpf if c.driver else '',c.vehicle.placa if c.vehicle else '',c.vehicle.marca_modelo if c.vehicle else ''])]
   filtros=[Document.identificador.ilike(termo),Document.numero_documento.ilike(termo),Document.nome_original.ilike(termo),Document.tipo.ilike(termo),Document.entidade.ilike(termo)]
   if ids_contratos: filtros.append(db.and_(Document.entidade=='Contrato',Document.entidade_id.in_(ids_contratos)))
-  consulta=consulta.filter(db.or_(*filtros))
+  consulta=consulta.filter(or_(*filtros))
  return render_template('documentos.html',items=consulta.order_by(Document.id.desc()).all(),motoristas=Driver.query.filter_by(tenant_id=tid()).all(),veiculos=Vehicle.query.filter_by(tenant_id=tid()).all(),storage_backend=storage.backend_name,q=q,contratos_relacionados=contratos_relacionados)
 
 @app.route('/documentos/<int:id>/baixar')
