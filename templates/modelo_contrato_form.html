@@ -7,7 +7,7 @@
 <label>Nome<input name="nome" value="{{modelo.nome if modelo else ''}}" required></label>
 <label>Descrição<input name="descricao" value="{{modelo.descricao if modelo else ''}}"></label>
 <label>Tipo de veículo<select name="tipo_veiculo"><option>Todos</option><option>Combustão</option><option>Elétrico</option><option>Híbrido</option></select></label>
-<label>Upload do modelo (TXT ou PDF)<input type="file" name="arquivo" accept=".txt,.pdf"></label>
+<label>Upload do modelo (DOCX, TXT ou PDF)<input type="file" name="arquivo" accept=".docx,.txt,.pdf"><small class="hint">Ao enviar um DOCX/TXT/PDF com texto legível, o conteúdo é extraído automaticamente; não é necessário preencher o campo abaixo.</small></label>
 <label class="check"><input type="checkbox" name="possui_limite_km" {% if not modelo or modelo.possui_limite_km %}checked{% endif %}> Possui limite de quilometragem</label>
 <label class="check"><input type="checkbox" name="padrao" {% if modelo and modelo.padrao %}checked{% endif %}> Definir como padrão</label>
 
@@ -23,7 +23,7 @@
 <label>Endereço<input name="parceira_endereco" value="{{modelo.parceira_endereco if modelo else ''}}"></label>
 
 <label style="grid-column:1/-1">Conteúdo do contrato
-<textarea name="conteudo" rows="34" required>{{modelo.conteudo if modelo else ''}}</textarea></label>
+<textarea name="conteudo" rows="34" placeholder="Opcional quando um arquivo DOCX, TXT ou PDF for enviado">{{modelo.conteudo if modelo else ''}}</textarea></label>
 <button>{{'Criar nova versão' if modelo else 'Salvar modelo'}}</button>
 </form>
 </section>
