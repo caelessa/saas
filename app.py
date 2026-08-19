@@ -2307,6 +2307,18 @@ def integracoes():
   mensagem_recente.diagnostico=(ultimo_evento.description if ultimo_evento else None)
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,whatsapp_webhook_url=url_for('whatsapp_webhook',_external=True))
 
+@app.route('/politica-de-privacidade')
+def politica_de_privacidade():
+ return render_template('politica_privacidade.html', atualizado_em='18 de agosto de 2026')
+
+@app.route('/privacy-policy')
+def privacy_policy_alias():
+ return redirect(url_for('politica_de_privacidade'), code=302)
+
+@app.route('/exclusao-de-dados')
+def exclusao_de_dados():
+ return render_template('exclusao_dados.html', atualizado_em='18 de agosto de 2026')
+
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
 def processar_mensagens_manual():
