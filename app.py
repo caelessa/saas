@@ -484,6 +484,12 @@ def migrate_schema():
    ('current_driver_id','INTEGER'),('current_contract_id','INTEGER'),('status_changed_at','TIMESTAMP'),('status_reason','VARCHAR(255)'),
   ],
   'driver':[('telefone2','VARCHAR(30)'),('contato2_nome','VARCHAR(150)'),('contato2_parentesco','VARCHAR(40)'),('telefone3','VARCHAR(30)'),('contato3_nome','VARCHAR(150)'),('contato3_parentesco','VARCHAR(40)'),('logradouro','VARCHAR(160)'),('numero_endereco','VARCHAR(20)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)')],
+  'investor':[
+   ('telefone','VARCHAR(30)'),('telefone2','VARCHAR(30)'),('contato2_nome','VARCHAR(150)'),
+   ('contato2_parentesco','VARCHAR(40)'),('telefone3','VARCHAR(30)'),('contato3_nome','VARCHAR(150)'),
+   ('contato3_parentesco','VARCHAR(40)'),('email','VARCHAR(120)'),
+   ('regra_repasse',"VARCHAR(30) DEFAULT 'Valor fixo'"),('observacoes','TEXT'),
+  ],
   'contract_template':[
    ('descricao','VARCHAR(255)'),('versao','INTEGER DEFAULT 1'),('padrao','BOOLEAN DEFAULT FALSE'),
    ('nome_original','VARCHAR(255)'),('gestora_nome','VARCHAR(180)'),('gestora_fantasia','VARCHAR(120)'),
