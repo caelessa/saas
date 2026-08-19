@@ -2319,6 +2319,14 @@ def privacy_policy_alias():
 def exclusao_de_dados():
  return render_template('exclusao_dados.html', atualizado_em='18 de agosto de 2026')
 
+@app.route('/termos-de-uso')
+def termos_de_uso():
+ return render_template('termos_de_uso.html', atualizado_em='18 de agosto de 2026')
+
+@app.route('/terms-of-service')
+def terms_of_service_alias():
+ return redirect(url_for('termos_de_uso'), code=302)
+
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
 def processar_mensagens_manual():
