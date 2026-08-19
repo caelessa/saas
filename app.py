@@ -2195,16 +2195,40 @@ def _whatsapp_error_description(status_item):
 
 @app.route('/webhooks/whatsapp',methods=['GET','POST'])
 def whatsapp_webhook():
+ # RC 1.0.9.6: diagnóstico explícito do webhook no log do Render.
+ # Não registramos tokens, Authorization nem o conteúdo de assinaturas.
+ app.logger.warning(
+  '[WHATSAPP_WEBHOOK] RECEBIDO method=%s path=%s content_type=%s content_length=%s user_agent=%s x_hub_signature_256=%s',
+  request.method,
+  request.path,
+  request.content_type or '-',
+  request.content_length if request.content_length is not None else '-',
+  (request.user_agent.string or '-')[:180],
+  'presente' if request.headers.get('X-Hub-Signature-256') else 'ausente'
+ )
+
  # GET: verificação do callback feita pela Meta.
  if request.method=='GET':
   mode=(request.args.get('hub.mode') or '').strip()
   token=(request.args.get('hub.verify_token') or '').strip()
   challenge=request.args.get('hub.challenge') or ''
-  if mode == 'subscribe' and _whatsapp_verify_token_valido(token):
+  token_ok=(mode == 'subscribe' and _whatsapp_verify_token_valido(token))
+  app.logger.warning(
+   '[WHATSAPP_WEBHOOK] GET_VERIFICACAO mode=%s token_recebido=%s resultado=%s',
+   mode or '-', 'sim' if token else 'nao', 'OK' if token_ok else 'NEGADO'
+  )
+  if token_ok:
    return challenge,200,{'Content-Type':'text/plain; charset=utf-8'}
   abort(403)
 
+ raw_body=request.get_data(cache=True,as_text=True) or ''
+ app.logger.warning('[WHATSAPP_WEBHOOK] POST_BODY bytes=%s preview=%s',len(raw_body.encode('utf-8')),raw_body[:1800])
  payload=request.get_json(silent=True) or {}
+ app.logger.warning(
+  '[WHATSAPP_WEBHOOK] POST_JSON object=%s entries=%s',
+  payload.get('object') if isinstance(payload,dict) else type(payload).__name__,
+  len(payload.get('entry') or []) if isinstance(payload,dict) else 0
+ )
  try:
   for entry in payload.get('entry') or []:
    for change in entry.get('changes') or []:
@@ -2253,11 +2277,13 @@ def whatsapp_webhook():
        fila.error_message=None
      fila.updated_at=agora_sao_paulo_naive()
   db.session.commit()
+  app.logger.warning('[WHATSAPP_WEBHOOK] PROCESSADO_COM_SUCESSO')
  except Exception:
   db.session.rollback()
-  app.logger.exception('Falha ao processar webhook do WhatsApp')
+  app.logger.exception('[WHATSAPP_WEBHOOK] FALHA_AO_PROCESSAR')
   # Retorna 200 para evitar tempestade de retries por erro interno inesperado.
   return {'ok':False},200
+ app.logger.warning('[WHATSAPP_WEBHOOK] RESPOSTA status=200 ok=true')
  return {'ok':True},200
 
 
