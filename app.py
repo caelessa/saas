@@ -24,6 +24,7 @@ from services.maintenance_notification_service import maintenance_message, remin
 from services.odometer_ocr_service import read_odometer
 from io import BytesIO
 from decimal import Decimal
+from urllib.parse import quote
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
 storage=StorageService(UPLOAD)
@@ -56,6 +57,14 @@ def _as_sao_paulo(value):
 def sp_datetime(value,fmt='%d/%m/%Y %H:%M'):
  local=_as_sao_paulo(value)
  return local.strftime(fmt) if local else '-'
+
+@app.template_filter('brl')
+def brl(value):
+ try:
+  n=Decimal(str(value or 0))
+  return f'{n:,.2f}'.replace(',','X').replace('.',',').replace('X','.')
+ except Exception:
+  return '0,00'
 
 
 class Tenant(db.Model):
@@ -729,6 +738,7 @@ def dashboard():
   'alertas':Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None)).count(),
   'disponiveis':status_counts.get('Disponível',0),'reservados':status_counts.get('Reservado',0),
   'alugados':status_counts.get('Alugado',0),'manutencao':status_counts.get('Manutenção',0),
+  'cobrancas_hoje':sum(1 for c in Contract.query.filter(Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])).all() if cobranca_vence_hoje(c)),
  }
  return render_template('dashboard.html',cards=cards,veiculos=sorted(vehicles,key=lambda v:v.id,reverse=True)[:6],alertas=system_alerts,oil_status=oil_status)
 
@@ -1167,6 +1177,51 @@ def historico_veiculo(id):
  eventos=VehicleEvent.query.options(joinedload(VehicleEvent.user),joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(VehicleEvent.criado_em.desc()).all()
  manutencoes_concluidas=Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id,status='Concluída').order_by(Maintenance.concluida_em.desc(),Maintenance.id.desc()).all()
  return render_template('veiculo_historico.html',v=v,eventos=eventos,manutencoes_concluidas=manutencoes_concluidas)
+
+@app.route('/cobrancas')
+@login_required
+def cobrancas():
+ contratos_ativos=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(
+  Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])
+ ).order_by(Contract.id.desc()).all()
+ items=[]
+ for c in contratos_ativos:
+  # Esta RC é focada no fluxo semanal. Contratos de outra periodicidade continuam fora da cobrança automática semanal.
+  periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
+  if periodicidade and 'seman' not in periodicidade:
+   continue
+  info=calcular_cobranca_semanal(c)
+  items.append({'contract':c,'info':info,'vence_hoje':cobranca_vence_hoje(c)})
+ hoje=[x for x in items if x['vence_hoje']]
+ return render_template('cobrancas.html',items=items,hoje=hoje)
+
+@app.route('/cobrancas/<int:id>/whatsapp-web',methods=['POST'])
+@login_required
+def cobranca_whatsapp_web(id):
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ if c.status not in ('Assinado','Ativo'):
+  flash('Somente contratos vigentes podem gerar lembrete de cobrança.','warning')
+  return redirect(url_for('cobrancas'))
+ telefone=normalize_phone(c.driver.telefone if c.driver else None)
+ if not telefone:
+  flash('Cadastre um telefone/WhatsApp válido para o motorista.','danger')
+  return redirect(url_for('cobrancas'))
+ info=calcular_cobranca_semanal(c)
+ mensagem=mensagem_cobranca_semanal(c,info)
+ fila=MessageQueue(
+  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,recipient_name=c.driver.nome if c.driver else None,
+  message_type='lembrete_pagamento_semanal',body=mensagem,related_entity='Contrato',related_entity_id=c.id,
+  status='ABERTA_NO_WHATSAPP',attempts=1,created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila); db.session.flush()
+ db.session.add(MessageEvent(
+  tenant_id=tid(),message_id=fila.id,event='ABERTA_NO_WHATSAPP',
+  description='Lembrete de pagamento preparado e aberto no WhatsApp Web. O envio depende da confirmação do usuário.',
+  created_at=agora_sao_paulo_naive(),
+ ))
+ db.session.commit()
+ # WhatsApp Web não oferece envio totalmente automático pela URL; a mensagem fica pronta para confirmação.
+ return redirect(f'https://web.whatsapp.com/send?phone={telefone}&text={quote(mensagem)}')
 
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
@@ -2125,6 +2180,77 @@ def administracao_armazenamento():
 
  return render_template('armazenamento.html',storage_backend=storage.backend_name,conectado=conectado,uso=uso,referencias_total=len(referencias),ausentes=ausentes,erro_verificacao=erro_verificacao,backups=backups)
 
+def _normalizar_dia_semana(valor):
+ texto=unicodedata.normalize('NFKD',str(valor or '')).encode('ascii','ignore').decode('ascii').lower().strip()
+ texto=texto.replace('_',' ').replace('-feira','').replace('feira','').replace('-',' ').strip()
+ mapa={
+  'segunda':0,'segunda feira':0,'2':0,
+  'terca':1,'terca feira':1,'3':1,
+  'quarta':2,'quarta feira':2,'4':2,
+  'quinta':3,'quinta feira':3,'5':3,
+  'sexta':4,'sexta feira':4,'6':4,
+  'sabado':5,'7':5,
+  'domingo':6,'1':6,
+ }
+ return mapa.get(texto)
+
+def _ultimas_leituras_km(vehicle_id, limit=2):
+ return Odometer.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id).order_by(Odometer.data.desc(),Odometer.id.desc()).limit(limit).all()
+
+def calcular_cobranca_semanal(contract):
+ valor_base=Decimal(str(contract.valor_locacao or 0))
+ total=valor_base
+ info={
+  'valor_base':valor_base,'total':total,'km_periodo':None,'limite_km':contract.limite_km,
+  'km_excedente':0,'valor_excesso':Decimal('0'),'tem_historico_km':False,'usa_excesso':False,
+ }
+ if not contract.vehicle_id or not contract.limite_km or not contract.valor_km_excedente:
+  return info
+ leituras=_ultimas_leituras_km(contract.vehicle_id,2)
+ if len(leituras)<2:
+  return info
+ atual,anterior=leituras[0],leituras[1]
+ # Evita reutilizar leitura muito antiga numa cobrança atual.
+ agora=agora_sao_paulo_naive()
+ data_atual=_as_sao_paulo(atual.data).replace(tzinfo=None) if atual.data else None
+ if data_atual and (agora-data_atual)>timedelta(days=10):
+  return info
+ km_periodo=max(0,int(atual.km or 0)-int(anterior.km or 0))
+ info['tem_historico_km']=True
+ info['km_periodo']=km_periodo
+ excedente=max(0,km_periodo-int(contract.limite_km or 0))
+ info['km_excedente']=excedente
+ if excedente>0:
+  valor_excesso=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
+  info['valor_excesso']=valor_excesso
+  info['total']=valor_base+valor_excesso
+  info['usa_excesso']=True
+ return info
+
+def cobranca_vence_hoje(contract):
+ dia=_normalizar_dia_semana(contract.dia_vencimento)
+ return dia is not None and dia==datetime.now(SAO_PAULO).weekday()
+
+def mensagem_cobranca_semanal(contract, info):
+ motorista=contract.driver.nome if contract.driver else 'Motorista'
+ veiculo=contract.vehicle.placa if contract.vehicle else 'veículo contratado'
+ linhas=[
+  f'Olá, {motorista}!',
+  '',
+  f'Lembrete de pagamento semanal do veículo {veiculo}.',
+  f'Vencimento: {"hoje" if cobranca_vence_hoje(contract) else "toda "+str(contract.dia_vencimento or "semana")}.',
+  f'Valor semanal: R$ {moeda_br(info["valor_base"])}.',
+ ]
+ if info.get('usa_excesso'):
+  linhas += [
+   f'Quilometragem entre as duas últimas leituras: {info["km_periodo"]} km.',
+   f'Limite semanal: {info["limite_km"]} km.',
+   f'Excesso: {info["km_excedente"]} km (R$ {moeda_br(info["valor_excesso"])}).',
+   f'Total desta cobrança: R$ {moeda_br(info["total"])}.',
+  ]
+ linhas += ['', 'Obrigado.']
+ return '\n'.join(linhas)
+
 @app.route('/administracao/backup/criar',methods=['POST'])
 @login_required
 def criar_backup_tenant():
@@ -2159,134 +2285,6 @@ def _integration_config(item):
  except Exception:
   return {}
 
-def _whatsapp_verify_token_valido(token):
- token=(token or '').strip()
- if not token:
-  return False
- global_token=(os.getenv('WHATSAPP_WEBHOOK_VERIFY_TOKEN') or '').strip()
- if global_token and token == global_token:
-  return True
- # Compatibilidade com a configuração atual por locadora.
- for item in Integration.query.filter_by(tipo='whatsapp').all():
-  cfg=_integration_config(item)
-  if (cfg.get('verify_token') or '').strip() == token:
-   return True
- return False
-
-
-def _whatsapp_status_rank(status):
- return {'PENDENTE':0,'ACEITA_META':1,'ENVIADA':2,'ENTREGUE':3,'LIDA':4}.get((status or '').upper(),-1)
-
-
-def _whatsapp_error_description(status_item):
- errors=status_item.get('errors') or []
- partes=[]
- for erro in errors:
-  if not isinstance(erro,dict):
-   continue
-  code=erro.get('code')
-  title=erro.get('title') or erro.get('message')
-  detalhe=((erro.get('error_data') or {}).get('details') if isinstance(erro.get('error_data'),dict) else None)
-  trecho=' / '.join(str(v) for v in (code,title,detalhe) if v not in (None,''))
-  if trecho:
-   partes.append(trecho)
- return ' | '.join(partes)
-
-
-@app.route('/webhooks/whatsapp',methods=['GET','POST'])
-def whatsapp_webhook():
- # RC 1.0.9.6: diagnóstico explícito do webhook no log do Render.
- # Não registramos tokens, Authorization nem o conteúdo de assinaturas.
- app.logger.warning(
-  '[WHATSAPP_WEBHOOK] RECEBIDO method=%s path=%s content_type=%s content_length=%s user_agent=%s x_hub_signature_256=%s',
-  request.method,
-  request.path,
-  request.content_type or '-',
-  request.content_length if request.content_length is not None else '-',
-  (request.user_agent.string or '-')[:180],
-  'presente' if request.headers.get('X-Hub-Signature-256') else 'ausente'
- )
-
- # GET: verificação do callback feita pela Meta.
- if request.method=='GET':
-  mode=(request.args.get('hub.mode') or '').strip()
-  token=(request.args.get('hub.verify_token') or '').strip()
-  challenge=request.args.get('hub.challenge') or ''
-  token_ok=(mode == 'subscribe' and _whatsapp_verify_token_valido(token))
-  app.logger.warning(
-   '[WHATSAPP_WEBHOOK] GET_VERIFICACAO mode=%s token_recebido=%s resultado=%s',
-   mode or '-', 'sim' if token else 'nao', 'OK' if token_ok else 'NEGADO'
-  )
-  if token_ok:
-   return challenge,200,{'Content-Type':'text/plain; charset=utf-8'}
-  abort(403)
-
- raw_body=request.get_data(cache=True,as_text=True) or ''
- app.logger.warning('[WHATSAPP_WEBHOOK] POST_BODY bytes=%s preview=%s',len(raw_body.encode('utf-8')),raw_body[:1800])
- payload=request.get_json(silent=True) or {}
- app.logger.warning(
-  '[WHATSAPP_WEBHOOK] POST_JSON object=%s entries=%s',
-  payload.get('object') if isinstance(payload,dict) else type(payload).__name__,
-  len(payload.get('entry') or []) if isinstance(payload,dict) else 0
- )
- try:
-  for entry in payload.get('entry') or []:
-   for change in entry.get('changes') or []:
-    value=change.get('value') or {}
-    metadata=value.get('metadata') or {}
-    phone_number_id=str(metadata.get('phone_number_id') or '')
-    for st in value.get('statuses') or []:
-     external_id=str(st.get('id') or '')
-     meta_status=(st.get('status') or '').lower()
-     recipient_id=str(st.get('recipient_id') or '')
-     status_map={'sent':'ENVIADA','delivered':'ENTREGUE','read':'LIDA','failed':'FALHA'}
-     novo=status_map.get(meta_status)
-     if not external_id or not novo:
-      continue
-     fila=MessageQueue.query.filter_by(external_id=external_id).order_by(MessageQueue.id.desc()).first()
-     if not fila:
-      app.logger.warning('Webhook WhatsApp sem mensagem local correspondente: %s',external_id)
-      continue
-
-     erro=_whatsapp_error_description(st)
-     meta_ts=str(st.get('timestamp') or '')
-     descricao=(
-      f'Status Meta: {meta_status} | destinatário: {recipient_id or fila.recipient} | '
-      f'phone_number_id: {phone_number_id or "-"} | timestamp Meta: {meta_ts or "-"}'
-     )
-     if erro:
-      descricao += f' | erro: {erro}'
-
-     # Registra todos os eventos, mesmo quando chegam fora de ordem.
-     db.session.add(MessageEvent(
-      tenant_id=fila.tenant_id,message_id=fila.id,event=novo,
-      description=descricao,created_at=agora_sao_paulo_naive()
-     ))
-
-     atual=(fila.status or '').upper()
-     if novo == 'FALHA':
-      # Não rebaixa uma mensagem que a Meta já confirmou como entregue/lida.
-      if _whatsapp_status_rank(atual) < _whatsapp_status_rank('ENTREGUE'):
-       fila.status='FALHA'
-       fila.error_message=erro or 'A Meta informou falha na entrega.'
-     elif _whatsapp_status_rank(novo) > _whatsapp_status_rank(atual):
-      fila.status=novo
-      if novo == 'ENVIADA' and not fila.sent_at:
-       fila.sent_at=agora_sao_paulo_naive()
-      if novo in ('ENTREGUE','LIDA'):
-       fila.error_message=None
-     fila.updated_at=agora_sao_paulo_naive()
-  db.session.commit()
-  app.logger.warning('[WHATSAPP_WEBHOOK] PROCESSADO_COM_SUCESSO')
- except Exception:
-  db.session.rollback()
-  app.logger.exception('[WHATSAPP_WEBHOOK] FALHA_AO_PROCESSAR')
-  # Retorna 200 para evitar tempestade de retries por erro interno inesperado.
-  return {'ok':False},200
- app.logger.warning('[WHATSAPP_WEBHOOK] RESPOSTA status=200 ok=true')
- return {'ok':True},200
-
-
 @app.route('/integracoes',methods=['GET','POST'])
 @login_required
 def integracoes():
@@ -2302,7 +2300,6 @@ def integracoes():
     'access_token':request.form.get('access_token','').strip(),
     'verify_token':request.form.get('verify_token','').strip(),
     'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
-    'test_template_name':request.form.get('test_template_name','').strip(),
     'contract_template_name':request.form.get('contract_template_name','').strip(),
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
@@ -2328,30 +2325,7 @@ def integracoes():
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
- for mensagem_recente in recentes:
-  ultimo_evento=MessageEvent.query.filter_by(tenant_id=tid(),message_id=mensagem_recente.id).order_by(MessageEvent.id.desc()).first()
-  mensagem_recente.diagnostico=(ultimo_evento.description if ultimo_evento else None)
- return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,whatsapp_webhook_url=url_for('whatsapp_webhook',_external=True))
-
-@app.route('/politica-de-privacidade')
-def politica_de_privacidade():
- return render_template('politica_privacidade.html', atualizado_em='18 de agosto de 2026')
-
-@app.route('/privacy-policy')
-def privacy_policy_alias():
- return redirect(url_for('politica_de_privacidade'), code=302)
-
-@app.route('/exclusao-de-dados')
-def exclusao_de_dados():
- return render_template('exclusao_dados.html', atualizado_em='18 de agosto de 2026')
-
-@app.route('/termos-de-uso')
-def termos_de_uso():
- return render_template('termos_de_uso.html', atualizado_em='18 de agosto de 2026')
-
-@app.route('/terms-of-service')
-def terms_of_service_alias():
- return redirect(url_for('termos_de_uso'), code=302)
+ return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes)
 
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
@@ -2374,40 +2348,20 @@ def processar_mensagens_job():
 def testar_whatsapp_business():
  item=_integration('whatsapp')
  cfg=_integration_config(item)
- telefone_informado=(request.form.get('telefone') or '').strip()
- telefone=normalize_phone(telefone_informado)
+ telefone=normalize_phone(request.form.get('telefone'))
  if not telefone:
   flash('Informe um telefone para o teste.','danger'); return redirect(url_for('integracoes'))
  mensagem='Teste de integração enviado pelo Frota Fácil.'
- # Template dedicado ao teste. Mantém fallback para configurações já existentes.
- template_teste=(cfg.get('test_template_name') or cfg.get('mileage_template_name') or cfg.get('contract_template_name') or '').strip() or None
- idioma=(cfg.get('template_language') or 'pt_BR').strip() or 'pt_BR'
- fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,template_name=template_teste,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
+ fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=template_teste,template_language=idioma)
-  body=result.response_payload if isinstance(result.response_payload,dict) else {}
-  contato=(body.get('contacts') or [{}])[0] if body.get('contacts') else {}
-  mensagem_meta=(body.get('messages') or [{}])[0] if body.get('messages') else {}
-  meta_input=str(contato.get('input') or '')
-  meta_wa_id=str(contato.get('wa_id') or '')
-  meta_message_id=str(mensagem_meta.get('id') or result.external_id or '')
-  diagnostico=(
-   f'Destino digitado: {telefone_informado or "-"} | '
-   f'Destino normalizado/enviado: {telefone} | '
-   f'Meta input: {meta_input or "não retornado"} | '
-   f'Meta wa_id: {meta_wa_id or "não retornado"} | '
-   f'Message ID: {meta_message_id or "não retornado"} | '
-   f'Template: {template_teste or "texto livre"} | Idioma: {idioma}'
-  )
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=cfg.get('contract_template_name') or None)
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
-  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description=diagnostico,created_at=agora_sao_paulo_naive()))
-  db.session.commit()
-  flash(f'Teste aceito pela Meta para {telefone}. wa_id reconhecido: {meta_wa_id or "não retornado"}. Aguarde o webhook para confirmar entrega.','success')
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Teste manual de integração.',created_at=agora_sao_paulo_naive()))
+  db.session.commit(); flash('Teste processado com sucesso.','success')
  except CommunicationError as exc:
   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=1
-  diagnostico=f'Destino digitado: {telefone_informado or "-"} | Destino normalizado/enviado: {telefone} | Template: {template_teste or "texto livre"} | Erro Meta: {exc}'
-  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=diagnostico,created_at=agora_sao_paulo_naive()))
+  db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
   db.session.commit(); flash(str(exc),'danger')
  return redirect(url_for('integracoes'))
 
