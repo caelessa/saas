@@ -1,4 +1,5 @@
 import os, uuid, re, json, hashlib, unicodedata, base64, binascii
+import requests
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -44,6 +45,12 @@ app.config['MAX_CONTENT_LENGTH']=120*1024*1024
 db=SQLAlchemy(app); login=LoginManager(app); login.login_view='entrar'
 
 SAO_PAULO_TZ=ZoneInfo('America/Sao_Paulo')
+
+# Meta Embedded Signup (credenciais do aplicativo Frota Fácil, nunca do tenant).
+META_APP_ID=(os.getenv('META_APP_ID') or '').strip()
+META_APP_SECRET=(os.getenv('META_APP_SECRET') or '').strip()
+META_WHATSAPP_CONFIG_ID=(os.getenv('META_WHATSAPP_CONFIG_ID') or '').strip()
+META_GRAPH_VERSION=(os.getenv('META_GRAPH_VERSION') or 'v23.0').strip()
 
 def _as_sao_paulo(value):
  if not value:
@@ -484,12 +491,6 @@ def migrate_schema():
    ('current_driver_id','INTEGER'),('current_contract_id','INTEGER'),('status_changed_at','TIMESTAMP'),('status_reason','VARCHAR(255)'),
   ],
   'driver':[('telefone2','VARCHAR(30)'),('contato2_nome','VARCHAR(150)'),('contato2_parentesco','VARCHAR(40)'),('telefone3','VARCHAR(30)'),('contato3_nome','VARCHAR(150)'),('contato3_parentesco','VARCHAR(40)'),('logradouro','VARCHAR(160)'),('numero_endereco','VARCHAR(20)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)')],
-  'investor':[
-   ('telefone','VARCHAR(30)'),('telefone2','VARCHAR(30)'),('contato2_nome','VARCHAR(150)'),
-   ('contato2_parentesco','VARCHAR(40)'),('telefone3','VARCHAR(30)'),('contato3_nome','VARCHAR(150)'),
-   ('contato3_parentesco','VARCHAR(40)'),('email','VARCHAR(120)'),
-   ('regra_repasse',"VARCHAR(30) DEFAULT 'Valor fixo'"),('observacoes','TEXT'),
-  ],
   'contract_template':[
    ('descricao','VARCHAR(255)'),('versao','INTEGER DEFAULT 1'),('padrao','BOOLEAN DEFAULT FALSE'),
    ('nome_original','VARCHAR(255)'),('gestora_nome','VARCHAR(180)'),('gestora_fantasia','VARCHAR(120)'),
@@ -2383,7 +2384,80 @@ def integracoes():
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
- return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes)
+ return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
+
+@app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
+@login_required
+def concluir_whatsapp_embedded_signup():
+ """Conclui o Embedded Signup sem remover o modo manual existente.
+
+ O navegador entrega o authorization code e os IDs da sessão. O App Secret
+ permanece somente no backend. A credencial resultante fica isolada no
+ Integration do tenant atual.
+ """
+ if not (META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID):
+  return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
+ data=request.get_json(silent=True) or {}
+ code=str(data.get('code') or '').strip()
+ waba_id=str(data.get('waba_id') or '').strip()
+ phone_number_id=str(data.get('phone_number_id') or '').strip()
+ if not code:
+  return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
+ try:
+  resp=requests.get(
+   f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
+   params={'client_id':META_APP_ID,'client_secret':META_APP_SECRET,'code':code},
+   timeout=20,
+  )
+  payload=resp.json()
+ except Exception as exc:
+  app.logger.exception('Falha no Embedded Signup Meta')
+  return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
+ if not resp.ok or not payload.get('access_token'):
+  detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
+  return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
+ token=payload['access_token']
+ # Se os IDs não vieram do evento SESSION_INFO, tenta descobrir WABA via token.
+ if not waba_id:
+  try:
+   dbg=requests.get(f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',params={'input_token':token,'access_token':f'{META_APP_ID}|{META_APP_SECRET}'},timeout=20).json()
+   scopes=(dbg.get('data') or {}).get('granular_scopes') or []
+   for scope in scopes:
+    if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
+     waba_id=str(scope['target_ids'][0]); break
+  except Exception:
+   app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
+ if waba_id and not phone_number_id:
+  try:
+   nums=requests.get(f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',headers={'Authorization':f'Bearer {token}'},params={'fields':'id,display_phone_number,verified_name'},timeout=20).json()
+   if nums.get('data'):
+    phone_number_id=str(nums['data'][0].get('id') or '')
+  except Exception:
+   app.logger.exception('Não foi possível descobrir Phone Number ID')
+ if not waba_id or not phone_number_id:
+  return {'ok':False,'error':'Autorização concluída, mas não foi possível identificar WABA e número. Use a configuração avançada enquanto revisamos a conta Meta.'},400
+ item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
+ oldcfg=_integration_config(item)
+ oldcfg.update({
+  'provider':'business','onboarding_mode':'embedded_signup','business_account_id':waba_id,
+  'phone_number_id':phone_number_id,'access_token':token,'graph_version':META_GRAPH_VERSION,
+  'embedded_connected_at':agora_sao_paulo_naive().isoformat(),
+ })
+ item.ativo=True; item.configuracao=json.dumps(oldcfg,ensure_ascii=False)
+ db.session.add(item); db.session.commit()
+ return {'ok':True,'waba_id':waba_id,'phone_number_id':phone_number_id}
+
+@app.route('/integracoes/whatsapp/embedded-signup/desconectar',methods=['POST'])
+@login_required
+def desconectar_whatsapp_embedded_signup():
+ item=_integration('whatsapp')
+ if item:
+  cfg=_integration_config(item)
+  # Não revoga ativos na Meta automaticamente: apenas retira a credencial do tenant.
+  cfg.update({'provider':'web','onboarding_mode':'manual','access_token':'','phone_number_id':'','business_account_id':''})
+  item.ativo=False; item.configuracao=json.dumps(cfg,ensure_ascii=False); db.session.commit()
+ flash('Conexão simplificada removida do Frota Fácil. Os ativos da Meta não foram excluídos.','success')
+ return redirect(url_for('integracoes'))
 
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
