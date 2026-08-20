@@ -1,46 +1,138 @@
 {% extends 'base.html' %}
-{% block heading %}Integrações{% endblock %}
-{% block subheading %}Conecte os serviços usados por cada locadora sem prender o Frota Fácil a um único fornecedor.{% endblock %}
+{% block heading %}Integrações
+{% if meta_embedded_ready %}
+<script>
+(function(){
+  let signupInfo = {};
+  const statusEl = document.getElementById('meta-connect-status');
+  window.fbAsyncInit = function() {
+    FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
+  };
+  window.addEventListener('message', function(event) {
+    if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
+    let data = event.data;
+    try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.event === 'FINISH') {
+      signupInfo = data.data || {};
+    }
+  });
+  const btn=document.getElementById('meta-connect-button');
+  if(btn) btn.addEventListener('click', function(){
+    statusEl.textContent='Abrindo a Meta…';
+    FB.login(function(response){
+      if (!response.authResponse || !response.authResponse.code) {
+        statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
+      }
+      statusEl.textContent='Concluindo conexão com segurança…';
+      fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({code:response.authResponse.code,waba_id:signupInfo.waba_id||'',phone_number_id:signupInfo.phone_number_id||''})
+      }).then(r=>r.json().then(j=>({ok:r.ok,data:j}))).then(x=>{
+        if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
+        statusEl.textContent='WhatsApp conectado. Atualizando…'; window.location.reload();
+      }).catch(err=>{statusEl.textContent=err.message;});
+    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
+  });
+})();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
+{% endif %}
+
+{% endblock %}
+{% block subheading %}Conecte os serviços usados por cada locadora sem prender o Frota Fácil a um único fornecedor.
+{% if meta_embedded_ready %}
+<script>
+(function(){
+  let signupInfo = {};
+  const statusEl = document.getElementById('meta-connect-status');
+  window.fbAsyncInit = function() {
+    FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
+  };
+  window.addEventListener('message', function(event) {
+    if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
+    let data = event.data;
+    try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.event === 'FINISH') {
+      signupInfo = data.data || {};
+    }
+  });
+  const btn=document.getElementById('meta-connect-button');
+  if(btn) btn.addEventListener('click', function(){
+    statusEl.textContent='Abrindo a Meta…';
+    FB.login(function(response){
+      if (!response.authResponse || !response.authResponse.code) {
+        statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
+      }
+      statusEl.textContent='Concluindo conexão com segurança…';
+      fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({code:response.authResponse.code,waba_id:signupInfo.waba_id||'',phone_number_id:signupInfo.phone_number_id||''})
+      }).then(r=>r.json().then(j=>({ok:r.ok,data:j}))).then(x=>{
+        if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
+        statusEl.textContent='WhatsApp conectado. Atualizando…'; window.location.reload();
+      }).catch(err=>{statusEl.textContent=err.message;});
+    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
+  });
+})();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
+{% endif %}
+
+{% endblock %}
 {% block content %}
 <div class="integration-grid">
   <section class="card integration-card">
-    <h2>WhatsApp</h2>
-    <p>Preserva o WhatsApp Web atual e deixa o envio automático preparado para a WhatsApp Business Platform.</p>
-    <form method="post" class="form-grid">
-      <input type="hidden" name="section" value="whatsapp">
-      <label>Modo de envio
-        <select name="provider">
-          <option value="web" {% if whatsapp_cfg.get('provider','web')=='web' %}selected{% endif %}>WhatsApp Web — confirmação manual</option>
-          <option value="business" {% if whatsapp_cfg.get('provider')=='business' %}selected{% endif %}>WhatsApp Business Platform — automático</option>
-        </select>
-      </label>
-      <label>Business Account ID<input name="business_account_id" value="{{ whatsapp_cfg.get('business_account_id','') }}"></label>
-      <label>Phone Number ID<input name="phone_number_id" value="{{ whatsapp_cfg.get('phone_number_id','') }}"></label>
-      <label>Access Token<input type="password" name="access_token" value="{{ whatsapp_cfg.get('access_token','') }}" autocomplete="new-password"></label>
-      <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"><small>Use o mesmo valor ao configurar o webhook na Meta.</small></label>
-      <label>URL do Webhook<input value="{{ whatsapp_webhook_url }}" readonly onclick="this.select()"><small>Cadastre esta URL como Callback URL na Meta e assine o campo <code>messages</code>.</small></label>
-      <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
-      <label>Template de teste<input name="test_template_name" value="{{ whatsapp_cfg.get('test_template_name','') }}" placeholder="ex.: teste_frota_facil"><small>Usado pelo botão Testar conexão. Se vazio, usa o template de solicitação de KM.</small></label>
-      <label>Template de contrato<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}" placeholder="ex.: contrato_disponivel"></label>
-      <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}" placeholder="ex.: solicitar_quilometragem"></label>
-      <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}" placeholder="ex.: manutencao_agendada"></label>
-      <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}" placeholder="ex.: lembrete_manutencao"></label>
-      <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
-      <div class="form-actions"><button class="btn" type="submit">Salvar WhatsApp</button></div>
-    </form>
-    <div class="integration-status">
-      {% if whatsapp_cfg.get('provider')=='business' %}
-        <span class="badge">Business Platform selecionada</span>
-      {% else %}
-        <span class="badge">WhatsApp Web ativo</span>
-      {% endif %}
-    </div>
+    <h2>WhatsApp Business Platform</h2>
+    <p>Conecte a conta da locadora pela Meta. A configuração manual que já funciona continua disponível em <strong>Configuração avançada</strong>.</p>
+
+    {% if whatsapp_cfg.get('onboarding_mode')=='embedded_signup' and whatsapp_cfg.get('provider')=='business' %}
+      <div class="integration-status whatsapp-connected-box">
+        <span class="badge">Conectado pela Meta ✓</span>
+        <p><strong>WABA:</strong> {{ whatsapp_cfg.get('business_account_id') }}</p>
+        <p><strong>Phone Number ID:</strong> {{ whatsapp_cfg.get('phone_number_id') }}</p>
+      </div>
+      <form method="post" action="{{ url_for('desconectar_whatsapp_embedded_signup') }}" onsubmit="return confirm('Remover a conexão do Frota Fácil? Isso não exclui a conta nem o número na Meta.');">
+        <button class="btn-secondary" type="submit">Desconectar do Frota Fácil</button>
+      </form>
+    {% elif meta_embedded_ready %}
+      <button class="btn" type="button" id="meta-connect-button">Conectar meu WhatsApp</button>
+      <p class="muted" id="meta-connect-status">Você será direcionado ao fluxo seguro da Meta para escolher/criar a conta e o número.</p>
+    {% else %}
+      <div class="notice-warning">
+        <strong>Conexão simplificada preparada.</strong>
+        <p>Para ativar o botão neste ambiente, configure no Render: <code>META_APP_ID</code>, <code>META_APP_SECRET</code> e <code>META_WHATSAPP_CONFIG_ID</code>. A integração manual abaixo continua funcionando normalmente.</p>
+      </div>
+    {% endif %}
+
+    <details class="advanced-integration" {% if not meta_embedded_ready %}open{% endif %}>
+      <summary><strong>Configuração avançada / manual</strong></summary>
+      <form method="post" class="form-grid" style="margin-top:14px">
+        <input type="hidden" name="section" value="whatsapp">
+        <label>Modo de envio
+          <select name="provider">
+            <option value="web" {% if whatsapp_cfg.get('provider','web')=='web' %}selected{% endif %}>WhatsApp Web — confirmação manual</option>
+            <option value="business" {% if whatsapp_cfg.get('provider')=='business' %}selected{% endif %}>WhatsApp Business Platform — automático</option>
+          </select>
+        </label>
+        <label>Business Account ID<input name="business_account_id" value="{{ whatsapp_cfg.get('business_account_id','') }}"></label>
+        <label>Phone Number ID<input name="phone_number_id" value="{{ whatsapp_cfg.get('phone_number_id','') }}"></label>
+        <label>Access Token<input type="password" name="access_token" value="{{ whatsapp_cfg.get('access_token','') }}" autocomplete="new-password"></label>
+        <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"></label>
+        <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
+        <label>Template de contrato<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}"></label>
+        <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}"></label>
+        <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}"></label>
+        <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}"></label>
+        <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
+        <div class="form-actions"><button class="btn" type="submit">Salvar configuração manual</button></div>
+      </form>
+    </details>
+
     {% if whatsapp_cfg.get('provider')=='business' %}
-    <form method="post" action="{{ url_for('testar_whatsapp_business') }}" class="inline-form">
+    <form method="post" action="{{ url_for('testar_whatsapp_business') }}" class="inline-form" style="margin-top:14px">
       <input name="telefone" placeholder="5511999999999" required>
       <button class="btn-secondary" type="submit">Testar conexão</button>
     </form>
-    <p class="muted"><small>O teste registra o destino e o <code>message_id</code>. Depois que o webhook estiver ativo, o status evolui automaticamente: <strong>ACEITA_META → ENVIADA → ENTREGUE → LIDA</strong>, ou <strong>FALHA</strong> com o erro retornado pela Meta.</small></p>
     {% endif %}
   </section>
 
@@ -103,7 +195,7 @@
   <h2>Histórico recente de mensagens</h2>
   {% if recentes %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Diagnóstico</th><th>Erro</th></tr></thead>
+    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Erro</th></tr></thead>
     <tbody>
       {% for item in recentes %}
       <tr>
@@ -112,7 +204,6 @@
         <td>{{ item.message_type }}</td>
         <td>{{ item.provider }}</td>
         <td><span class="badge">{{ item.status }}</span></td>
-        <td><small>{{ item.diagnostico or '-' }}</small></td>
         <td>{{ item.error_message or '-' }}</td>
       </tr>
       {% endfor %}
@@ -120,4 +211,43 @@
   </table></div>
   {% else %}<p>Nenhuma mensagem registrada ainda.</p>{% endif %}
 </section>
+
+{% if meta_embedded_ready %}
+<script>
+(function(){
+  let signupInfo = {};
+  const statusEl = document.getElementById('meta-connect-status');
+  window.fbAsyncInit = function() {
+    FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
+  };
+  window.addEventListener('message', function(event) {
+    if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
+    let data = event.data;
+    try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.event === 'FINISH') {
+      signupInfo = data.data || {};
+    }
+  });
+  const btn=document.getElementById('meta-connect-button');
+  if(btn) btn.addEventListener('click', function(){
+    statusEl.textContent='Abrindo a Meta…';
+    FB.login(function(response){
+      if (!response.authResponse || !response.authResponse.code) {
+        statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
+      }
+      statusEl.textContent='Concluindo conexão com segurança…';
+      fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({code:response.authResponse.code,waba_id:signupInfo.waba_id||'',phone_number_id:signupInfo.phone_number_id||''})
+      }).then(r=>r.json().then(j=>({ok:r.ok,data:j}))).then(x=>{
+        if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
+        statusEl.textContent='WhatsApp conectado. Atualizando…'; window.location.reload();
+      }).catch(err=>{statusEl.textContent=err.message;});
+    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
+  });
+})();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
+{% endif %}
+
 {% endblock %}
