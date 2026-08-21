@@ -1012,7 +1012,7 @@ def solicitar_km(id):
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  template_name=(cfg.get('mileage_template_name') or '').strip() or None
- template_params=[d.nome,v.placa,link]
+ template_params=[d.nome,v.marca_modelo or 'Veículo',v.placa,link]
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
   recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,template_name=template_name,template_parameters=json.dumps(template_params,ensure_ascii=False),
