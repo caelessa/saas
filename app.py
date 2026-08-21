@@ -273,6 +273,31 @@ class MessageEvent(db.Model):
  description=db.Column(db.Text)
  created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
  message=db.relationship('MessageQueue',backref=db.backref('events',lazy='dynamic',cascade='all, delete-orphan'))
+
+class BillingAudit(db.Model):
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ contract_id=db.Column(db.Integer,index=True,nullable=False)
+ message_id=db.Column(db.Integer,db.ForeignKey('message_queue.id'),index=True)
+ driver_name=db.Column(db.String(150))
+ vehicle_label=db.Column(db.String(180))
+ plate=db.Column(db.String(20))
+ billing_date=db.Column(db.Date,index=True,nullable=False)
+ base_amount=db.Column(db.Numeric(12,2),nullable=False,default=0)
+ km_period=db.Column(db.Integer)
+ km_limit=db.Column(db.Integer)
+ km_excess=db.Column(db.Integer,default=0)
+ excess_rate=db.Column(db.Numeric(12,2),default=0)
+ excess_amount=db.Column(db.Numeric(12,2),default=0)
+ total_amount=db.Column(db.Numeric(12,2),nullable=False,default=0)
+ body=db.Column(db.Text,nullable=False)
+ template_name=db.Column(db.String(120))
+ provider=db.Column(db.String(40))
+ status=db.Column(db.String(30),default='GERADA')
+ external_id=db.Column(db.String(180))
+ error_message=db.Column(db.Text)
+ created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ message=db.relationship('MessageQueue')
 @login.user_loader
 def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
@@ -426,7 +451,7 @@ def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_en
  if scheduled_at:
   return fila, None, None
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=body,integration=integration,template_name=template_name,template_parameters=template_parameters or [])
+  result=CommunicationService().send_whatsapp(phone=telefone,message=body,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR',template_parameters=template_parameters or [])
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1
   fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event=result.status,description='Mensagem processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
@@ -452,7 +477,7 @@ def processar_mensagens_agendadas(tenant_id=None, limit=100):
   try:
    try: params=json.loads(fila.template_parameters or '[]')
    except Exception: params=[]
-   result=CommunicationService().send_whatsapp(phone=fila.recipient,message=fila.body,integration=integration,template_name=fila.template_name,template_parameters=params)
+   result=CommunicationService().send_whatsapp(phone=fila.recipient,message=fila.body,integration=integration,template_name=fila.template_name,template_language=cfg.get('template_language') or 'pt_BR',template_parameters=params)
    fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1; fila.sent_at=now; fila.updated_at=now
    db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event=result.status,description='Mensagem agendada enviada automaticamente.',created_at=now))
   except CommunicationError as exc:
@@ -1252,35 +1277,21 @@ def cobrancas():
   info=calcular_cobranca_semanal(c)
   items.append({'contract':c,'info':info,'vence_hoje':cobranca_vence_hoje(c)})
  hoje=[x for x in items if x['vence_hoje']]
- return render_template('cobrancas.html',items=items,hoje=hoje)
+ auditoria=BillingAudit.query.filter_by(tenant_id=tid()).order_by(BillingAudit.created_at.desc()).limit(200).all()
+ return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria)
 
-@app.route('/cobrancas/<int:id>/whatsapp-web',methods=['POST'])
+@app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
 @login_required
-def cobranca_whatsapp_web(id):
+def cobranca_whatsapp(id):
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=id,tenant_id=tid()).first_or_404()
  if c.status not in ('Assinado','Ativo'):
-  flash('Somente contratos vigentes podem gerar lembrete de cobrança.','warning')
-  return redirect(url_for('cobrancas'))
- telefone=normalize_phone(c.driver.telefone if c.driver else None)
- if not telefone:
-  flash('Cadastre um telefone/WhatsApp válido para o motorista.','danger')
-  return redirect(url_for('cobrancas'))
- info=calcular_cobranca_semanal(c)
- mensagem=mensagem_cobranca_semanal(c,info)
- fila=MessageQueue(
-  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,recipient_name=c.driver.nome if c.driver else None,
-  message_type='lembrete_pagamento_semanal',body=mensagem,related_entity='Contrato',related_entity_id=c.id,
-  status='ABERTA_NO_WHATSAPP',attempts=1,created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
- )
- db.session.add(fila); db.session.flush()
- db.session.add(MessageEvent(
-  tenant_id=tid(),message_id=fila.id,event='ABERTA_NO_WHATSAPP',
-  description='Lembrete de pagamento preparado e aberto no WhatsApp Web. O envio depende da confirmação do usuário.',
-  created_at=agora_sao_paulo_naive(),
- ))
+  flash('Somente contratos vigentes podem gerar lembrete de cobrança.','warning'); return redirect(url_for('cobrancas'))
+ fila,audit,redirect_url,err=gerar_e_enviar_cobranca(c,automatico=False)
  db.session.commit()
- # WhatsApp Web não oferece envio totalmente automático pela URL; a mensagem fica pronta para confirmação.
- return redirect(f'https://web.whatsapp.com/send?phone={telefone}&text={quote(mensagem)}')
+ if err: flash('Não foi possível enviar a cobrança: '+err,'danger')
+ elif redirect_url: return redirect(redirect_url)
+ else: flash('Lembrete de cobrança enviado pelo provedor configurado.','success')
+ return redirect(url_for('cobrancas'))
 
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
@@ -2325,6 +2336,84 @@ def mensagem_cobranca_semanal(contract, info):
  linhas += ['', 'Obrigado.']
  return '\n'.join(linhas)
 
+def _cobranca_template_params(contract,info):
+ d=contract.driver; v=contract.vehicle
+ vencimento='hoje' if cobranca_vence_hoje(contract) else str(contract.dia_vencimento or 'semanal')
+ if info.get('usa_excesso'):
+  return [d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),moeda_br(info['valor_excesso']),moeda_br(info['total']),vencimento]
+ return [d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),vencimento]
+
+def gerar_e_enviar_cobranca(contract,automatico=False):
+ info=calcular_cobranca_semanal(contract); body=mensagem_cobranca_semanal(contract,info)
+ integration=Integration.query.filter_by(tenant_id=contract.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
+ provider=(cfg.get('provider') or 'web').lower()
+ template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
+ params=_cobranca_template_params(contract,info)
+ hoje=datetime.now(SAO_PAULO).date()
+ audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body=body,template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',created_at=agora_sao_paulo_naive())
+ db.session.add(audit); db.session.flush()
+ fila,redirect_url,err=criar_mensagem_whatsapp(tenant_id=contract.tenant_id,driver=contract.driver,body=body,message_type='lembrete_pagamento_semanal',related_entity='Cobranca',related_entity_id=audit.id,template_name=template_name,template_parameters=params)
+ if fila:
+  audit.message_id=fila.id; audit.provider=fila.provider; audit.status=fila.status; audit.external_id=fila.external_id; audit.error_message=fila.error_message
+ return fila,audit,redirect_url,err
+
+def processar_cobrancas_automaticas(tenant_id=None):
+ hoje=datetime.now(SAO_PAULO).date()
+ q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
+ if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
+ enviados=0
+ for c in q.all():
+  periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
+  if periodicidade and 'seman' not in periodicidade: continue
+  if not cobranca_vence_hoje(c): continue
+  if BillingAudit.query.filter_by(tenant_id=c.tenant_id,contract_id=c.id,billing_date=hoje).first(): continue
+  integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
+  if (cfg.get('provider') or 'web').lower()!='business': continue
+  gerar_e_enviar_cobranca(c,automatico=True); enviados+=1
+ db.session.commit(); return enviados
+
+def processar_km_automatico(tenant_id=None):
+ agora=datetime.now(SAO_PAULO)
+ if agora.weekday()!=0: return 0
+ q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
+ if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
+ enviados=0; inicio=datetime.combine(agora.date(),datetime.min.time())
+ for c in q.all():
+  if not c.driver or not c.vehicle: continue
+  integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
+  if (cfg.get('provider') or 'web').lower()!='business': continue
+  if MessageQueue.query.filter_by(tenant_id=c.tenant_id,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id).filter(MessageQueue.created_at>=inicio).first(): continue
+  req=MileageRequest.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
+  if not req:
+   req=MileageRequest(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=c.vehicle.km_atual); db.session.add(req); db.session.flush()
+  link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
+  body=f'Olá, {c.driver.nome}! Precisamos da quilometragem atual do veículo {c.vehicle.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
+  template=(cfg.get('mileage_template_name') or '').strip() or None
+  params=[c.driver.nome,c.vehicle.marca_modelo or 'Veículo',c.vehicle.placa,link]
+  criar_mensagem_whatsapp(tenant_id=c.tenant_id,driver=c.driver,body=body,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id,template_name=template,template_parameters=params); enviados+=1
+ db.session.commit(); return enviados
+
+def processar_alertas_automaticos(tenant_id=None):
+ q=Alert.query.filter(Alert.resolvido_em.is_(None))
+ if tenant_id is not None: q=q.filter(Alert.tenant_id==tenant_id)
+ enviados=0; hoje=datetime.now(SAO_PAULO).date()
+ for a in q.order_by(Alert.criado_em.asc()).limit(200).all():
+  integration=Integration.query.filter_by(tenant_id=a.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
+  if (cfg.get('provider') or 'web').lower()!='business': continue
+  v=None; m=None
+  if a.entidade=='Manutenção': m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first(); v=m.vehicle if m else None
+  elif a.entidade=='Veículo': v=Vehicle.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first()
+  if not v: continue
+  d=motorista_atual_veiculo(v)
+  if not d: continue
+  existing=MessageQueue.query.filter_by(tenant_id=a.tenant_id,message_type='alerta_automatico',related_entity='Alerta',related_entity_id=a.id).filter(MessageQueue.created_at>=datetime.combine(hoje,datetime.min.time())).first()
+  if existing: continue
+  body=maintenance_message(driver_name=d.nome,vehicle=v,maintenance=m,reminder=False) if m else f'Olá, {d.nome}! A locadora identificou um alerta no veículo {v.marca_modelo or "Veículo"} — {v.placa}: {a.titulo}. {a.mensagem}'
+  template_name=(cfg.get('maintenance_template_name') or '').strip() or None
+  params=[d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo or 'Alerta',a.mensagem or '']
+  criar_mensagem_whatsapp(tenant_id=a.tenant_id,driver=d,body=body,message_type='alerta_automatico',related_entity='Alerta',related_entity_id=a.id,template_name=template_name,template_parameters=params); enviados+=1
+ db.session.commit(); return enviados
+
 @app.route('/administracao/backup/criar',methods=['POST'])
 @login_required
 def criar_backup_tenant():
@@ -2484,6 +2573,8 @@ def integracoes():
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
     'maintenance_reminder_template_name':request.form.get('maintenance_reminder_template_name','').strip(),
+    'payment_template_name':request.form.get('payment_template_name','').strip(),
+    'payment_excess_template_name':request.form.get('payment_excess_template_name','').strip(),
     'template_language':request.form.get('template_language','pt_BR').strip() or 'pt_BR',
    }
    item.ativo=(provider=='business')
@@ -2628,8 +2719,11 @@ def processar_mensagens_job():
  expected=(os.getenv('AUTOMATION_JOB_TOKEN') or '').strip()
  if not expected or token != expected:
   abort(403)
+ km=processar_km_automatico(None)
+ cobrancas=processar_cobrancas_automaticas(None)
+ alertas=processar_alertas_automaticos(None)
  quantidade=processar_mensagens_agendadas(None,limit=500)
- return {'ok':True,'processadas':quantidade,'executado_em':agora_sao_paulo_naive().isoformat()}
+ return {'ok':True,'solicitacoes_km':km,'cobrancas_geradas':cobrancas,'alertas_enviados':alertas,'mensagens_agendadas_processadas':quantidade,'executado_em':agora_sao_paulo_naive().isoformat()}
 
 @app.route('/integracoes/whatsapp/testar',methods=['POST'])
 @login_required
