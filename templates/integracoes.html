@@ -191,6 +191,25 @@
 </div>
 
 <section class="card" style="margin-top:20px">
+  <h2>Status de entrega do WhatsApp</h2>
+  <p class="muted">O Frota Fácil já está preparado para receber os retornos <strong>sent</strong>, <strong>delivered</strong>, <strong>read</strong> e <strong>failed</strong> da Meta.</p>
+  <div class="form-grid">
+    <label>URL de callback
+      <input type="text" readonly value="{{ webhook_url }}" onclick="this.select()">
+    </label>
+    <label>Verify Token
+      <input type="text" readonly value="{{ whatsapp_cfg.get('verify_token','') }}" onclick="this.select()">
+    </label>
+  </div>
+  {% if whatsapp_cfg.get('verify_token') %}
+    <p class="success-note"><strong>Webhook preparado.</strong> Cadastre a URL e o Verify Token acima no webhook do WhatsApp/Meta e assine o campo <code>messages</code>.</p>
+  {% else %}
+    <p class="warning-note"><strong>Falta o Verify Token.</strong> Preencha-o em Configuração avançada / manual, salve e depois use o mesmo valor na Meta.</p>
+  {% endif %}
+  <p class="muted">Depois de ativado na Meta, o histórico abaixo será atualizado automaticamente de “Aceita pela Meta” para <strong>Enviada</strong>, <strong>Entregue</strong>, <strong>Lida</strong> ou <strong>Falhou</strong> com o motivo retornado.</p>
+</section>
+
+<section class="card" style="margin-top:20px">
   <div class="section-heading"><div><h2>Fila de automações</h2><p class="muted">Em produção, o endpoint protegido pode ser chamado por um Cron Job. O botão abaixo serve para testes.</p></div><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button class="btn-secondary" type="submit">Processar mensagens agendadas agora</button></form></div>
 </section>
 
@@ -206,7 +225,7 @@
         <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
         <td>{{ item.message_type }}</td>
         <td>{{ item.provider }}</td>
-        <td><span class="badge">{{ item.status }}</span></td>
+        <td><span class="badge">{{ status_label(item.status) }}</span></td>
         <td>{{ item.error_message or '-' }}</td>
       </tr>
       {% endfor %}
