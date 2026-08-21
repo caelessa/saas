@@ -2,20 +2,18 @@
 {% block content %}
 <div class="container" style="max-width:900px;margin:40px auto;padding:0 20px;">
   <div style="background:#fff;border-radius:16px;padding:32px;box-shadow:0 8px 30px rgba(0,0,0,.08);">
-    <h1 style="margin-bottom:8px;">{{ empresa.nome_fantasia }}</h1>
-    <p style="font-size:1.05rem;line-height:1.6;">{{ empresa.descricao }}</p>
-    <hr style="margin:28px 0;border:0;border-top:1px solid #e5e7eb;">
+    <h1>{{ empresa.nome_fantasia }}</h1>
+    <p>{{ empresa.descricao }}</p>
+    <hr>
     <h2>Informações da empresa</h2>
-    <dl style="display:grid;grid-template-columns:220px 1fr;gap:12px 20px;line-height:1.5;">
-      <dt><strong>Razão social</strong></dt><dd>{{ empresa.razao_social or 'Não informado' }}</dd>
-      <dt><strong>Nome fantasia</strong></dt><dd>{{ empresa.nome_fantasia or 'Não informado' }}</dd>
-      <dt><strong>CNPJ</strong></dt><dd>{{ empresa.cnpj or 'Não informado' }}</dd>
-      <dt><strong>Endereço</strong></dt><dd>{{ empresa.endereco or 'Não informado' }}</dd>
-      <dt><strong>Telefone</strong></dt><dd>{{ empresa.telefone or 'Não informado' }}</dd>
-      <dt><strong>E-mail</strong></dt><dd>{{ empresa.email or 'Não informado' }}</dd>
-    </dl>
-    <hr style="margin:28px 0;border:0;border-top:1px solid #e5e7eb;">
-    <p style="font-size:.95rem;color:#555;">Esta é uma página pública de identificação empresarial associada à operação da plataforma Frota Fácil.</p>
+    <p><strong>Razão social:</strong> {{ empresa.razao_social or 'Não informado' }}</p>
+    <p><strong>Nome fantasia:</strong> {{ empresa.nome_fantasia or 'Não informado' }}</p>
+    <p><strong>CNPJ:</strong> {{ empresa.cnpj or 'Não informado' }}</p>
+    <p><strong>Endereço:</strong> {{ empresa.endereco or 'Não informado' }}</p>
+    <p><strong>Telefone:</strong> {{ empresa.telefone or 'Não informado' }}</p>
+    <p><strong>E-mail:</strong> {{ empresa.email or 'Não informado' }}</p>
+    <hr>
+    <p>Esta é uma página pública de identificação empresarial associada à operação da plataforma Frota Fácil.</p>
   </div>
 </div>
 {% endblock %}
