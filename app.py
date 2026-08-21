@@ -1013,8 +1013,9 @@ def solicitar_km(id):
  cfg=CommunicationService.parse_config(integration)
  template_name=(cfg.get('mileage_template_name') or '').strip() or None
  template_params=[d.nome,v.marca_modelo or 'Veículo',v.placa,link]
+ provider_cfg=(cfg.get('provider') or 'web').lower()
  fila=MessageQueue(
-  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
+  tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
   recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,template_name=template_name,template_parameters=json.dumps(template_params,ensure_ascii=False),
   related_entity='Veiculo',related_entity_id=v.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
