@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block heading %}Templates disponíveis na Meta{% endblock %}
+{% block subheading %}Consulta direta à Graph API usando a WABA e o token configurados nesta locadora.{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-heading">
+    <div>
+      <h2>Diagnóstico WhatsApp Business</h2>
+      <p class="muted">WABA: {{ waba_id or '-' }} · Graph API: {{ graph_version }}</p>
+    </div>
+    <a class="btn-secondary" href="{{ url_for('integracoes') }}">Voltar para Integrações</a>
+  </div>
+
+  {% if erro %}
+    <div class="notice-warning"><strong>Não foi possível consultar a Meta.</strong><p>{{ erro }}</p></div>
+  {% else %}
+    <div class="notice-success">
+      <strong>Consulta concluída diretamente na Meta.</strong>
+      <p>Configuração atual do KM no Frota Fácil: <code>{{ config_template or '(vazio)' }}</code> · idioma <code>{{ config_language or '(vazio)' }}</code>.</p>
+    </div>
+
+    {% if templates %}
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th>Nome</th><th>Idioma/API</th><th>Status</th><th>Categoria</th><th>ID</th><th>Comparação KM</th></tr></thead>
+          <tbody>
+          {% for t in templates %}
+            {% set same_name = (t.get('name','') == config_template) %}
+            {% set same_lang = (t.get('language','') == config_language) %}
+            <tr>
+              <td><code>{{ t.get('name','-') }}</code></td>
+              <td><code>{{ t.get('language','-') }}</code></td>
+              <td>{{ t.get('status','-') }}</td>
+              <td>{{ t.get('category','-') }}</td>
+              <td><small>{{ t.get('id','-') }}</small></td>
+              <td>
+                {% if same_name and same_lang %}<span class="badge">✅ nome + idioma coincidem</span>
+                {% elif same_name %}<span class="badge">⚠️ nome coincide; idioma diferente</span>
+                {% else %}-{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p>Nenhum template foi retornado para esta WABA.</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
