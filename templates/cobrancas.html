@@ -46,13 +46,16 @@
 <section class="card info-card" style="margin-top:18px"><b>Como o excesso é calculado?</b><p>Quando existem ao menos duas leituras recentes de quilometragem, o sistema compara as duas últimas. Se a diferença ultrapassar o limite semanal do contrato, multiplica os quilômetros excedentes pelo valor de KM excedente. Sem histórico recente suficiente, o lembrete mostra somente o valor semanal.</p><p><b>Provedor:</b> o Frota Fácil respeita a configuração do tenant. Na Business Platform o envio é automático; no WhatsApp Web a conversa é aberta para confirmação manual.</p></section>
 
 <section class="card" style="margin-top:18px">
- <div class="section-heading"><div><h2>Histórico / Auditoria de cobranças</h2><p class="muted">Os valores abaixo são preservados como estavam no momento do disparo.</p></div></div>
+ <div class="section-heading"><div><h2>Histórico / Auditoria de cobranças</h2><p class="muted">O cálculo fica congelado no momento da criação. Dar baixa interrompe imediatamente os lembretes daquela cobrança.</p></div></div>
  <div class="table-wrap"><table>
-  <thead><tr><th>Data</th><th>Motorista</th><th>Veículo</th><th>Semanal</th><th>KM período</th><th>Excesso</th><th>Total</th><th>Provedor</th><th>Status inicial</th></tr></thead>
+  <thead><tr><th>Data</th><th>Motorista</th><th>Veículo</th><th>Semanal</th><th>KM período</th><th>Excesso</th><th>Total</th><th>Lembretes</th><th>Provedor</th><th>Entrega</th><th>Pagamento</th><th>Ação</th></tr></thead>
   <tbody>{% for a in auditoria %}<tr>
-   <td>{{a.created_at.strftime('%d/%m/%Y %H:%M') if a.created_at else '-'}}</td><td>{{a.driver_name or '-'}}</td><td>{{a.vehicle_label or '-'}} · {{a.plate or '-'}}</td>
-   <td>R$ {{a.base_amount|brl}}</td><td>{{a.km_period if a.km_period is not none else '-'}}</td><td>{{a.km_excess or 0}} km · R$ {{a.excess_amount|brl}}</td><td><b>R$ {{a.total_amount|brl}}</b></td><td>{{a.provider or '-'}}</td><td>{{a.message.status if a.message else (a.status or '-')}}</td>
-  </tr>{% else %}<tr><td colspan="9">Nenhuma cobrança arquivada ainda.</td></tr>{% endfor %}</tbody>
+   <td>{{a.created_at|sp_datetime if a.created_at else '-'}}</td><td>{{a.driver_name or '-'}}</td><td>{{a.vehicle_label or '-'}} · {{a.plate or '-'}}</td>
+   <td>R$ {{a.base_amount|brl}}</td><td>{{a.km_period if a.km_period is not none else '-'}}</td><td>{{a.km_excess or 0}} km · R$ {{a.excess_amount|brl}}</td><td><b>R$ {{a.total_amount|brl}}</b></td>
+   <td>{{a.reminder_count or 0}}{% if a.last_reminder_at %}<br><small>último {{a.last_reminder_at|sp_datetime}}</small>{% endif %}</td><td>{{a.provider or '-'}}</td><td>{{a.message.status if a.message else (a.status or '-')}}</td>
+   <td>{% if a.payment_status=='PAGO' %}<span class="badge">Pago</span>{% if a.paid_at %}<br><small>{{a.paid_at|sp_datetime}}</small>{% endif %}{% else %}<span class="alert-status danger">Pendente</span>{% endif %}</td>
+   <td>{% if a.payment_status=='PAGO' %}<form method="post" action="{{url_for('reabrir_cobranca',id=a.id)}}"><button class="btn-secondary small" type="submit">Reabrir</button></form>{% else %}<form method="post" action="{{url_for('marcar_cobranca_paga',id=a.id)}}" class="inline"><select name="payment_method"><option value="">Forma...</option><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Cartão</option><option>Outro</option></select><button class="btn small" type="submit">✓ Dar baixa</button></form>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="12">Nenhuma cobrança arquivada ainda.</td></tr>{% endfor %}</tbody>
  </table></div>
 </section>
 {% endblock %}
