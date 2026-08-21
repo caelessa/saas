@@ -2460,6 +2460,41 @@ def desconectar_whatsapp_embedded_signup():
  flash('Conexão simplificada removida do Frota Fácil. Os ativos da Meta não foram excluídos.','success')
  return redirect(url_for('integracoes'))
 
+@app.route('/integracoes/whatsapp/templates-meta',methods=['GET'])
+@login_required
+def templates_meta_whatsapp():
+ item=_integration('whatsapp')
+ cfg=_integration_config(item)
+ waba_id=(cfg.get('business_account_id') or '').strip()
+ token=(cfg.get('access_token') or '').strip()
+ graph_version=(cfg.get('graph_version') or 'v23.0').strip() or 'v23.0'
+ templates=[]
+ erro=None
+ if not waba_id or not token:
+  erro='Business Account ID (WABA) e Access Token precisam estar configurados para consultar os templates.'
+ else:
+  try:
+   url=f'https://graph.facebook.com/{graph_version}/{waba_id}/message_templates'
+   params={'fields':'id,name,language,status,category','limit':100}
+   headers={'Authorization':f'Bearer {token}'}
+   while url:
+    resp=requests.get(url,headers=headers,params=params if '?' not in url else None,timeout=20)
+    try:
+     payload=resp.json()
+    except ValueError:
+     payload={'raw':resp.text[:2000]}
+    if not resp.ok:
+     detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
+     raise RuntimeError(detail or f'Falha ao consultar templates na Meta (HTTP {resp.status_code}).')
+    templates.extend(payload.get('data') or [])
+    url=((payload.get('paging') or {}).get('next'))
+    params=None
+  except Exception as exc:
+   app.logger.exception('Falha ao consultar templates WhatsApp da Meta')
+   erro=str(exc)
+ templates=sorted(templates,key=lambda x:((x.get('name') or '').lower(),x.get('language') or ''))
+ return render_template('meta_templates.html',templates=templates,erro=erro,waba_id=waba_id,graph_version=graph_version,config_template=cfg.get('mileage_template_name') or '',config_language=cfg.get('template_language') or '')
+
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
 def processar_mensagens_manual():
