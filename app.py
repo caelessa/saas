@@ -703,6 +703,20 @@ def seed():
   ensure_locadrivers_template(tenant.id)
  db.session.commit()
 
+
+@app.route('/sobre-a-empresa')
+def sobre_a_empresa():
+    empresa = {
+        'razao_social': (os.getenv('FROTA_FACIL_RAZAO_SOCIAL') or 'Gutos Car').strip(),
+        'nome_fantasia': (os.getenv('FROTA_FACIL_NOME_FANTASIA') or 'Gutos Car').strip(),
+        'cnpj': (os.getenv('FROTA_FACIL_CNPJ') or '').strip(),
+        'endereco': (os.getenv('FROTA_FACIL_ENDERECO') or '').strip(),
+        'telefone': (os.getenv('FROTA_FACIL_TELEFONE') or '').strip(),
+        'email': (os.getenv('FROTA_FACIL_EMAIL') or '').strip(),
+        'descricao': (os.getenv('FROTA_FACIL_DESCRICAO') or 'Empresa responsável pela operação piloto e uso da plataforma Frota Fácil para gestão de locação de veículos.').strip(),
+    }
+    return render_template('sobre_empresa.html', empresa=empresa)
+
 @app.route('/criar-conta',methods=['GET','POST'])
 def criar_conta():
  if current_user.is_authenticated: return redirect(url_for('dashboard'))
@@ -1012,10 +1026,9 @@ def solicitar_km(id):
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  template_name=(cfg.get('mileage_template_name') or '').strip() or None
- template_params=[d.nome,v.marca_modelo or 'Veículo',v.placa,link]
- provider_cfg=(cfg.get('provider') or 'web').lower()
+ template_params=[d.nome,v.placa,link]
  fila=MessageQueue(
-  tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
+  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
   recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,template_name=template_name,template_parameters=json.dumps(template_params,ensure_ascii=False),
   related_entity='Veiculo',related_entity_id=v.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
@@ -2345,112 +2358,6 @@ def _integration_config(item):
  except Exception:
   return {}
 
-def whatsapp_status_label(status):
- labels={
-  'PENDENTE':'Pendente',
-  'AGENDADA':'Agendada',
-  'PREPARADA':'Preparada no WhatsApp Web',
-  'ACEITA_META':'Aceita pela Meta — aguardando entrega',
-  'ENVIADA':'Enviada pela Meta — aguardando entrega',
-  'SENT':'Enviada — aguardando entrega',
-  'ENTREGUE':'Entregue',
-  'DELIVERED':'Entregue',
-  'LIDA':'Lida',
-  'READ':'Lida',
-  'FALHA':'Falhou',
-  'FAILED':'Falhou',
-  'AGUARDANDO_MANUAL':'Aguardando envio manual',
- }
- return labels.get((status or '').upper(),status or '-')
-
-def _whatsapp_status_rank(status):
- return {
-  'PENDENTE':0,'AGENDADA':0,'ACEITA_META':1,'ENVIADA':2,'SENT':2,
-  'ENTREGUE':3,'DELIVERED':3,'LIDA':4,'READ':4,'FALHA':99,'FAILED':99,
- }.get((status or '').upper(),0)
-
-def _meta_error_text(status_payload):
- errors=status_payload.get('errors') or []
- if not errors:
-  return None
- parts=[]
- for err in errors:
-  if not isinstance(err,dict):
-   continue
-  code=err.get('code')
-  title=err.get('title') or err.get('message')
-  details=((err.get('error_data') or {}).get('details') if isinstance(err.get('error_data'),dict) else None)
-  chunk=' — '.join(str(x) for x in [title,details] if x)
-  if code is not None:
-   chunk=(f'#{code}: '+chunk) if chunk else f'#{code}'
-  if chunk: parts.append(chunk)
- return ' | '.join(parts) or None
-
-@app.route('/webhooks/whatsapp',methods=['GET','POST'])
-def whatsapp_webhook():
- # Verificação do callback feita pela Meta. O token é o configurado no tenant.
- if request.method=='GET':
-  mode=(request.args.get('hub.mode') or '').strip()
-  verify=(request.args.get('hub.verify_token') or '').strip()
-  challenge=request.args.get('hub.challenge') or ''
-  if mode!='subscribe' or not verify:
-   abort(403)
-  for item in Integration.query.filter_by(tipo='whatsapp').all():
-   cfg=_integration_config(item)
-   expected=(cfg.get('verify_token') or '').strip()
-   if expected and verify==expected:
-    return challenge,200,{'Content-Type':'text/plain; charset=utf-8'}
-  abort(403)
-
- payload=request.get_json(silent=True) or {}
- try:
-  entries=payload.get('entry') or []
-  for entry in entries:
-   for change in (entry.get('changes') or []):
-    value=change.get('value') or {}
-    metadata=value.get('metadata') or {}
-    phone_number_id=str(metadata.get('phone_number_id') or '')
-    for st in (value.get('statuses') or []):
-     external_id=str(st.get('id') or '').strip()
-     raw_status=str(st.get('status') or '').lower().strip()
-     if not external_id or not raw_status:
-      continue
-     fila=MessageQueue.query.filter_by(external_id=external_id).order_by(MessageQueue.id.desc()).first()
-     # Fallback defensivo: se o message id não foi salvo, tenta limitar pelo Phone Number ID e destinatário.
-     if not fila and phone_number_id:
-      recipient=str(st.get('recipient_id') or '').strip()
-      candidates=MessageQueue.query.filter_by(provider='whatsapp_business',recipient=recipient).order_by(MessageQueue.id.desc()).limit(20).all()
-      for candidate in candidates:
-       integ=Integration.query.filter_by(tenant_id=candidate.tenant_id,tipo='whatsapp').first()
-       cfg=_integration_config(integ)
-       if str(cfg.get('phone_number_id') or '')==phone_number_id:
-        fila=candidate; break
-     if not fila:
-      app.logger.warning('Webhook WhatsApp sem mensagem correspondente: %s',external_id)
-      continue
-     mapping={'sent':'ENVIADA','delivered':'ENTREGUE','read':'LIDA','failed':'FALHA'}
-     new_status=mapping.get(raw_status,raw_status.upper())
-     old_status=fila.status
-     # Falha sempre deve prevalecer. Nos demais callbacks, evita regressão (ex.: read seguido de delivered atrasado).
-     if new_status=='FALHA' or _whatsapp_status_rank(new_status)>=_whatsapp_status_rank(old_status):
-      fila.status=new_status
-     fila.updated_at=agora_sao_paulo_naive()
-     if new_status in ('ENVIADA','ENTREGUE','LIDA') and not fila.sent_at:
-      fila.sent_at=agora_sao_paulo_naive()
-     error_text=_meta_error_text(st) if new_status=='FALHA' else None
-     if error_text:
-      fila.error_message=error_text
-     event_description=f'Status WhatsApp atualizado pela Meta: {raw_status}.'
-     if error_text:
-      event_description+=' '+error_text
-     db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event=new_status,description=event_description,created_at=agora_sao_paulo_naive()))
-  db.session.commit()
- except Exception:
-  db.session.rollback()
-  app.logger.exception('Falha ao processar webhook de status do WhatsApp')
-  # Retorna 200 para evitar tempestade de retries enquanto o evento fica registrado em log.
- return {'ok':True},200
-
 @app.route('/integracoes',methods=['GET','POST'])
 @login_required
 def integracoes():
@@ -2491,7 +2398,7 @@ def integracoes():
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
- return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
+ return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
 @app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
 @login_required
@@ -2565,41 +2472,6 @@ def desconectar_whatsapp_embedded_signup():
   item.ativo=False; item.configuracao=json.dumps(cfg,ensure_ascii=False); db.session.commit()
  flash('Conexão simplificada removida do Frota Fácil. Os ativos da Meta não foram excluídos.','success')
  return redirect(url_for('integracoes'))
-
-@app.route('/integracoes/whatsapp/templates-meta',methods=['GET'])
-@login_required
-def templates_meta_whatsapp():
- item=_integration('whatsapp')
- cfg=_integration_config(item)
- waba_id=(cfg.get('business_account_id') or '').strip()
- token=(cfg.get('access_token') or '').strip()
- graph_version=(cfg.get('graph_version') or 'v23.0').strip() or 'v23.0'
- templates=[]
- erro=None
- if not waba_id or not token:
-  erro='Business Account ID (WABA) e Access Token precisam estar configurados para consultar os templates.'
- else:
-  try:
-   url=f'https://graph.facebook.com/{graph_version}/{waba_id}/message_templates'
-   params={'fields':'id,name,language,status,category','limit':100}
-   headers={'Authorization':f'Bearer {token}'}
-   while url:
-    resp=requests.get(url,headers=headers,params=params if '?' not in url else None,timeout=20)
-    try:
-     payload=resp.json()
-    except ValueError:
-     payload={'raw':resp.text[:2000]}
-    if not resp.ok:
-     detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
-     raise RuntimeError(detail or f'Falha ao consultar templates na Meta (HTTP {resp.status_code}).')
-    templates.extend(payload.get('data') or [])
-    url=((payload.get('paging') or {}).get('next'))
-    params=None
-  except Exception as exc:
-   app.logger.exception('Falha ao consultar templates WhatsApp da Meta')
-   erro=str(exc)
- templates=sorted(templates,key=lambda x:((x.get('name') or '').lower(),x.get('language') or ''))
- return render_template('meta_templates.html',templates=templates,erro=erro,waba_id=waba_id,graph_version=graph_version,config_template=cfg.get('mileage_template_name') or '',config_language=cfg.get('template_language') or '')
 
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
