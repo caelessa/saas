@@ -296,6 +296,14 @@ class BillingAudit(db.Model):
  status=db.Column(db.String(30),default='GERADA')
  external_id=db.Column(db.String(180))
  error_message=db.Column(db.Text)
+ payment_status=db.Column(db.String(20),default='PENDENTE',index=True)
+ paid_at=db.Column(db.DateTime,index=True)
+ paid_by_id=db.Column(db.Integer,db.ForeignKey('user.id'))
+ payment_method=db.Column(db.String(50))
+ payment_notes=db.Column(db.Text)
+ reminder_count=db.Column(db.Integer,default=0)
+ last_reminder_at=db.Column(db.DateTime,index=True)
+ closed_at=db.Column(db.DateTime)
  created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
  message=db.relationship('MessageQueue')
 @login.user_loader
@@ -321,7 +329,7 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent]
+ models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
@@ -525,6 +533,11 @@ def migrate_schema():
   'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('proxima_hora','VARCHAR(5)'),('notificar_motorista','BOOLEAN DEFAULT FALSE'),('lembrete_um_dia','BOOLEAN DEFAULT TRUE'),('notificacao_agendamento_id','INTEGER'),('notificacao_lembrete_id','INTEGER'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
   'message_queue':[('template_parameters','TEXT')],
+  'billing_audit':[
+   ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
+   ('payment_method','VARCHAR(50)'),('payment_notes','TEXT'),('reminder_count','INTEGER DEFAULT 0'),
+   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),
+  ],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
    ('periodicidade','VARCHAR(30)'),('dia_vencimento','VARCHAR(30)'),('multa_atraso_percentual','NUMERIC(6,2)'),
@@ -870,7 +883,7 @@ def excluir_motorista(id):
 @login_required
 def investidores():
  if request.method=='POST':
-  x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=request.form.get('telefone'),email=request.form.get('email'),regra_repasse=request.form.get('regra_repasse'),observacoes=request.form.get('observacoes')); db.session.add(x); db.session.commit(); flash('Investidor cadastrado.','success'); return redirect(url_for('investidores'))
+  x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=request.form.get('telefone'),email=request.form.get('email'),regra_repasse=request.form.get('regra_repasse'),observacoes=request.form.get('observacoes')); db.session.add(x); db.session.commit(); flash('Proprietário cadastrado.','success'); return redirect(url_for('investidores'))
  q=(request.args.get('q') or '').strip()
  query=Investor.query.filter_by(tenant_id=tid())
  if q:
@@ -885,7 +898,7 @@ def editar_investidor(id):
  if request.method=='POST':
   for campo in ['nome','cpf_cnpj','telefone','email','regra_repasse','observacoes']:
    setattr(x,campo,request.form.get(campo))
-  db.session.commit(); flash('Investidor atualizado com sucesso.','success'); return redirect(url_for('investidores'))
+  db.session.commit(); flash('Proprietário atualizado com sucesso.','success'); return redirect(url_for('investidores'))
  return render_template('editar_investidor.html',x=x)
 
 @app.route('/veiculos',methods=['GET','POST'])
@@ -895,6 +908,12 @@ def veiculos():
   campos_veiculo=['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']
   vals={k:limpar_campo_ocr_veiculo(k,request.form.get(k)) for k in campos_veiculo}
   v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100)
+  # RC 1.0.15: o cadastro antes chamado Investidor passa a ser a fonte do Proprietário do veículo.
+  if v.investor_id:
+   proprietario=Investor.query.filter_by(id=v.investor_id,tenant_id=tid()).first()
+   if proprietario:
+    v.proprietario_legal=proprietario.nome
+    v.cpf_cnpj_proprietario=proprietario.cpf_cnpj
   db.session.add(v)
   try:
    db.session.flush()
@@ -955,6 +974,11 @@ def editar_veiculo(id):
   for campo in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']:
    setattr(v,campo,request.form.get(campo))
   v.investor_id=request.form.get('investor_id') or None
+  if v.investor_id:
+   proprietario=Investor.query.filter_by(id=v.investor_id,tenant_id=tid()).first()
+   if proprietario:
+    v.proprietario_legal=proprietario.nome
+    v.cpf_cnpj_proprietario=proprietario.cpf_cnpj
   v.valor_repasse=request.form.get('valor_repasse') or 0
   v.limite_km=request.form.get('limite_km') or None
   v.valor_km_excedente=request.form.get('valor_km_excedente') or 0
@@ -1571,15 +1595,18 @@ def contrato_whatsapp(id):
  except (ContractStateError,VehicleStateError) as exc:
   db.session.rollback(); flash(str(exc),'danger'); return redirect(url_for('contrato_detalhe',id=id))
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ provider_cfg=(cfg.get('provider') or 'web').lower()
+ template_name=(cfg.get('contract_template_name') or '').strip() or None
  fila=MessageQueue(
-  tenant_id=tid(),channel='whatsapp',provider='whatsapp_web',recipient=telefone,
-  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,
+  tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
+  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,template_name=template_name,
   related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
  )
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration)
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR')
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
   fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
@@ -2279,8 +2306,9 @@ def _normalizar_dia_semana(valor):
  }
  return mapa.get(texto)
 
-def _ultimas_leituras_km(vehicle_id, limit=2):
- return Odometer.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id).order_by(Odometer.data.desc(),Odometer.id.desc()).limit(limit).all()
+def _ultimas_leituras_km(vehicle_id, limit=2, tenant_id=None):
+ tenant_id=tenant_id if tenant_id is not None else tid()
+ return Odometer.query.filter_by(tenant_id=tenant_id,vehicle_id=vehicle_id).order_by(Odometer.data.desc(),Odometer.id.desc()).limit(limit).all()
 
 def calcular_cobranca_semanal(contract):
  valor_base=Decimal(str(contract.valor_locacao or 0))
@@ -2291,7 +2319,7 @@ def calcular_cobranca_semanal(contract):
  }
  if not contract.vehicle_id or not contract.limite_km or not contract.valor_km_excedente:
   return info
- leituras=_ultimas_leituras_km(contract.vehicle_id,2)
+ leituras=_ultimas_leituras_km(contract.vehicle_id,2,contract.tenant_id)
  if len(leituras)<2:
   return info
  atual,anterior=leituras[0],leituras[1]
@@ -2343,49 +2371,95 @@ def _cobranca_template_params(contract,info):
   return [d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),moeda_br(info['valor_excesso']),moeda_br(info['total']),vencimento]
  return [d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),vencimento]
 
-def gerar_e_enviar_cobranca(contract,automatico=False):
- info=calcular_cobranca_semanal(contract); body=mensagem_cobranca_semanal(contract,info)
- integration=Integration.query.filter_by(tenant_id=contract.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
- provider=(cfg.get('provider') or 'web').lower()
- template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
+def _automation_cfg(tenant_id):
+ integration=Integration.query.filter_by(tenant_id=tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ return integration,cfg
+
+def _automation_window_open(cfg, agora=None):
+ agora=agora or datetime.now(SAO_PAULO)
+ if not cfg.get('automation_enabled',False): return False
+ try: weekday=int(cfg.get('automation_weekday',0))
+ except Exception: weekday=0
+ try: start_hour=int(cfg.get('automation_start_hour',7))
+ except Exception: start_hour=7
+ try: end_hour=int(cfg.get('automation_end_hour',20))
+ except Exception: end_hour=20
+ return agora.weekday()==weekday and start_hour<=agora.hour<=end_hour
+
+def _reminder_interval(cfg):
+ try: return max(1,int(cfg.get('reminder_interval_hours',1)))
+ except Exception: return 1
+
+def _audit_info(audit):
+ return {
+  'valor_base':Decimal(str(audit.base_amount or 0)),'total':Decimal(str(audit.total_amount or 0)),
+  'km_periodo':audit.km_period,'limite_km':audit.km_limit,'km_excedente':audit.km_excess or 0,
+  'valor_excesso':Decimal(str(audit.excess_amount or 0)),'tem_historico_km':audit.km_period is not None,
+  'usa_excesso':Decimal(str(audit.excess_amount or 0))>0,
+ }
+
+def _enviar_cobranca_audit(contract,audit,cfg):
+ info=_audit_info(audit)
+ body=audit.body
+ template_name=audit.template_name
  params=_cobranca_template_params(contract,info)
- hoje=datetime.now(SAO_PAULO).date()
- audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body=body,template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',created_at=agora_sao_paulo_naive())
- db.session.add(audit); db.session.flush()
  fila,redirect_url,err=criar_mensagem_whatsapp(tenant_id=contract.tenant_id,driver=contract.driver,body=body,message_type='lembrete_pagamento_semanal',related_entity='Cobranca',related_entity_id=audit.id,template_name=template_name,template_parameters=params)
+ now=agora_sao_paulo_naive()
  if fila:
   audit.message_id=fila.id; audit.provider=fila.provider; audit.status=fila.status; audit.external_id=fila.external_id; audit.error_message=fila.error_message
+  audit.reminder_count=(audit.reminder_count or 0)+1; audit.last_reminder_at=now
+ return fila,redirect_url,err
+
+def gerar_e_enviar_cobranca(contract,automatico=False):
+ info=calcular_cobranca_semanal(contract); body=mensagem_cobranca_semanal(contract,info)
+ integration,cfg=_automation_cfg(contract.tenant_id)
+ provider=(cfg.get('provider') or 'web').lower()
+ template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
+ hoje=datetime.now(SAO_PAULO).date()
+ audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body=body,template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
+ db.session.add(audit); db.session.flush()
+ fila,redirect_url,err=_enviar_cobranca_audit(contract,audit,cfg)
  return fila,audit,redirect_url,err
 
 def processar_cobrancas_automaticas(tenant_id=None):
- hoje=datetime.now(SAO_PAULO).date()
+ agora=datetime.now(SAO_PAULO); hoje=agora.date()
  q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
  if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
  enviados=0
  for c in q.all():
   periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
   if periodicidade and 'seman' not in periodicidade: continue
-  if not cobranca_vence_hoje(c): continue
-  if BillingAudit.query.filter_by(tenant_id=c.tenant_id,contract_id=c.id,billing_date=hoje).first(): continue
-  integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
+  integration,cfg=_automation_cfg(c.tenant_id)
+  if not cfg.get('automatic_billing_enabled',False) or not _automation_window_open(cfg,agora): continue
+  # Envio realmente automático só é possível pela Business Platform. No Web, o botão manual continua disponível.
   if (cfg.get('provider') or 'web').lower()!='business': continue
-  gerar_e_enviar_cobranca(c,automatico=True); enviados+=1
+  audit=BillingAudit.query.filter_by(tenant_id=c.tenant_id,contract_id=c.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
+  if audit and (audit.payment_status or 'PENDENTE')=='PAGO': continue
+  if not audit:
+   gerar_e_enviar_cobranca(c,automatico=True); enviados+=1; continue
+  intervalo=_reminder_interval(cfg)
+  if audit.last_reminder_at and (agora_sao_paulo_naive()-audit.last_reminder_at)<timedelta(hours=intervalo): continue
+  _enviar_cobranca_audit(c,audit,cfg); enviados+=1
  db.session.commit(); return enviados
 
 def processar_km_automatico(tenant_id=None):
  agora=datetime.now(SAO_PAULO)
- if agora.weekday()!=0: return 0
  q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
  if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
  enviados=0; inicio=datetime.combine(agora.date(),datetime.min.time())
  for c in q.all():
   if not c.driver or not c.vehicle: continue
-  integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
+  integration,cfg=_automation_cfg(c.tenant_id)
+  if not cfg.get('automatic_km_enabled',False) or not _automation_window_open(cfg,agora): continue
   if (cfg.get('provider') or 'web').lower()!='business': continue
-  if MessageQueue.query.filter_by(tenant_id=c.tenant_id,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id).filter(MessageQueue.created_at>=inicio).first(): continue
   req=MileageRequest.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
   if not req:
    req=MileageRequest(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=c.vehicle.km_atual); db.session.add(req); db.session.flush()
+  # Se a foto/KM já foi recebida, não haverá request Pendente e nenhum novo lembrete é necessário no mesmo dia.
+  ultimo=MessageQueue.query.filter_by(tenant_id=c.tenant_id,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id).filter(MessageQueue.created_at>=inicio).order_by(MessageQueue.id.desc()).first()
+  intervalo=_reminder_interval(cfg)
+  if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo): continue
   link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
   body=f'Olá, {c.driver.nome}! Precisamos da quilometragem atual do veículo {c.vehicle.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
   template=(cfg.get('mileage_template_name') or '').strip() or None
@@ -2399,7 +2473,7 @@ def processar_alertas_automaticos(tenant_id=None):
  enviados=0; hoje=datetime.now(SAO_PAULO).date()
  for a in q.order_by(Alert.criado_em.asc()).limit(200).all():
   integration=Integration.query.filter_by(tenant_id=a.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
-  if (cfg.get('provider') or 'web').lower()!='business': continue
+  if not cfg.get('automatic_alerts_enabled',False): continue
   v=None; m=None
   if a.entidade=='Manutenção': m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first(); v=m.vehicle if m else None
   elif a.entidade=='Veículo': v=Vehicle.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first()
@@ -2413,6 +2487,27 @@ def processar_alertas_automaticos(tenant_id=None):
   params=[d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo or 'Alerta',a.mensagem or '']
   criar_mensagem_whatsapp(tenant_id=a.tenant_id,driver=d,body=body,message_type='alerta_automatico',related_entity='Alerta',related_entity_id=a.id,template_name=template_name,template_parameters=params); enviados+=1
  db.session.commit(); return enviados
+
+@app.route('/cobrancas/auditoria/<int:id>/pago',methods=['POST'])
+@login_required
+def marcar_cobranca_paga(id):
+ audit=BillingAudit.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if (audit.payment_status or 'PENDENTE')=='PAGO':
+  flash('Esta cobrança já estava marcada como paga.','info'); return redirect(url_for('cobrancas'))
+ audit.payment_status='PAGO'; audit.paid_at=agora_sao_paulo_naive(); audit.paid_by_id=current_user.id
+ audit.payment_method=(request.form.get('payment_method') or '').strip() or None
+ audit.payment_notes=(request.form.get('payment_notes') or '').strip() or None
+ audit.closed_at=audit.paid_at
+ db.session.commit(); flash('Pagamento baixado. Os lembretes desta cobrança foram interrompidos.','success')
+ return redirect(url_for('cobrancas'))
+
+@app.route('/cobrancas/auditoria/<int:id>/reabrir',methods=['POST'])
+@login_required
+def reabrir_cobranca(id):
+ audit=BillingAudit.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ audit.payment_status='PENDENTE'; audit.paid_at=None; audit.paid_by_id=None; audit.payment_method=None; audit.payment_notes=None; audit.closed_at=None
+ db.session.commit(); flash('Cobrança reaberta. Ela volta a participar dos lembretes automáticos.','warning')
+ return redirect(url_for('cobrancas'))
 
 @app.route('/administracao/backup/criar',methods=['POST'])
 @login_required
@@ -2547,6 +2642,10 @@ def whatsapp_webhook():
      if error_text:
       event_description+=' '+error_text
      db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event=new_status,description=event_description,created_at=agora_sao_paulo_naive()))
+     if fila.related_entity=='Cobranca' and fila.related_entity_id:
+      audit=BillingAudit.query.filter_by(id=fila.related_entity_id,tenant_id=fila.tenant_id).first()
+      if audit:
+       audit.status=fila.status; audit.external_id=fila.external_id; audit.error_message=fila.error_message
   db.session.commit()
  except Exception:
   db.session.rollback()
@@ -2576,6 +2675,14 @@ def integracoes():
     'payment_template_name':request.form.get('payment_template_name','').strip(),
     'payment_excess_template_name':request.form.get('payment_excess_template_name','').strip(),
     'template_language':request.form.get('template_language','pt_BR').strip() or 'pt_BR',
+    'automation_enabled':bool(request.form.get('automation_enabled')),
+    'automation_weekday':int(request.form.get('automation_weekday') or 0),
+    'automation_start_hour':int(request.form.get('automation_start_hour') or 7),
+    'automation_end_hour':int(request.form.get('automation_end_hour') or 20),
+    'reminder_interval_hours':max(1,int(request.form.get('reminder_interval_hours') or 1)),
+    'automatic_billing_enabled':bool(request.form.get('automatic_billing_enabled')),
+    'automatic_km_enabled':bool(request.form.get('automatic_km_enabled')),
+    'automatic_alerts_enabled':bool(request.form.get('automatic_alerts_enabled')),
    }
    item.ativo=(provider=='business')
    item.configuracao=json.dumps(cfg,ensure_ascii=False)
@@ -2709,8 +2816,8 @@ def templates_meta_whatsapp():
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
 def processar_mensagens_manual():
- quantidade=processar_mensagens_agendadas(tid(),limit=200)
- flash(f'{quantidade} mensagem(ns) agendada(s) processada(s).','success')
+ km=processar_km_automatico(tid()); cobrancas=processar_cobrancas_automaticas(tid()); alertas=processar_alertas_automaticos(tid()); quantidade=processar_mensagens_agendadas(tid(),limit=200)
+ flash(f'Automação processada: {km} KM, {cobrancas} cobrança(s), {alertas} alerta(s) e {quantidade} mensagem(ns) agendada(s).','success')
  return redirect(url_for('integracoes'))
 
 @app.route('/jobs/processar-mensagens',methods=['GET','POST'])
@@ -2734,10 +2841,11 @@ def testar_whatsapp_business():
  if not telefone:
   flash('Informe um telefone para o teste.','danger'); return redirect(url_for('integracoes'))
  mensagem='Teste de integração enviado pelo Frota Fácil.'
- fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
+ provider_cfg=(cfg.get('provider') or 'web').lower()
+ fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=cfg.get('contract_template_name') or None)
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=item,template_name=cfg.get('contract_template_name') or None,template_language=cfg.get('template_language') or 'pt_BR')
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Teste manual de integração.',created_at=agora_sao_paulo_naive()))
   db.session.commit(); flash('Teste processado com sucesso.','success')
