@@ -123,6 +123,8 @@
         <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}"></label>
         <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}"></label>
         <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}"></label>
+        <label>Template cobrança semanal<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="lembrete_pagamento_semanal"></label>
+        <label>Template cobrança com excesso KM<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="lembrete_pagamento_com_excesso"></label>
         <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
         <div class="form-actions"><button class="btn" type="submit">Salvar configuração manual</button></div>
       </form>
