@@ -90,7 +90,7 @@ class Odometer(db.Model):
 class MileageRequest(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False); token=db.Column(db.String(64),unique=True,nullable=False,index=True); status=db.Column(db.String(30),default='Pendente'); expires_at=db.Column(db.DateTime); sent_at=db.Column(db.DateTime,default=datetime.utcnow); submitted_at=db.Column(db.DateTime); km=db.Column(db.Integer); previous_km=db.Column(db.Integer); photo=db.Column(db.String(255)); notes=db.Column(db.Text); vehicle=db.relationship('Vehicle'); driver=db.relationship('Driver')
 class ContractTemplate(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); descricao=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); padrao=db.Column(db.Boolean,default=False); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); nome_original=db.Column(db.String(255)); gestora_nome=db.Column(db.String(180)); gestora_fantasia=db.Column(db.String(120)); gestora_cnpj=db.Column(db.String(30)); gestora_endereco=db.Column(db.String(255)); parceira_nome=db.Column(db.String(180)); parceira_cnpj=db.Column(db.String(30)); parceira_endereco=db.Column(db.String(255)); ativo=db.Column(db.Boolean,default=True)
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); descricao=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); padrao=db.Column(db.Boolean,default=False); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); nome_original=db.Column(db.String(255)); arquivo_original=db.Column(db.String(255)); hash_original=db.Column(db.String(64)); preparado_em=db.Column(db.DateTime); gestora_nome=db.Column(db.String(180)); gestora_fantasia=db.Column(db.String(120)); gestora_cnpj=db.Column(db.String(30)); gestora_endereco=db.Column(db.String(255)); parceira_nome=db.Column(db.String(180)); parceira_cnpj=db.Column(db.String(30)); parceira_endereco=db.Column(db.String(255)); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
  id=db.Column(db.Integer,primary_key=True)
  tenant_id=db.Column(db.Integer,index=True,nullable=False)
@@ -304,6 +304,11 @@ class BillingAudit(db.Model):
  reminder_count=db.Column(db.Integer,default=0)
  last_reminder_at=db.Column(db.DateTime,index=True)
  closed_at=db.Column(db.DateTime)
+ receipt_token=db.Column(db.String(64),unique=True,index=True)
+ receipt_key=db.Column(db.String(255))
+ receipt_name=db.Column(db.String(255))
+ receipt_mime=db.Column(db.String(100))
+ receipt_uploaded_at=db.Column(db.DateTime,index=True)
  created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
  message=db.relationship('MessageQueue')
 @login.user_loader
@@ -526,7 +531,7 @@ def migrate_schema():
   'driver':[('telefone2','VARCHAR(30)'),('contato2_nome','VARCHAR(150)'),('contato2_parentesco','VARCHAR(40)'),('telefone3','VARCHAR(30)'),('contato3_nome','VARCHAR(150)'),('contato3_parentesco','VARCHAR(40)'),('logradouro','VARCHAR(160)'),('numero_endereco','VARCHAR(20)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)')],
   'contract_template':[
    ('descricao','VARCHAR(255)'),('versao','INTEGER DEFAULT 1'),('padrao','BOOLEAN DEFAULT FALSE'),
-   ('nome_original','VARCHAR(255)'),('gestora_nome','VARCHAR(180)'),('gestora_fantasia','VARCHAR(120)'),
+   ('nome_original','VARCHAR(255)'),('arquivo_original','VARCHAR(255)'),('hash_original','VARCHAR(64)'),('preparado_em','TIMESTAMP'),('gestora_nome','VARCHAR(180)'),('gestora_fantasia','VARCHAR(120)'),
    ('gestora_cnpj','VARCHAR(30)'),('gestora_endereco','VARCHAR(255)'),('parceira_nome','VARCHAR(180)'),
    ('parceira_cnpj','VARCHAR(30)'),('parceira_endereco','VARCHAR(255)'),
   ],
@@ -536,7 +541,7 @@ def migrate_schema():
   'billing_audit':[
    ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
    ('payment_method','VARCHAR(50)'),('payment_notes','TEXT'),('reminder_count','INTEGER DEFAULT 0'),
-   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),
+   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),('receipt_token','VARCHAR(64)'),('receipt_key','VARCHAR(255)'),('receipt_name','VARCHAR(255)'),('receipt_mime','VARCHAR(100)'),('receipt_uploaded_at','TIMESTAMP'),
   ],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
@@ -1286,6 +1291,58 @@ def historico_veiculo(id):
  manutencoes_concluidas=Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id,status='Concluída').order_by(Maintenance.concluida_em.desc(),Maintenance.id.desc()).all()
  return render_template('veiculo_historico.html',v=v,eventos=eventos,manutencoes_concluidas=manutencoes_concluidas)
 
+def garantir_token_comprovante(audit):
+ if audit.receipt_token: return audit.receipt_token
+ for _ in range(10):
+  token=uuid.uuid4().hex+uuid.uuid4().hex
+  if not BillingAudit.query.filter_by(receipt_token=token).first():
+   audit.receipt_token=token; db.session.flush(); return token
+ raise RuntimeError('Não foi possível gerar link único para comprovante.')
+
+def url_comprovante_cobranca(audit):
+ return url_for('enviar_comprovante_pagamento',token=garantir_token_comprovante(audit),_external=True)
+
+@app.route('/pagamento/<token>',methods=['GET','POST'])
+def enviar_comprovante_pagamento(token):
+ audit=BillingAudit.query.filter_by(receipt_token=token).first_or_404()
+ contrato=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=audit.contract_id,tenant_id=audit.tenant_id).first()
+ if request.method=='POST':
+  if (audit.payment_status or 'PENDENTE')=='PAGO': return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=True)
+  arquivo=request.files.get('comprovante')
+  if not arquivo or not arquivo.filename:
+   flash('Selecione o comprovante.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+  nome=secure_filename(arquivo.filename); ext=Path(nome).suffix.lower()
+  permitidos={'.pdf':'application/pdf','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp'}
+  if ext not in permitidos:
+   flash('Envie PDF, JPG, PNG ou WEBP.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+  data=arquivo.read()
+  if not data or len(data)>15*1024*1024:
+   flash('O comprovante deve ter até 15 MB.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+  chave=f'{audit.tenant_id}/documentos/comprovantes/{audit.id}/{uuid.uuid4().hex}_{nome}'
+  try:
+   storage.upload(BytesIO(data),chave,permitidos[ext])
+   if audit.receipt_key:
+    try: storage.delete(audit.receipt_key)
+    except Exception: pass
+   audit.receipt_key=chave; audit.receipt_name=nome; audit.receipt_mime=permitidos[ext]; audit.receipt_uploaded_at=agora_sao_paulo_naive()
+   if (audit.payment_status or 'PENDENTE')!='PAGO': audit.payment_status='COMPROVANTE_RECEBIDO'
+   db.session.commit()
+  except Exception:
+   db.session.rollback(); app.logger.exception('Falha ao armazenar comprovante da cobrança %s',audit.id)
+   flash('Não foi possível armazenar o comprovante. Tente novamente.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+  return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=True)
+ return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=False)
+
+@app.route('/cobrancas/auditoria/<int:id>/comprovante')
+@login_required
+def visualizar_comprovante_pagamento(id):
+ audit=BillingAudit.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not audit.receipt_key: abort(404)
+ try: data=storage.download(audit.receipt_key)
+ except StorageNotFoundError: abort(404)
+ except Exception: abort(503)
+ return send_file(BytesIO(data),mimetype=audit.receipt_mime or 'application/octet-stream',download_name=audit.receipt_name or f'comprovante-{audit.id}',as_attachment=False)
+
 @app.route('/cobrancas')
 @login_required
 def cobrancas():
@@ -1302,6 +1359,10 @@ def cobrancas():
   items.append({'contract':c,'info':info,'vence_hoje':cobranca_vence_hoje(c)})
  hoje=[x for x in items if x['vence_hoje']]
  auditoria=BillingAudit.query.filter_by(tenant_id=tid()).order_by(BillingAudit.created_at.desc()).limit(200).all()
+ alterou=False
+ for audit in auditoria:
+  if not audit.receipt_token: garantir_token_comprovante(audit); alterou=True
+ if alterou: db.session.commit()
  return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria)
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
@@ -1755,6 +1816,82 @@ def contrato_publico_alias(codigo):
  # Alias curto e estável para compartilhamento externo.
  return redirect(url_for('contrato_publico',codigo=codigo))
 
+CONTRACT_MARKERS=[
+ ('motorista_nome','Nome do locatário/motorista'),('motorista_cpf','CPF do motorista'),('motorista_rg','RG do motorista'),
+ ('motorista_cnh','CNH do motorista'),('motorista_endereco','Endereço do motorista'),('proprietario_nome','Nome do proprietário'),
+ ('proprietario_documento','CPF/CNPJ do proprietário'),('veiculo_modelo','Modelo do veículo'),('veiculo_cor','Cor do veículo'),
+ ('veiculo_ano_fabricacao','Ano de fabricação'),('veiculo_ano_modelo','Ano modelo'),('veiculo_placa','Placa'),('veiculo_renavam','Renavam'),
+ ('km_inicial','KM inicial'),('valor_locacao','Valor da locação'),('caucao','Caução'),('franquia','Franquia'),
+ ('limite_km','Limite de KM'),('valor_km_excedente','Valor por KM excedente'),('data_inicio_formatada','Data inicial'),
+ ('data_fim_formatada','Data final'),('hora_inicio','Hora inicial'),('dia_vencimento','Dia de vencimento'),('cidade_assinatura','Cidade de assinatura'),
+ ('gestora_nome','Razão social da gestora'),('gestora_fantasia','Nome fantasia da gestora'),('gestora_cnpj','CNPJ da gestora'),
+ ('gestora_endereco','Endereço da gestora'),('parceira_nome','Razão social da parceira'),('parceira_cnpj','CNPJ da parceira'),
+ ('parceira_endereco','Endereço da parceira'),
+]
+
+def extrair_texto_contrato_bytes(data,nome_original):
+ ext=Path(nome_original or '').suffix.lower()
+ if ext=='.txt': return data.decode('utf-8',errors='replace').strip()
+ if ext=='.docx':
+  doc=DocxDocument(BytesIO(data)); blocos=[]
+  for par in doc.paragraphs:
+   if par.text.strip(): blocos.append(par.text.strip())
+  for tabela in doc.tables:
+   for linha in tabela.rows:
+    celulas=[c.text.strip() for c in linha.cells]
+    if any(celulas): blocos.append(' | '.join(celulas))
+  return '\n'.join(blocos).strip()
+ if ext=='.pdf':
+  f=FileStorage(stream=BytesIO(data),filename=nome_original,content_type='application/pdf')
+  return (extract_text(f,document_type='contract') or '').strip()
+ raise ValueError('Formato não suportado. Envie DOCX, PDF ou TXT.')
+
+def _sub_contexto(texto,pattern,marker,flags=re.I):
+ marcador='{{'+marker+'}}'; encontrados=0
+ def repl(m):
+  nonlocal encontrados
+  encontrados+=1
+  prefix=m.group(1) if m.lastindex and m.lastindex>=1 else ''
+  suffix=m.group(3) if m.lastindex and m.lastindex>=3 else ''
+  return prefix+marcador+suffix
+ novo=re.sub(pattern,repl,texto,flags=flags)
+ return novo,encontrados
+
+def preparar_contrato_com_marcadores(texto):
+ t=(texto or '').replace('\r\n','\n').replace('\r','\n'); detectados=[]
+ regras=[
+  (r'((?:LOCAT[ÁA]RIO|LOCATARIO|MOTORISTA)\s*:\s*)([^\n,;]+)(?=\s*[,;\n])','motorista_nome'),
+  (r'((?:CPF(?:/MF)?(?:\s*(?:n[ºo°]|:))?)\s*)([0-9.\-/]{11,20})(\b)','motorista_cpf'),
+  (r'((?:RG(?:\s*(?:n[ºo°]|:))?)\s*)([0-9.\-Xx]{5,20})(\b)','motorista_rg'),
+  (r'((?:CNH(?:\s*(?:n[ºo°]|:))?)\s*)([0-9.\-]{8,20})(\b)','motorista_cnh'),
+  (r'((?:residente\s+e\s+domiciliad[oa]\s+(?:em|à|a)\s+))([^\n.;]{8,220})([.;])','motorista_endereco'),
+  (r'((?:PROPRIET[ÁA]RIO(?:\s+DO\s+VE[ÍI]CULO)?\s*:\s*))([^\n,;]+)(?=\s*[,;\n])','proprietario_nome'),
+  (r'((?:PROPRIET[ÁA]RIO[^\n]{0,180}?(?:CPF/CNPJ|CNPJ|CPF)(?:\s*(?:n[ºo°]|:))?\s*))([0-9.\-/]{11,20})(\b)','proprietario_documento'),
+  (r'((?:MODELO|VE[ÍI]CULO)\s*:\s*)([^\n|;,]{2,100})(?=\s*(?:[|;,\n]|$))','veiculo_modelo'),
+  (r'((?:COR)\s*:\s*)([^\n|;,]{2,40})(?=\s*(?:[|;,\n]|$))','veiculo_cor'),
+  (r'((?:PLACA)\s*:\s*)([A-Z]{3}[0-9][A-Z0-9][0-9]{2})(\b)','veiculo_placa'),
+  (r'((?:RENAVAM)\s*:\s*)([0-9.\-]{7,20})(\b)','veiculo_renavam'),
+  (r'((?:QUILOMETRAGEM\s+INICIAL|KM\s+INICIAL)\s*:\s*)([0-9.]{1,12})(\s*km\b)?','km_inicial'),
+  (r'((?:VALOR\s+(?:SEMANAL|DA\s+LOCA[CÇ][AÃ]O|DO\s+ALUGUEL)|ALUGUEL)\s*(?::|DE)?\s*R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao'),
+  (r'((?:CAU[CÇ][AÃ]O)[^\nR$]{0,50}R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','caucao'),
+  (r'((?:FRANQUIA)[^\nR$]{0,70}R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','franquia'),
+  (r'((?:LIMITE(?:\s+SEMANAL)?(?:\s+DE)?\s+KM|QUILOMETRAGEM\s+SEMANAL)[^0-9\n]{0,40})([0-9.]{1,10})(\s*km\b)','limite_km'),
+  (r'((?:KM\s+EXCEDENTE|QUIL[ÔO]METRO\s+EXCEDENTE)[^\nR$]{0,60}R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_km_excedente'),
+ ]
+ for pattern,marker in regras:
+  t,n=_sub_contexto(t,pattern,marker)
+  if n: detectados.append({'marker':marker,'quantidade':n})
+ for pattern,marker in [(r'((?:GESTORA\s+DA\s+LOCA[CÇ][AÃ]O|GESTORA|LOCADORA)\s*:\s*)([^\n,;]+)(?=\s*[,;\n])','gestora_nome'),(r'((?:PARCEIRA\s+OPERACIONAL[^:\n]*:\s*))([^\n,;]+)(?=\s*[,;\n])','parceira_nome')]:
+  t,n=_sub_contexto(t,pattern,marker)
+  if n: detectados.append({'marker':marker,'quantidade':n})
+ return t,detectados
+
+def salvar_original_modelo(data,nome_original):
+ nome=secure_filename(nome_original or 'contrato')
+ chave=f'{tid()}/modelos_contrato/originais/{uuid.uuid4().hex}_{nome}'
+ storage.upload(BytesIO(data),chave,'application/octet-stream')
+ return chave,hashlib.sha256(data).hexdigest()
+
 @app.route('/modelos-contrato')
 @login_required
 def modelos_contrato():
@@ -1773,7 +1910,7 @@ def instalar_locadrivers():
 def novo_modelo_contrato():
  if request.method=='POST':
   return salvar_modelo_contrato(None)
- return render_template('modelo_contrato_form.html',modelo=None)
+ return render_template('modelo_contrato_form.html',modelo=None,conteudo_preparado='',marcadores=CONTRACT_MARKERS,detectados=[])
 
 @app.route('/modelos-contrato/<int:id>/editar',methods=['GET','POST'])
 @login_required
@@ -1781,39 +1918,36 @@ def editar_modelo_contrato(id):
  modelo=ContractTemplate.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
   return salvar_modelo_contrato(modelo)
- return render_template('modelo_contrato_form.html',modelo=modelo)
+ return render_template('modelo_contrato_form.html',modelo=modelo,conteudo_preparado=modelo.conteudo or '',marcadores=CONTRACT_MARKERS,detectados=[])
 
 def salvar_modelo_contrato(modelo):
+ acao=(request.form.get('acao') or 'salvar').strip()
  conteudo=request.form.get('conteudo','').strip()
  arquivo=request.files.get('arquivo')
- nome_original=None
+ nome_original=(request.form.get('_nome_original') or '').strip() or None
+ arquivo_original=(request.form.get('_arquivo_original') or '').strip() or None
+ hash_original=(request.form.get('_hash_original') or '').strip() or None
+ detectados=[]
  if arquivo and arquivo.filename:
-  nome_original=secure_filename(arquivo.filename)
-  if nome_original.lower().endswith('.txt'):
-   conteudo=arquivo.read().decode('utf-8',errors='replace')
-  elif nome_original.lower().endswith('.docx'):
-   try:
-    doc=DocxDocument(BytesIO(arquivo.read()))
-    blocos=[]
-    for par in doc.paragraphs:
-     if par.text.strip(): blocos.append(par.text)
-    for tabela in doc.tables:
-     for linha in tabela.rows:
-      celulas=[c.text.strip() for c in linha.cells]
-      if any(celulas): blocos.append(' | '.join(celulas))
-    conteudo='\n'.join(blocos).strip()
-    if not conteudo: flash('O DOCX não contém texto legível. Verifique se o contrato é composto apenas por imagens.','warning')
-   except Exception as exc:
-    app.logger.exception('Falha ao extrair DOCX do modelo de contrato')
-    flash(f'Não foi possível ler o DOCX: {exc}','warning')
-  elif nome_original.lower().endswith('.pdf'):
-   try: conteudo=extract_text(arquivo,document_type='contract')
-   except Exception: flash('Não foi possível extrair o PDF. Cole o texto no campo conteúdo.','warning')
+  nome_original=secure_filename(arquivo.filename); data=arquivo.read()
+  try:
+   extraido=extrair_texto_contrato_bytes(data,nome_original)
+   if not extraido: raise ValueError('O arquivo não contém texto legível.')
+   arquivo_original,hash_original=salvar_original_modelo(data,nome_original)
+   conteudo,detectados=preparar_contrato_com_marcadores(extraido)
+  except Exception as exc:
+   app.logger.exception('Falha ao preparar modelo de contrato')
+   flash(f'Não foi possível preparar o contrato: {exc}','warning')
+   return render_template('modelo_contrato_form.html',modelo=modelo,conteudo_preparado=conteudo,marcadores=CONTRACT_MARKERS,detectados=[])
+ if acao=='preparar':
+  if not conteudo: flash('Selecione um DOCX ou PDF preenchido para preparar.','warning')
+  else: flash(f'Contrato analisado. {sum(x["quantidade"] for x in detectados)} campo(s) convertido(s) em marcadores. Revise antes de salvar.','success')
+  return render_template('modelo_contrato_form.html',modelo=modelo,conteudo_preparado=conteudo,marcadores=CONTRACT_MARKERS,detectados=detectados,nome_original=nome_original,arquivo_original=arquivo_original,hash_original=hash_original)
  if not conteudo:
-  flash('Informe o conteúdo do contrato.','danger')
-  return render_template('modelo_contrato_form.html',modelo=modelo)
+  flash('Informe o conteúdo do contrato ou use “Analisar e preparar contrato”.','danger')
+  return render_template('modelo_contrato_form.html',modelo=modelo,conteudo_preparado=conteudo,marcadores=CONTRACT_MARKERS,detectados=detectados,nome_original=nome_original,arquivo_original=arquivo_original,hash_original=hash_original)
  versao=(modelo.versao or 1)+1 if modelo else 1
- novo=ContractTemplate(tenant_id=tid(),nome=request.form['nome'].strip(),descricao=request.form.get('descricao'),versao=versao,padrao=bool(request.form.get('padrao')),tipo_veiculo=request.form.get('tipo_veiculo','Todos'),possui_limite_km=bool(request.form.get('possui_limite_km')),conteudo=conteudo,nome_original=nome_original or (modelo.nome_original if modelo else None),gestora_nome=request.form.get('gestora_nome'),gestora_fantasia=request.form.get('gestora_fantasia'),gestora_cnpj=request.form.get('gestora_cnpj'),gestora_endereco=request.form.get('gestora_endereco'),parceira_nome=request.form.get('parceira_nome'),parceira_cnpj=request.form.get('parceira_cnpj'),parceira_endereco=request.form.get('parceira_endereco'),ativo=True)
+ novo=ContractTemplate(tenant_id=tid(),nome=request.form['nome'].strip(),descricao=request.form.get('descricao'),versao=versao,padrao=bool(request.form.get('padrao')),tipo_veiculo=request.form.get('tipo_veiculo','Todos'),possui_limite_km=bool(request.form.get('possui_limite_km')),conteudo=conteudo,nome_original=nome_original or (modelo.nome_original if modelo else None),arquivo_original=arquivo_original or (modelo.arquivo_original if modelo else None),hash_original=hash_original or (modelo.hash_original if modelo else None),preparado_em=agora_sao_paulo_naive() if arquivo_original else (modelo.preparado_em if modelo else None),gestora_nome=request.form.get('gestora_nome'),gestora_fantasia=request.form.get('gestora_fantasia'),gestora_cnpj=request.form.get('gestora_cnpj'),gestora_endereco=request.form.get('gestora_endereco'),parceira_nome=request.form.get('parceira_nome'),parceira_cnpj=request.form.get('parceira_cnpj'),parceira_endereco=request.form.get('parceira_endereco'),ativo=True)
  if novo.padrao: ContractTemplate.query.filter_by(tenant_id=tid(),padrao=True).update({'padrao':False},synchronize_session=False)
  db.session.add(novo); db.session.commit(); flash('Nova versão do modelo salva.','success')
  return redirect(url_for('modelos_contrato'))
@@ -2344,7 +2478,7 @@ def cobranca_vence_hoje(contract):
  dia=_normalizar_dia_semana(contract.dia_vencimento)
  return dia is not None and dia==datetime.now(SAO_PAULO).weekday()
 
-def mensagem_cobranca_semanal(contract, info):
+def mensagem_cobranca_semanal(contract, info, comprovante_url=None):
  motorista=contract.driver.nome if contract.driver else 'Motorista'
  veiculo=contract.vehicle.placa if contract.vehicle else 'veículo contratado'
  linhas=[
@@ -2361,15 +2495,20 @@ def mensagem_cobranca_semanal(contract, info):
    f'Excesso: {info["km_excedente"]} km (R$ {moeda_br(info["valor_excesso"])}).',
    f'Total desta cobrança: R$ {moeda_br(info["total"])}.',
   ]
+ if comprovante_url:
+  linhas += ['', 'Após o pagamento, envie o comprovante pelo link:', comprovante_url]
  linhas += ['', 'Obrigado.']
  return '\n'.join(linhas)
 
-def _cobranca_template_params(contract,info):
+def _cobranca_template_params(contract,info,comprovante_url=None,include_link=False):
  d=contract.driver; v=contract.vehicle
  vencimento='hoje' if cobranca_vence_hoje(contract) else str(contract.dia_vencimento or 'semanal')
  if info.get('usa_excesso'):
-  return [d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),moeda_br(info['valor_excesso']),moeda_br(info['total']),vencimento]
- return [d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),vencimento]
+  params=[d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),moeda_br(info['valor_excesso']),moeda_br(info['total']),vencimento]
+ else:
+  params=[d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),vencimento]
+ if include_link and comprovante_url: params.append(comprovante_url)
+ return params
 
 def _automation_cfg(tenant_id):
  integration=Integration.query.filter_by(tenant_id=tenant_id,tipo='whatsapp').first()
@@ -2401,9 +2540,12 @@ def _audit_info(audit):
 
 def _enviar_cobranca_audit(contract,audit,cfg):
  info=_audit_info(audit)
- body=audit.body
- template_name=audit.template_name
- params=_cobranca_template_params(contract,info)
+ comprovante_url=url_comprovante_cobranca(audit)
+ body=audit.body or mensagem_cobranca_semanal(contract,info,comprovante_url)
+ receipt_template=(cfg.get('payment_receipt_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_receipt_template_name')) or ''
+ receipt_template=receipt_template.strip()
+ template_name=receipt_template or audit.template_name
+ params=_cobranca_template_params(contract,info,comprovante_url,include_link=bool(receipt_template))
  fila,redirect_url,err=criar_mensagem_whatsapp(tenant_id=contract.tenant_id,driver=contract.driver,body=body,message_type='lembrete_pagamento_semanal',related_entity='Cobranca',related_entity_id=audit.id,template_name=template_name,template_parameters=params)
  now=agora_sao_paulo_naive()
  if fila:
@@ -2412,13 +2554,15 @@ def _enviar_cobranca_audit(contract,audit,cfg):
  return fila,redirect_url,err
 
 def gerar_e_enviar_cobranca(contract,automatico=False):
- info=calcular_cobranca_semanal(contract); body=mensagem_cobranca_semanal(contract,info)
+ info=calcular_cobranca_semanal(contract)
  integration,cfg=_automation_cfg(contract.tenant_id)
  provider=(cfg.get('provider') or 'web').lower()
  template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
  hoje=datetime.now(SAO_PAULO).date()
- audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body=body,template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
+ audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
  db.session.add(audit); db.session.flush()
+ comprovante_url=url_comprovante_cobranca(audit)
+ audit.body=mensagem_cobranca_semanal(contract,info,comprovante_url)
  fila,redirect_url,err=_enviar_cobranca_audit(contract,audit,cfg)
  return fila,audit,redirect_url,err
 
@@ -2505,7 +2649,7 @@ def marcar_cobranca_paga(id):
 @login_required
 def reabrir_cobranca(id):
  audit=BillingAudit.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- audit.payment_status='PENDENTE'; audit.paid_at=None; audit.paid_by_id=None; audit.payment_method=None; audit.payment_notes=None; audit.closed_at=None
+ audit.payment_status='COMPROVANTE_RECEBIDO' if audit.receipt_key else 'PENDENTE'; audit.paid_at=None; audit.paid_by_id=None; audit.payment_method=None; audit.payment_notes=None; audit.closed_at=None
  db.session.commit(); flash('Cobrança reaberta. Ela volta a participar dos lembretes automáticos.','warning')
  return redirect(url_for('cobrancas'))
 
