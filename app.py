@@ -2624,7 +2624,19 @@ def _cobranca_template_params(contract,info,comprovante_url=None,include_link=Fa
  d=contract.driver; v=contract.vehicle
  vencimento='hoje' if cobranca_vence_hoje(contract) else str(contract.dia_vencimento or 'semanal')
  if info.get('usa_excesso'):
-  params=[d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),moeda_br(info['valor_excesso']),moeda_br(info['total']),vencimento]
+  # Template cobranca_semanal_com_excesso (pt_BR):
+  # 1 motorista, 2 placa, 3 valor semanal, 4 km período, 5 limite,
+  # 6 km excedente, 7 valor excesso, 8 total.
+  params=[
+   d.nome if d else 'Motorista',
+   v.placa if v else '-',
+   moeda_br(info['valor_base']),
+   str(info.get('km_periodo') or 0),
+   str(info.get('limite_km') or 0),
+   str(info.get('km_excedente') or 0),
+   moeda_br(info['valor_excesso']),
+   moeda_br(info['total']),
+  ]
  else:
   params=[d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),vencimento]
  if include_link and comprovante_url: params.append(comprovante_url)
