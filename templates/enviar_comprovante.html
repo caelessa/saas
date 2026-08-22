@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block heading %}Enviar comprovante de pagamento{% endblock %}
+{% block subheading %}Envie o comprovante desta cobrança para conferência da locadora.{% endblock %}
+{% block content %}
+<section class="card" style="max-width:760px;margin:auto">
+  {% if concluido %}
+    <h2>Comprovante recebido</h2>
+    <p>O arquivo foi armazenado e ficará disponível para conferência da locadora. O pagamento só será considerado baixado após a confirmação do administrador.</p>
+  {% else %}
+    <h2>Dados da cobrança</h2>
+    <p><strong>Motorista:</strong> {{audit.driver_name or (contrato.driver.nome if contrato and contrato.driver else '-')}}</p>
+    <p><strong>Veículo:</strong> {{audit.vehicle_label or '-'}} — {{audit.plate or '-'}}</p>
+    <p><strong>Data da cobrança:</strong> {{audit.billing_date.strftime('%d/%m/%Y') if audit.billing_date else '-'}}</p>
+    <p><strong>Valor:</strong> R$ {{audit.total_amount|brl}}</p>
+    {% if audit.payment_status=='PAGO' %}
+      <p><strong>Status:</strong> Pagamento já confirmado.</p>
+    {% else %}
+      <form method="post" enctype="multipart/form-data" class="form-grid">
+        <label class="wide">Comprovante
+          <input type="file" name="comprovante" accept=".pdf,.jpg,.jpeg,.png,.webp" required>
+          <small>PDF, JPG, PNG ou WEBP, até 15 MB.</small>
+        </label>
+        <div class="wide"><button>Enviar comprovante</button></div>
+      </form>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

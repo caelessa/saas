@@ -1,61 +1,57 @@
 {% extends 'base.html' %}
-{% block heading %}Cobranças semanais{% endblock %}
-{% block subheading %}Cobranças calculadas pelo contrato e enviadas conforme o provedor configurado em Integrações.{% endblock %}
+{% block heading %}Cobranças{% endblock %}
+{% block subheading %}Acompanhe cobranças semanais, comprovantes enviados e baixas de pagamento.{% endblock %}
 {% block content %}
 <section class="card">
-  <div class="section-heading">
-    <div><h2>Vencimentos de hoje</h2><p class="muted">O dia de cobrança é lido diretamente do contrato vigente.</p></div>
-    <span class="badge">{{ hoje|length }} hoje</span>
-  </div>
-  {% if hoje %}
-  <div class="payment-list">
-    {% for row in hoje %}
-    {% set c=row.contract %}{% set info=row.info %}
-    <article class="payment-card due-today">
-      <div class="payment-main">
-        <div><span class="alert-status danger">Vence hoje</span><h3>{{ c.driver.nome if c.driver else 'Motorista' }}</h3><p>{{ c.vehicle.placa if c.vehicle else '-' }} · {{ c.vehicle.marca_modelo if c.vehicle else '-' }}</p></div>
-        <div class="payment-total"><small>Total</small><strong>R$ {{ info.total|brl }}</strong></div>
-      </div>
-      <div class="payment-breakdown">
-        <span>Semanal: <b>R$ {{ info.valor_base|brl }}</b></span>
-        {% if info.usa_excesso %}<span>Excesso: <b>{{ info.km_excedente }} km / R$ {{ info.valor_excesso|brl }}</b></span>{% else %}<span class="muted">Sem excesso calculado{% if not info.tem_historico_km %} — ainda sem histórico recente suficiente de KM{% endif %}</span>{% endif %}
-      </div>
-      <form method="post" action="{{url_for('cobranca_whatsapp',id=c.id)}}"><button class="btn whatsapp" type="submit">Enviar lembrete pelo WhatsApp</button></form>
-    </article>
-    {% endfor %}
-  </div>
-  {% else %}<p class="empty-state">Nenhum contrato semanal vence hoje.</p>{% endif %}
+  <h2>Cobranças dos contratos ativos</h2>
+  <table>
+    <tr><th>Motorista</th><th>Veículo</th><th>Vencimento</th><th>Valor</th><th>Ações</th></tr>
+    {% for x in items %}
+    <tr>
+      <td>{{x.contract.driver.nome if x.contract.driver else '-'}}</td>
+      <td>{{x.contract.vehicle.placa if x.contract.vehicle else '-'}}</td>
+      <td>{{x.contract.dia_vencimento or '-'}}{% if x.vence_hoje %} <strong>(hoje)</strong>{% endif %}</td>
+      <td>R$ {{x.info.total|brl}}</td>
+      <td>
+        <form method="post" action="{{url_for('cobranca_whatsapp',id=x.contract.id)}}" style="display:inline"><button class="small">Enviar lembrete</button></form>
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="5">Nenhum contrato ativo para cobrança.</td></tr>{% endfor %}
+  </table>
 </section>
 
-<section class="card" style="margin-top:18px">
- <div class="section-heading"><div><h2>Todos os contratos semanais vigentes</h2><p class="muted">Você também pode preparar um lembrete manualmente antes do dia do vencimento.</p></div></div>
- <div class="table-wrap"><table>
-  <thead><tr><th>Motorista</th><th>Veículo</th><th>Vencimento</th><th>Valor semanal</th><th>Excesso KM</th><th>Total</th><th></th></tr></thead>
-  <tbody>{% for row in items %}{% set c=row.contract %}{% set info=row.info %}
-   <tr>
-    <td>{{c.driver.nome if c.driver else '-'}}</td><td>{{c.vehicle.placa if c.vehicle else '-'}}</td>
-    <td>{% if row.vence_hoje %}<span class="alert-status danger">Hoje</span>{% else %}{{c.dia_vencimento or '-'}}{% endif %}</td>
-    <td>R$ {{info.valor_base|brl}}</td>
-    <td>{% if info.usa_excesso %}{{info.km_excedente}} km · R$ {{info.valor_excesso|brl}}{% else %}-{% endif %}</td>
-    <td><b>R$ {{info.total|brl}}</b></td>
-    <td><form method="post" action="{{url_for('cobranca_whatsapp',id=c.id)}}"><button class="btn-secondary" type="submit">WhatsApp</button></form></td>
-   </tr>
-  {% else %}<tr><td colspan="7">Nenhum contrato semanal vigente.</td></tr>{% endfor %}</tbody>
- </table></div>
-</section>
-<section class="card info-card" style="margin-top:18px"><b>Como o excesso é calculado?</b><p>Quando existem ao menos duas leituras recentes de quilometragem, o sistema compara as duas últimas. Se a diferença ultrapassar o limite semanal do contrato, multiplica os quilômetros excedentes pelo valor de KM excedente. Sem histórico recente suficiente, o lembrete mostra somente o valor semanal.</p><p><b>Provedor:</b> o Frota Fácil respeita a configuração do tenant. Na Business Platform o envio é automático; no WhatsApp Web a conversa é aberta para confirmação manual.</p></section>
-
-<section class="card" style="margin-top:18px">
- <div class="section-heading"><div><h2>Histórico / Auditoria de cobranças</h2><p class="muted">O cálculo fica congelado no momento da criação. Dar baixa interrompe imediatamente os lembretes daquela cobrança.</p></div></div>
- <div class="table-wrap"><table>
-  <thead><tr><th>Data</th><th>Motorista</th><th>Veículo</th><th>Semanal</th><th>KM período</th><th>Excesso</th><th>Total</th><th>Lembretes</th><th>Provedor</th><th>Entrega</th><th>Pagamento</th><th>Ação</th></tr></thead>
-  <tbody>{% for a in auditoria %}<tr>
-   <td>{{a.created_at|sp_datetime if a.created_at else '-'}}</td><td>{{a.driver_name or '-'}}</td><td>{{a.vehicle_label or '-'}} · {{a.plate or '-'}}</td>
-   <td>R$ {{a.base_amount|brl}}</td><td>{{a.km_period if a.km_period is not none else '-'}}</td><td>{{a.km_excess or 0}} km · R$ {{a.excess_amount|brl}}</td><td><b>R$ {{a.total_amount|brl}}</b></td>
-   <td>{{a.reminder_count or 0}}{% if a.last_reminder_at %}<br><small>último {{a.last_reminder_at|sp_datetime}}</small>{% endif %}</td><td>{{a.provider or '-'}}</td><td>{{a.message.status if a.message else (a.status or '-')}}</td>
-   <td>{% if a.payment_status=='PAGO' %}<span class="badge">Pago</span>{% if a.paid_at %}<br><small>{{a.paid_at|sp_datetime}}</small>{% endif %}{% else %}<span class="alert-status danger">Pendente</span>{% endif %}</td>
-   <td>{% if a.payment_status=='PAGO' %}<form method="post" action="{{url_for('reabrir_cobranca',id=a.id)}}"><button class="btn-secondary small" type="submit">Reabrir</button></form>{% else %}<form method="post" action="{{url_for('marcar_cobranca_paga',id=a.id)}}" class="inline"><select name="payment_method"><option value="">Forma...</option><option>PIX</option><option>Dinheiro</option><option>Transferência</option><option>Cartão</option><option>Outro</option></select><button class="btn small" type="submit">✓ Dar baixa</button></form>{% endif %}</td>
-  </tr>{% else %}<tr><td colspan="12">Nenhuma cobrança arquivada ainda.</td></tr>{% endfor %}</tbody>
- </table></div>
+<section class="card">
+  <h2>Histórico e conferência</h2>
+  <table>
+    <tr><th>Data</th><th>Motorista / veículo</th><th>Total</th><th>Status</th><th>Comprovante</th><th>Baixa</th></tr>
+    {% for a in auditoria %}
+    <tr>
+      <td>{{a.billing_date.strftime('%d/%m/%Y') if a.billing_date else '-'}}</td>
+      <td>{{a.driver_name or '-'}}<br><small>{{a.vehicle_label or ''}} {{a.plate or ''}}</small></td>
+      <td>R$ {{a.total_amount|brl}}</td>
+      <td>
+        {% if a.payment_status=='PAGO' %}<strong>Pago</strong>
+        {% elif a.receipt_key %}<strong>Comprovante recebido</strong>
+        {% else %}Pendente{% endif %}
+        {% if a.receipt_uploaded_at %}<br><small>Enviado em {{a.receipt_uploaded_at|sp_datetime}}</small>{% endif %}
+      </td>
+      <td>
+        {% if a.receipt_key %}<a class="button small secondary" target="_blank" href="{{url_for('visualizar_comprovante_pagamento',id=a.id)}}">Visualizar</a>
+        {% else %}<span>-</span>{% endif %}
+      </td>
+      <td>
+        {% if a.payment_status!='PAGO' %}
+        <form method="post" action="{{url_for('marcar_cobranca_paga',id=a.id)}}" class="inline">
+          <select name="payment_method"><option value="Pix">Pix</option><option value="Transferência">Transferência</option><option value="Dinheiro">Dinheiro</option><option value="Outro">Outro</option></select>
+          <input name="payment_notes" placeholder="Observação">
+          <button class="small">Confirmar pagamento</button>
+        </form>
+        {% else %}
+        <form method="post" action="{{url_for('reabrir_cobranca',id=a.id)}}"><button class="small secondary">Reabrir</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="6">Nenhuma cobrança registrada.</td></tr>{% endfor %}
+  </table>
 </section>
 {% endblock %}

@@ -1,39 +1,70 @@
 {% extends 'base.html' %}
-{% block heading %}{{'Nova versão do modelo' if modelo else 'Novo modelo de contrato'}}{% endblock %}
-{% block subheading %}Use marcadores entre chaves, por exemplo: {{'{{motorista_nome}}'}} e {{'{{veiculo_placa}}'}}.{% endblock %}
+{% block heading %}{{ 'Editar modelo de contrato' if modelo else 'Novo modelo de contrato' }}{% endblock %}
+{% block subheading %}Envie um contrato preenchido em DOCX ou PDF. O Frota Fácil identifica campos variáveis, insere marcadores e deixa o conteúdo pronto para sua revisão antes de salvar.{% endblock %}
 {% block content %}
 <section class="card">
-<form method="post" enctype="multipart/form-data" class="form-grid">
-<label>Nome<input name="nome" value="{{modelo.nome if modelo else ''}}" required></label>
-<label>Descrição<input name="descricao" value="{{modelo.descricao if modelo else ''}}"></label>
-<label>Tipo de veículo<select name="tipo_veiculo"><option>Todos</option><option>Combustão</option><option>Elétrico</option><option>Híbrido</option></select></label>
-<label>Upload do modelo (DOCX, TXT ou PDF)<input type="file" name="arquivo" accept=".docx,.txt,.pdf"><small class="hint">Ao enviar um DOCX/TXT/PDF com texto legível, o conteúdo é extraído automaticamente; não é necessário preencher o campo abaixo.</small></label>
-<label class="check"><input type="checkbox" name="possui_limite_km" {% if not modelo or modelo.possui_limite_km %}checked{% endif %}> Possui limite de quilometragem</label>
-<label class="check"><input type="checkbox" name="padrao" {% if modelo and modelo.padrao %}checked{% endif %}> Definir como padrão</label>
+  <h2>1. Dados do modelo</h2>
+  <form method="post" enctype="multipart/form-data" class="form-grid">
+    <label>Nome
+      <input name="nome" value="{{ request.form.get('nome', modelo.nome if modelo else '') }}" required>
+    </label>
+    <label>Descrição
+      <input name="descricao" value="{{ request.form.get('descricao', modelo.descricao if modelo else '') }}">
+    </label>
+    <label>Tipo de veículo
+      {% set tipo_atual=request.form.get('tipo_veiculo', modelo.tipo_veiculo if modelo else 'Todos') %}
+      <select name="tipo_veiculo">
+        {% for op in ['Todos','Combustão','Elétrico','Híbrido'] %}<option {% if tipo_atual==op %}selected{% endif %}>{{op}}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="wide">Arquivo do contrato preenchido
+      <input type="file" name="arquivo" accept=".docx,.pdf,.txt">
+      <small>DOCX ou PDF é o ideal. Um contrato já preenchido produz uma identificação mais precisa.</small>
+    </label>
+    <label><input type="checkbox" name="padrao" {% if request.form.get('padrao') or (modelo and modelo.padrao) %}checked{% endif %}> Definir como modelo padrão</label>
+    <label><input type="checkbox" name="possui_limite_km" {% if request.form.get('possui_limite_km') or (modelo and modelo.possui_limite_km) %}checked{% endif %}> Possui limite de KM</label>
+    <input type="hidden" name="_nome_original" value="{{ nome_original or (modelo.nome_original if modelo else '') }}">
+    <input type="hidden" name="_arquivo_original" value="{{ arquivo_original or (modelo.arquivo_original if modelo else '') }}">
+    <input type="hidden" name="_hash_original" value="{{ hash_original or (modelo.hash_original if modelo else '') }}">
+    <div class="wide">
+      <button type="submit" name="acao" value="preparar">Analisar e preparar contrato</button>
+    </div>
 
-<h3>Gestora fixa do modelo</h3>
-<label>Razão social<input name="gestora_nome" value="{{modelo.gestora_nome if modelo else ''}}"></label>
-<label>Nome fantasia<input name="gestora_fantasia" value="{{modelo.gestora_fantasia if modelo else ''}}"></label>
-<label>CNPJ<input name="gestora_cnpj" value="{{modelo.gestora_cnpj if modelo else ''}}"></label>
-<label>Endereço<input name="gestora_endereco" value="{{modelo.gestora_endereco if modelo else ''}}"></label>
+    {% if detectados %}
+    <div class="wide card">
+      <h3>Campos identificados automaticamente</h3>
+      <p>Revise o texto abaixo antes de salvar. O preparador nunca deve substituir sua conferência do contrato.</p>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        {% for item in detectados %}<span class="badge">{{ '{{' }}{{item.marker}}{{ '}}' }} × {{item.quantidade}}</span>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
 
-<h3>Parceira operacional fixa</h3>
-<label>Razão social<input name="parceira_nome" value="{{modelo.parceira_nome if modelo else ''}}"></label>
-<label>CNPJ<input name="parceira_cnpj" value="{{modelo.parceira_cnpj if modelo else ''}}"></label>
-<label>Endereço<input name="parceira_endereco" value="{{modelo.parceira_endereco if modelo else ''}}"></label>
+    <label class="wide">2. Conteúdo preparado
+      <textarea name="conteudo" rows="28" required>{{ conteudo_preparado if conteudo_preparado is defined else (modelo.conteudo if modelo else '') }}</textarea>
+      <small>Você pode corrigir o texto e inserir ou remover marcadores manualmente.</small>
+    </label>
 
-<label style="grid-column:1/-1">Conteúdo do contrato
-<textarea name="conteudo" rows="34" placeholder="Opcional quando um arquivo DOCX, TXT ou PDF for enviado">{{modelo.conteudo if modelo else ''}}</textarea></label>
-<button>{{'Criar nova versão' if modelo else 'Salvar modelo'}}</button>
-</form>
-</section>
-<section class="card">
-<h3>Marcadores disponíveis</h3>
-<code>{{'{{gestora_nome}} {{gestora_fantasia}} {{gestora_cnpj}} {{gestora_endereco}}'}}</code><br>
-<code>{{'{{parceira_nome}} {{parceira_cnpj}} {{parceira_endereco}}'}}</code><br>
-<code>{{'{{motorista_nome}} {{motorista_cpf}} {{motorista_rg}} {{motorista_cnh}} {{motorista_endereco}}'}}</code><br>
-<code>{{'{{veiculo_modelo}} {{veiculo_cor}} {{veiculo_ano_fabricacao}} {{veiculo_ano_modelo}} {{veiculo_placa}} {{veiculo_renavam}} {{km_inicial}}'}}</code><br>
-<code>{{'{{valor_locacao_extenso}} {{caucao_extenso}} {{franquia_extenso}} {{limite_km}} {{valor_km_excedente_extenso}}'}}</code><br>
-<code>{{'{{data_inicio_formatada}} {{hora_inicio}} {{data_fim_formatada}} {{prazo_dias}}'}}</code>
+    <div class="wide card">
+      <h3>Marcadores disponíveis</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.35rem 1rem">
+        {% for marker,label in marcadores %}<div><code>{{ '{{' }}{{marker}}{{ '}}' }}</code> — {{label}}</div>{% endfor %}
+      </div>
+    </div>
+
+    <h2 class="wide">3. Dados fixos da operação</h2>
+    <label>Gestora / razão social<input name="gestora_nome" value="{{ request.form.get('gestora_nome', modelo.gestora_nome if modelo else '') }}"></label>
+    <label>Nome fantasia<input name="gestora_fantasia" value="{{ request.form.get('gestora_fantasia', modelo.gestora_fantasia if modelo else '') }}"></label>
+    <label>CNPJ da gestora<input name="gestora_cnpj" value="{{ request.form.get('gestora_cnpj', modelo.gestora_cnpj if modelo else '') }}"></label>
+    <label class="wide">Endereço da gestora<input name="gestora_endereco" value="{{ request.form.get('gestora_endereco', modelo.gestora_endereco if modelo else '') }}"></label>
+    <label>Parceira operacional<input name="parceira_nome" value="{{ request.form.get('parceira_nome', modelo.parceira_nome if modelo else '') }}"></label>
+    <label>CNPJ da parceira<input name="parceira_cnpj" value="{{ request.form.get('parceira_cnpj', modelo.parceira_cnpj if modelo else '') }}"></label>
+    <label class="wide">Endereço da parceira<input name="parceira_endereco" value="{{ request.form.get('parceira_endereco', modelo.parceira_endereco if modelo else '') }}"></label>
+
+    <div class="wide">
+      <button type="submit" name="acao" value="salvar">Salvar modelo</button>
+      <a class="button secondary" href="{{url_for('modelos_contrato')}}">Cancelar</a>
+    </div>
+  </form>
 </section>
 {% endblock %}
