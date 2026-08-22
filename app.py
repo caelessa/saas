@@ -1818,7 +1818,7 @@ def contrato_publico_alias(codigo):
 
 CONTRACT_MARKERS=[
  ('motorista_nome','Nome do locatário/motorista'),('motorista_cpf','CPF do motorista'),('motorista_rg','RG do motorista'),
- ('motorista_cnh','CNH do motorista'),('motorista_endereco','Endereço do motorista'),('proprietario_nome','Nome do proprietário'),
+ ('motorista_cnh','CNH do motorista'),('motorista_endereco','Endereço do motorista'),('nacionalidade','Nacionalidade do motorista'),('estado_civil','Estado civil do motorista'),('profissao','Profissão do motorista'),('proprietario_nome','Nome do proprietário'),
  ('proprietario_documento','CPF/CNPJ do proprietário'),('veiculo_modelo','Modelo do veículo'),('veiculo_cor','Cor do veículo'),
  ('veiculo_ano_fabricacao','Ano de fabricação'),('veiculo_ano_modelo','Ano modelo'),('veiculo_placa','Placa'),('veiculo_renavam','Renavam'),
  ('km_inicial','KM inicial'),('periodicidade','Periodicidade'),('periodicidade_minuscula','Periodicidade em minúsculas'),
@@ -1853,6 +1853,10 @@ def _sub_contexto(texto,pattern,marker,flags=re.I):
  marcador='{{'+marker+'}}'; encontrados=0
  def repl(m):
   nonlocal encontrados
+  alvo=m.group(2) if m.lastindex and m.lastindex>=2 else ''
+  # Não conta nem substitui novamente um campo que já virou marcador.
+  if '{{' in alvo and '}}' in alvo:
+   return m.group(0)
   encontrados+=1
   prefix=m.group(1) if m.lastindex and m.lastindex>=1 else ''
   suffix=m.group(3) if m.lastindex and m.lastindex>=3 else ''
@@ -1861,81 +1865,146 @@ def _sub_contexto(texto,pattern,marker,flags=re.I):
  return novo,encontrados
 
 def preparar_contrato_com_marcadores(texto):
- # Limpa entidades HTML e alguns artefatos comuns de extração de PDF antes da análise.
+ """Prepara contratos preenchidos por blocos semânticos e depois aplica fallbacks globais.
+
+ A ordem importa: primeiro PARTES, depois VEÍCULO, FINANCEIRO e por último regras globais.
+ Isso reduz falsos positivos como CPF do locatário confundido com documento do proprietário.
+ """
  t=html.unescape(texto or '').replace('\r\n','\n').replace('\r','\n').replace('\xa0',' ')
- t=t.replace(' Ɵ','ti').replace('Ɵ','ti').replace('ﬁ','fi').replace('ﬂ','fl')
+ # Artefatos frequentes de extração de PDF/Word.
+ for a,b in [(' Ɵ','ti'),('Ɵ','ti'),('ﬁ','fi'),('ﬂ','fl'),('–','–')]:
+  t=t.replace(a,b)
  t=re.sub(r'[ \t]+\n','\n',t)
+ t=re.sub(r'\n{3,}','\n\n',t)
  detectados=[]
+
+ def registrar(marker,n):
+  if n: detectados.append({'marker':marker,'quantidade':n})
 
  def aplicar(pattern,marker,flags=re.I):
   nonlocal t
   t,n=_sub_contexto(t,pattern,marker,flags=flags)
-  if n: detectados.append({'marker':marker,'quantidade':n})
-  return n
+  registrar(marker,n); return n
 
- # Partes e documentos: regras específicas vêm antes das regras genéricas para evitar trocar o CNPJ da gestora pelo CPF do motorista.
- aplicar(r'((?:GESTORA\s+DA\s+LOCA[CÇ][AÃ]O|GESTORA|LOCADORA)\s*:\s*)([^\n,;]+)(?=\s*[,;\n])','gestora_nome')
- aplicar(r'((?:GESTORA|LOCADORA)[^\n]{0,220}?(?:CNPJ)(?:/MF)?(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{14,22})(\b)','gestora_cnpj')
- aplicar(r'((?:GESTORA|LOCADORA)[^\n]{0,300}?(?:com\s+endere[cç]o(?:\s+comercial)?\s+(?:em|localizado\s+em)?\s*))([^\n.;]{8,260})([.;])','gestora_endereco')
+ def aplicar_bloco(inicio,fim,regras,flags=re.I):
+  """Aplica regras somente dentro de um bloco identificado por cabeçalho/contexto."""
+  nonlocal t
+  m=re.search(inicio,t,flags)
+  if not m: return 0
+  pos_ini=m.start()
+  resto=t[m.end():]
+  mf=re.search(fim,resto,flags) if fim else None
+  pos_fim=m.end()+(mf.start() if mf else min(len(resto),1600))
+  bloco=t[pos_ini:pos_fim]
+  total=0
+  for pattern,marker in regras:
+   bloco,n=_sub_contexto(bloco,pattern,marker,flags=flags)
+   registrar(marker,n); total+=n
+  t=t[:pos_ini]+bloco+t[pos_fim:]
+  return total
 
- aplicar(r'((?:PROPRIET[ÁA]RIO(?:\s+DO\s+VE[ÍI]CULO)?\s*:\s*))([^\n,;]+)(?=\s*[,;\n])','proprietario_nome')
- aplicar(r'((?:PROPRIET[ÁA]RIO[^\n]{0,220}?(?:CPF/CNPJ|CNPJ|CPF)(?:/MF)?(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*))([0-9.\-/]{11,22})(\b)','proprietario_documento')
+ # 1) BLOCO GESTORA/LOCADORA
+ aplicar_bloco(
+  r'(?:GESTORA\s+DA\s+LOCA[CÇ][AÃ]O|GESTORA|LOCADORA)\s*:',
+  r'\n\s*(?:PROPRIET[ÁA]RIO|PARCEIRA\s+OPERACIONAL|LOCAT[ÁA]RIO|LOCATARIO)\b',
+  [
+   (r'((?:GESTORA\s+DA\s+LOCA[CÇ][AÃ]O|GESTORA|LOCADORA)\s*:\s*)([^\n,;]+)(?=\s*[,;\n])','gestora_nome'),
+   (r'((?:nome\s+fantasia)\s+)([^,;\n]{2,120})(?=\s*[,;])','gestora_fantasia'),
+   (r'((?:CNPJ)(?:/MF)?(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{14,22})(\b)','gestora_cnpj'),
+   (r'((?:com\s+endere[cç]o(?:\s+comercial)?\s+(?:em|localizado\s+em)?\s*))([\s\S]{8,320}?)(,?\s*doravante|\.(?=\s*(?:\n|$)))','gestora_endereco'),
+  ])
 
- aplicar(r'((?:PARCEIRA\s+OPERACIONAL[^:\n]*:\s*))([^\n,;]+)(?=\s*[,;\n])','parceira_nome')
- aplicar(r'((?:PARCEIRA\s+OPERACIONAL[^\n]{0,220}?(?:CNPJ)(?:/MF)?(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*))([0-9.\-/]{14,22})(\b)','parceira_cnpj')
- aplicar(r'((?:PARCEIRA\s+OPERACIONAL)[^\n]{0,320}?(?:com\s+endere[cç]o(?:\s+comercial)?\s+(?:em|localizado\s+em)?\s*))([^\n.;]{8,260})([.;])','parceira_endereco')
+ # 2) BLOCO PROPRIETÁRIO
+ aplicar_bloco(
+  r'PROPRIET[ÁA]RIO(?:\s+DO\s+VE[ÍI]CULO)?\s*:',
+  r'\n\s*(?:PARCEIRA\s+OPERACIONAL|LOCAT[ÁA]RIO|LOCATARIO|DO\s+OBJETO|CL[ÁA]USULA)\b',
+  [
+   (r'((?:PROPRIET[ÁA]RIO(?:\s+DO\s+VE[ÍI]CULO)?\s*:\s*))([^\n,;]+)(?=\s*[,;\n])','proprietario_nome'),
+   (r'((?:CPF/CNPJ|CNPJ|CPF)(?:/MF)?(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{11,22})(\b)','proprietario_documento'),
+  ])
 
- aplicar(r'((?:LOCAT[ÁA]RIO|LOCATARIO|MOTORISTA)\s*:\s*)([^\n,;]+)(?=\s*[,;\n])','motorista_nome')
- aplicar(r'((?:LOCAT[ÁA]RIO|LOCATARIO)[^\n]{0,300}?(?:RG)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-Xx]{5,20})(\b)','motorista_rg')
- aplicar(r'((?:LOCAT[ÁA]RIO|LOCATARIO)[^\n]{0,400}?(?:CPF(?:/MF)?)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{11,20})(\b)','motorista_cpf')
- aplicar(r'((?:LOCAT[ÁA]RIO|LOCATARIO)[^\n]{0,450}?(?:CNH)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-]{8,20})(\b)','motorista_cnh')
- # Fallbacks para documentos quando cada dado aparece em linha separada.
- aplicar(r'((?:RG)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-Xx]{5,20})(\b)','motorista_rg')
- aplicar(r'((?:CPF(?:/MF)?)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{11,20})(\b)','motorista_cpf')
- aplicar(r'((?:CNH)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-]{8,20})(\b)','motorista_cnh')
- aplicar(r'((?:residente\s+e\s+domiciliad[oa]\s+(?:em|à|a)\s+))([^\n.;]{8,260})([.;])','motorista_endereco')
+ # 3) BLOCO PARCEIRA OPERACIONAL
+ aplicar_bloco(
+  r'PARCEIRA\s+OPERACIONAL[^:\n]*:',
+  r'\n\s*(?:LOCAT[ÁA]RIO|LOCATARIO|DO\s+OBJETO|CL[ÁA]USULA)\b',
+  [
+   (r'((?:PARCEIRA\s+OPERACIONAL[^:\n]*:\s*))([^\n,;]+)(?=\s*[,;\n])','parceira_nome'),
+   (r'((?:CNPJ)(?:/MF)?(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{14,22})(\b)','parceira_cnpj'),
+   (r'((?:com\s+endere[cç]o(?:\s+comercial)?\s+(?:em|localizado\s+em)?\s*))([\s\S]{8,320}?)(,?\s*doravante|\.(?=\s*(?:\n|$)))','parceira_endereco'),
+  ])
 
- # Veículo. Aceita tanto campos separados quanto descrição corrida "TOYOTA... COR: ... ANO: ... PLACA: ...".
- aplicar(r'((?:MARCA\s*/?\s*MODELO|MODELO|VE[ÍI]CULO)\s*:\s*)([^\n|;,]{2,120})(?=\s*(?:[|;,\n]|$))','veiculo_modelo')
- # Descrições corridas comuns em contratos: "... automóvel descrito a seguir: TOYOTA/COROLLA ... COR: ...".
- # Aceita quebra de linha entre o modelo e o campo COR, algo frequente na extração de PDF.
- aplicar(r'((?:objeto\s+(?:do|deste)\s+contrato[^:]{0,180}:\s*))([\s\S]{2,160}?)(?=\s+COR\s*:)', 'veiculo_modelo')
- aplicar(r'((?:(?:ve[íi]culo|autom[oó]vel)\s+(?:descrito|identificado)\s+(?:a\s+seguir|abaixo)\s*:\s*))([\s\S]{2,160}?)(?=\s+COR\s*:)', 'veiculo_modelo')
- aplicar(r'((?:COR)\s*:\s*)([^\n|;,]{2,40})(?=\s*(?:ANO|[|;,\n]|$))','veiculo_cor')
- aplicar(r'((?:ANO(?:\s+DE\s+FABRICA[CÇ][AÃ]O)?|FABRICA[CÇ][AÃ]O)\s*:\s*)([0-9]{4})(\b)','veiculo_ano_fabricacao')
- aplicar(r'((?:ANO\s+MODELO|MODELO\s+ANO)\s*:\s*)([0-9]{4})(\b)','veiculo_ano_modelo')
- aplicar(r'((?:PLACA)\s*:\s*)([A-Z]{3}[0-9][A-Z0-9][0-9]{2})(\b)','veiculo_placa')
- aplicar(r'((?:RENAVAM)\s*:\s*)([0-9.\-]{7,20})(\b)','veiculo_renavam')
- aplicar(r'((?:QUILOMETRAGEM\s+INICIAL|KM\s+INICIAL)\s*:\s*)([0-9.]{1,12})(\s*km\b)?','km_inicial')
+ # 4) BLOCO LOCATÁRIO/MOTORISTA. Captura inclusive endereço quebrado em linhas.
+ aplicar_bloco(
+  r'(?:LOCAT[ÁA]RIO|LOCATARIO|MOTORISTA)\s*:',
+  r'\n\s*(?:DO\s+OBJETO|OBJETO\s+DO\s+CONTRATO|CL[ÁA]USULA\s+1|VE[ÍI]CULO\s*:|DADOS\s+DO\s+VE[ÍI]CULO)\b',
+  [
+   (r'((?:LOCAT[ÁA]RIO|LOCATARIO|MOTORISTA)\s*:\s*)([^\n,;]+)(?=\s*[,;\n])','motorista_nome'),
+   (r'((?:LOCAT[ÁA]RIO|LOCATARIO|MOTORISTA)\s*:\s*\{\{motorista_nome\}\}\s*,?\s*)(brasileir[oa]|estrangeir[oa]|portugu[eê]s|portuguesa)(?=\s*[,;])','nacionalidade'),
+   (r'((?:\{\{nacionalidade\}\}|brasileir[oa]|estrangeir[oa]|portugu[eê]s|portuguesa)\s*,?\s*)(solteir[oa]|casad[oa]|divorciad[oa]|vi[uú]v[oa]|separad[oa])(?=\s*[,;])','estado_civil'),
+   (r'((?:\{\{estado_civil\}\}|solteir[oa]|casad[oa]|divorciad[oa]|vi[uú]v[oa]|separad[oa])\s*,?\s*)([^,;\n]{3,80})(?=\s*,\s*(?:RG|portador))','profissao'),
+   (r'((?:RG)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-Xx]{5,20})(\b)','motorista_rg'),
+   (r'((?:CPF(?:/MF)?)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-/]{11,20})(\b)','motorista_cpf'),
+   (r'((?:CNH)(?:\s*(?:sob\s+o\s+)?(?:n[ºo°]|número|numero|:))?\s*)([0-9.\-]{8,20})(\b)','motorista_cnh'),
+   (r'((?:residente\s+e\s+domiciliad[oa]\s+(?:em|à|a)\s+))([\s\S]{8,520}?)(,?\s*doravante|\.(?=\s*(?:\n|$)))','motorista_endereco'),
+   (r'((?:ENDERE[CÇ]O(?:\s+DO\s+(?:LOCAT[ÁA]RIO|MOTORISTA))?\s*:\s*))([\s\S]{8,420}?)(?=\n(?:CPF|RG|CNH|VE[ÍI]CULO|PLACA|CL[ÁA]USULA)\b|\.(?:\s*\n|$))','motorista_endereco'),
+  ])
 
- # Condições financeiras. A regra adicional abaixo cobre frases como "pagará ... a quantia semanal de R$ 890,00".
- aplicar(r'((?:VALOR\s+(?:SEMANAL|MENSAL|DA\s+LOCA[CÇ][AÃ]O|DO\s+ALUGUEL)|ALUGUEL)\s*(?::|DE)?\s*R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao')
- aplicar(r'((?:quantia|valor)\s+(?:semanal|mensal|di[áa]ri[oa])\s+(?:de|no\s+valor\s+de)\s+R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao')
- aplicar(r'((?:pagará|pagara)[^\n]{0,110}?R?\$\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao')
- aplicar(r'((?:CAU[CÇ][AÃ]O)[^\n]{0,120}?R?\$\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','caucao')
- aplicar(r'((?:FRANQUIA)[^\n]{0,130}?R?\$\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','franquia')
- aplicar(r'((?:LIMITE(?:\s+SEMANAL)?(?:\s+DE)?\s+KM|QUILOMETRAGEM\s+SEMANAL)[^0-9\n]{0,40})([0-9.]{1,10})(\s*km\b)','limite_km')
- aplicar(r'((?:KM\s+EXCEDENTE|QUIL[ÔO]METRO\s+EXCEDENTE)[^\nR$]{0,60}R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_km_excedente')
+ # 5) BLOCO VEÍCULO / OBJETO
+ aplicar_bloco(
+  r'(?:DO\s+OBJETO|OBJETO\s+DO\s+CONTRATO|VE[ÍI]CULO\s*:|autom[oó]vel\s+descrito\s+a\s+seguir)',
+  r'\n\s*(?:DO\s+VALOR|DA\s+COBRAN[CÇ]A|CL[ÁA]USULA\s+2|CL[ÁA]USULA\s+3|PAGAMENTO)\b',
+  [
+   (r'((?:MARCA\s*/?\s*MODELO|MODELO|VE[ÍI]CULO)\s*:\s*)([^\n|;,]{2,140})(?=\s*(?:[|;,\n]|$))','veiculo_modelo'),
+   (r'((?:objeto\s+(?:do|deste)\s+contrato[^:]{0,220}:\s*))([\s\S]{2,180}?)(?=\s+COR\s*:)','veiculo_modelo'),
+   (r'((?:autom[oó]vel\s+descrito\s+a\s+seguir\s*:\s*))([\s\S]{2,180}?)(?=\s+COR\s*:)','veiculo_modelo'),
+   (r'((?:COR)\s*:\s*)([^\n|;,]{2,40}?)(?=\s*(?:ANO|[|;,\n]|$))','veiculo_cor'),
+   (r'((?:ANO(?:\s+DE\s+FABRICA[CÇ][AÃ]O)?|FABRICA[CÇ][AÃ]O)\s*:\s*)([0-9]{4})(\b)','veiculo_ano_fabricacao'),
+   (r'((?:ANO\s+MODELO|MODELO\s+ANO)\s*:\s*)([0-9]{4})(\b)','veiculo_ano_modelo'),
+   (r'((?:PLACA)\s*:\s*)([A-Z]{3}[0-9][A-Z0-9][0-9]{2})(\b)','veiculo_placa'),
+   (r'((?:RENAVAM)\s*:\s*)([0-9.\-]{7,20})(\b)','veiculo_renavam'),
+   (r'((?:QUILOMETRAGEM\s+INICIAL|KM\s+INICIAL)\s*:\s*)([0-9.]{1,12})(\s*km\b)?','km_inicial'),
+  ])
 
- # Valor por extenso logo após um valor já convertido.
+ # 6) BLOCO FINANCEIRO
+ aplicar_bloco(
+  r'(?:DO\s+VALOR\s+DO\s+ALUGUEL|DA\s+COBRAN[CÇ]A|COBRAN[CÇ]A\s+E\s+GEST[AÃ]O\s+FINANCEIRA|pagará|pagara|CAU[CÇ][AÃ]O)',
+  r'\n\s*(?:CL[ÁA]USULA\s+[4-9]|DAS\s+OBRIGA[CÇ][ÕO]ES|DA\s+MANUTEN[CÇ][AÃ]O|DO\s+SEGURO)\b',
+  [
+   (r'((?:VALOR\s+(?:SEMANAL|MENSAL|DA\s+LOCA[CÇ][AÃ]O|DO\s+ALUGUEL)|ALUGUEL)\s*(?::|DE)?\s*R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao'),
+   (r'((?:quantia|valor)\s+(?:semanal|mensal|di[áa]ri[oa])\s+(?:de|no\s+valor\s+de)\s+R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao'),
+   (r'((?:pagará|pagara)[^\n]{0,130}?R?\$\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_locacao'),
+   (r'((?:CAU[CÇ][AÃ]O)[^\n]{0,150}?R?\$\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','caucao'),
+   (r'((?:FRANQUIA)[^\n]{0,150}?R?\$\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','franquia'),
+   (r'((?:LIMITE(?:\s+SEMANAL)?(?:\s+DE)?\s+KM|QUILOMETRAGEM\s+SEMANAL)[^0-9\n]{0,50})([0-9.]{1,10})(\s*km\b)','limite_km'),
+   (r'((?:KM\s+EXCEDENTE|QUIL[ÔO]METRO\s+EXCEDENTE)[^\nR$]{0,80}R?\$?\s*)([0-9.]+(?:,[0-9]{2})?)(\b)','valor_km_excedente'),
+   (r'((?:quantia|valor)\s+)(semanal|mensal|di[áa]ri[oa])(\s+(?:de|no\s+valor))','periodicidade_minuscula'),
+   (r'((?:periodicidade\s*:\s*))(semanal|mensal|di[áa]ri[oa])(\b)','periodicidade'),
+   (r'((?:sempre\s+(?:às|as|à|a)\s+|vencimento\s+(?:toda|todo|às|as|à|a)?\s*))((?:segundas?|ter[cç]as?|quartas?|quintas?|sextas?|s[áa]bados?|domingos?)(?:-feiras?)?)(\b)','dia_vencimento'),
+  ])
+
+ # Valores por extenso logo após marcadores monetários.
  for base_marker,extenso_marker in [('valor_locacao','valor_locacao_extenso'),('caucao','caucao_extenso'),('franquia','franquia_extenso')]:
-  marcador_base='{{'+base_marker+'}}'; marcador_extenso='{{'+extenso_marker+'}}'
-  pattern=r'('+re.escape(marcador_base)+r'\s*\()([\s\S]{3,180}?)(\))'
-  def repl_ext(m, marcador_extenso=marcador_extenso):
-   return m.group(1)+marcador_extenso+m.group(3)
-  t,n=re.subn(pattern,repl_ext,t,flags=re.I)
-  if n: detectados.append({'marker':extenso_marker,'quantidade':n})
+  mb='{{'+base_marker+'}}'; me='{{'+extenso_marker+'}}'
+  pattern=r'('+re.escape(mb)+r'\s*\()([\s\S]{3,180}?)(\))'
+  t,n=re.subn(pattern,lambda m:m.group(1)+me+m.group(3),t,flags=re.I)
+  registrar(extenso_marker,n)
 
- # Periodicidade e dia de vencimento quando descritos no texto.
- aplicar(r'((?:quantia|valor)\s+)(semanal|mensal|di[áa]ri[oa])(\s+(?:de|no\s+valor))','periodicidade_minuscula')
- aplicar(r'((?:periodicidade\s*:\s*))(semanal|mensal|di[áa]ri[oa])(\b)','periodicidade')
- aplicar(r'((?:sempre\s+(?:às|as|à|a)\s+|vencimento\s+(?:toda|todo|às|as|à|a)?\s*))((?:segundas?|ter[cç]as?|quartas?|quintas?|sextas?|s[áa]bados?|domingos?)(?:-feiras?)?)(\b)','dia_vencimento')
+ # 7) FALLBACKS GLOBAIS apenas para campos bem rotulados que ainda possam estar fora dos blocos.
+ for pattern,marker in [
+  (r'((?:PLACA)\s*:\s*)([A-Z]{3}[0-9][A-Z0-9][0-9]{2})(\b)','veiculo_placa'),
+  (r'((?:RENAVAM)\s*:\s*)([0-9.\-]{7,20})(\b)','veiculo_renavam'),
+  (r'((?:CNH)\s*(?:n[ºo°]|número|numero|:)?\s*)([0-9.\-]{8,20})(\b)','motorista_cnh'),
+ ]:
+  marcador='{{'+marker+'}}'
+  if marcador not in t: aplicar(pattern,marker)
 
- # Consolida contagens do mesmo marcador para a tela de conferência.
- consolidados={}
+ # Consolida e mantém a ordem em que cada marcador foi encontrado.
+ consolidados={}; ordem=[]
  for item in detectados:
-  consolidados[item['marker']]=consolidados.get(item['marker'],0)+item['quantidade']
- return t,[{'marker':k,'quantidade':v} for k,v in consolidados.items()]
+  k=item['marker']
+  if k not in consolidados: ordem.append(k); consolidados[k]=0
+  consolidados[k]+=item['quantidade']
+ return t,[{'marker':k,'quantidade':consolidados[k]} for k in ordem]
 
 def salvar_original_modelo(data,nome_original):
  nome=secure_filename(nome_original or 'contrato')
