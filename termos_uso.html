@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Termos de Uso - Frota Fácil</title>
+<style>
+  body{font-family:Arial,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;line-height:1.6;color:#1f2937}
+  h1,h2{color:#111827}
+  .muted{color:#6b7280}
+  .box{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:18px;margin:18px 0}
+  a{color:#2563eb}
+</style>
+</head>
+<body>
+<h1>Termos de Uso — Frota Fácil</h1>
+<p class="muted">Última atualização: {{ atualizado_em }}</p>
+
+<p>Estes Termos regulam o acesso e a utilização da plataforma Frota Fácil.</p>
+
+<h2>1. Finalidade da plataforma</h2>
+<p>O Frota Fácil é uma plataforma de apoio à gestão de locadoras e frotas, incluindo cadastros, veículos, motoristas, contratos, documentos, manutenção, cobranças e comunicações.</p>
+
+<h2>2. Responsabilidade do usuário</h2>
+<p>O usuário é responsável pela exatidão dos dados inseridos, pela guarda de suas credenciais e pela utilização da plataforma em conformidade com a legislação e com os direitos de terceiros.</p>
+
+<h2>3. Integrações externas</h2>
+<p>Recursos que dependem de serviços de terceiros, como WhatsApp, assinatura eletrônica e armazenamento, podem estar sujeitos às regras, disponibilidade e limitações dos respectivos fornecedores.</p>
+
+<h2>4. Disponibilidade e manutenção</h2>
+<p>São adotadas medidas para manter o serviço disponível e seguro, mas interrupções podem ocorrer por manutenção, falhas de terceiros, eventos de infraestrutura ou situações fora do controle razoável da operação.</p>
+
+<h2>5. Uso indevido</h2>
+<p>É proibido utilizar a plataforma para atividades ilícitas, tentar acessar dados de outras organizações ou contornar mecanismos de segurança e isolamento entre contas.</p>
+
+<h2>6. Privacidade</h2>
+<p>O tratamento de dados pessoais é descrito na <a href="/politica-de-privacidade">Política de Privacidade</a>.</p>
+
+<div class="box">
+<strong>Responsável:</strong> {{ empresa.razao_social or empresa.nome_fantasia }}<br>
+{% if empresa.cnpj %}<strong>CNPJ:</strong> {{ empresa.cnpj }}<br>{% endif %}
+{% if empresa.email %}<strong>E-mail:</strong> {{ empresa.email }}<br>{% endif %}
+</div>
+</body></html>

@@ -1,0 +1,277 @@
+{% extends 'base.html' %}
+{% block heading %}Integrações{% endblock %}
+{% block subheading %}Conecte os serviços usados por cada locadora sem prender o Frota Fácil a um único fornecedor.{% endblock %}
+{% block content %}
+<div class="integration-grid">
+  <section class="card integration-card">
+    <h2>WhatsApp Business Platform</h2>
+    <p>Conecte a conta da locadora pela Meta. A configuração manual que já funciona continua disponível em <strong>Configuração avançada</strong>.</p>
+
+    {% if whatsapp_cfg.get('onboarding_mode')=='embedded_signup' and whatsapp_cfg.get('provider')=='business' %}
+      <div class="integration-status whatsapp-connected-box">
+        <span class="badge">Conectado pela Meta ✓</span>
+        <p><strong>WABA:</strong> {{ whatsapp_cfg.get('business_account_id') }}</p>
+        <p><strong>Phone Number ID:</strong> {{ whatsapp_cfg.get('phone_number_id') }}</p>
+      </div>
+      <form method="post" action="{{ url_for('desconectar_whatsapp_embedded_signup') }}" onsubmit="return confirm('Remover a conexão do Frota Fácil? Isso não exclui a conta nem o número na Meta.');">
+        <button class="btn-secondary" type="submit">Desconectar do Frota Fácil</button>
+      </form>
+    {% elif meta_embedded_ready %}
+      <button class="btn" type="button" id="meta-connect-button">Conectar meu WhatsApp</button>
+      <p class="muted" id="meta-connect-status">Você será direcionado ao fluxo seguro da Meta para escolher/criar a conta e o número.</p>
+    {% else %}
+      <div class="notice-warning">
+        <strong>Conexão simplificada preparada.</strong>
+        <p>Para ativar o botão neste ambiente, configure no Render: <code>META_APP_ID</code>, <code>META_APP_SECRET</code> e <code>META_WHATSAPP_CONFIG_ID</code>. A integração manual abaixo continua funcionando normalmente.</p>
+      </div>
+    {% endif %}
+
+    <details class="advanced-integration" {% if not meta_embedded_ready %}open{% endif %}>
+      <summary><strong>Configuração avançada / manual</strong></summary>
+      <form method="post" class="form-grid" style="margin-top:14px">
+        <input type="hidden" name="section" value="whatsapp">
+        <label>Modo de envio
+          <select name="provider">
+            <option value="web" {% if whatsapp_cfg.get('provider','web')=='web' %}selected{% endif %}>WhatsApp Web — confirmação manual</option>
+            <option value="business" {% if whatsapp_cfg.get('provider')=='business' %}selected{% endif %}>WhatsApp Business Platform — automático</option>
+          </select>
+        </label>
+        <label>Business Account ID<input name="business_account_id" value="{{ whatsapp_cfg.get('business_account_id','') }}"></label>
+        <label>Phone Number ID<input name="phone_number_id" value="{{ whatsapp_cfg.get('phone_number_id','') }}"></label>
+        <label>Access Token<input type="password" name="access_token" value="{{ whatsapp_cfg.get('access_token','') }}" autocomplete="new-password"></label>
+        <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"></label>
+        <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
+        <label>Template de contrato<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}"></label>
+        <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}"></label>
+        <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}"></label>
+        <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}"></label>
+        <label>Template alerta troca de óleo<input name="oil_change_template_name" value="{{ whatsapp_cfg.get('oil_change_template_name','') }}" placeholder="alerta_troca_oleo"></label>
+        <label>Template cobrança semanal<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="lembrete_pagamento_semanal"></label>
+        <label>Template cobrança com excesso KM<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="lembrete_pagamento_com_excesso"></label>
+        <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
+        <div class="wide maintenance-box">
+          <h3>Automação operacional semanal</h3>
+          <p class="muted">Por padrão: segunda-feira, das 07h às 20h, repetindo pendências a cada 1 hora. Cobranças param quando recebem baixa; KM para quando a foto/leitura é enviada.</p>
+          <label class="check"><input type="checkbox" name="automation_enabled" value="1" {% if whatsapp_cfg.get('automation_enabled') %}checked{% endif %}> Ativar automações</label>
+          <div class="maintenance-fields">
+            <label>Dia da semana<select name="automation_weekday"><option value="0" {% if whatsapp_cfg.get('automation_weekday',0)|int==0 %}selected{% endif %}>Segunda-feira</option><option value="1" {% if whatsapp_cfg.get('automation_weekday')|int==1 %}selected{% endif %}>Terça-feira</option><option value="2" {% if whatsapp_cfg.get('automation_weekday')|int==2 %}selected{% endif %}>Quarta-feira</option><option value="3" {% if whatsapp_cfg.get('automation_weekday')|int==3 %}selected{% endif %}>Quinta-feira</option><option value="4" {% if whatsapp_cfg.get('automation_weekday')|int==4 %}selected{% endif %}>Sexta-feira</option></select></label>
+            <label>Início (hora)<input type="number" min="0" max="23" name="automation_start_hour" value="{{ whatsapp_cfg.get('automation_start_hour',7) }}"></label>
+            <label>Fim (hora)<input type="number" min="0" max="23" name="automation_end_hour" value="{{ whatsapp_cfg.get('automation_end_hour',20) }}"></label>
+            <label>Repetir a cada (horas)<input type="number" min="1" max="12" name="reminder_interval_hours" value="{{ whatsapp_cfg.get('reminder_interval_hours',1) }}"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="automatic_billing_enabled" value="1" {% if whatsapp_cfg.get('automatic_billing_enabled') %}checked{% endif %}> Cobrança automática enquanto não houver baixa</label>
+          <label class="check"><input type="checkbox" name="automatic_km_enabled" value="1" {% if whatsapp_cfg.get('automatic_km_enabled') %}checked{% endif %}> Solicitação de KM/foto enquanto estiver pendente</label>
+          <label class="check"><input type="checkbox" name="automatic_alerts_enabled" value="1" {% if whatsapp_cfg.get('automatic_alerts_enabled') %}checked{% endif %}> Alertas operacionais automáticos</label>
+        </div>
+        <div class="form-actions"><button class="btn" type="submit">Salvar configuração manual</button></div>
+      </form>
+    </details>
+
+    {% if whatsapp_cfg.get('provider')=='business' %}
+    <form method="post" action="{{ url_for('testar_whatsapp_business') }}" class="inline-form" style="margin-top:14px">
+      <input name="telefone" placeholder="5511999999999" required>
+      <button class="btn-secondary" type="submit">Testar conexão</button>
+    </form>
+    <div style="margin-top:10px">
+      <a class="btn-secondary" href="{{ url_for('templates_meta_whatsapp') }}">🔎 Ver templates disponíveis na Meta</a>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card integration-card">
+    <h2>Assinatura eletrônica</h2>
+    <p>A assinatura local permanece apenas para homologação. A arquitetura já aceita Clicksign e DocuSign por locadora.</p>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="section" value="signature">
+      <label>Provedor
+        <select name="signature_provider">
+          <option value="local" {% if signature_cfg.get('provider','local')=='local' %}selected{% endif %}>Frota Fácil — homologação</option>
+          <option value="clicksign" {% if signature_cfg.get('provider')=='clicksign' %}selected{% endif %}>Clicksign</option>
+          <option value="docusign" {% if signature_cfg.get('provider')=='docusign' %}selected{% endif %}>DocuSign</option>
+        </select>
+      </label>
+      <h3>Clicksign</h3>
+      <label>API Token<input type="password" name="clicksign_api_token" value="{{ signature_cfg.get('api_token','') }}"></label>
+      <label>Workspace Key (legado/opcional)<input name="clicksign_workspace_key" value="{{ signature_cfg.get('workspace_key','') }}"><small>A API Clicksign v3 usa o Access Token; este campo é mantido apenas por compatibilidade.</small></label>
+      <label>Ambiente
+        <select name="clicksign_environment">
+          <option value="sandbox" {% if signature_cfg.get('environment','sandbox')=='sandbox' %}selected{% endif %}>Sandbox</option>
+          <option value="production" {% if signature_cfg.get('environment')=='production' %}selected{% endif %}>Produção</option>
+        </select>
+      </label>
+      <h3>DocuSign</h3>
+      <label>Account ID<input name="docusign_account_id" value="{{ signature_cfg.get('account_id','') }}"></label>
+      <label>Integration Key<input type="password" name="docusign_integration_key" value="{{ signature_cfg.get('integration_key','') }}"></label>
+      <label>Ambiente
+        <select name="docusign_environment">
+          <option value="demo" {% if signature_cfg.get('environment','demo')=='demo' %}selected{% endif %}>Demo</option>
+          <option value="production" {% if signature_cfg.get('environment')=='production' %}selected{% endif %}>Produção</option>
+        </select>
+      </label>
+      <div class="form-actions"><button class="btn" type="submit">Salvar assinatura</button></div>
+    </form>
+    <p><strong>Status:</strong> {{ signature_message }}</p>
+    {% if signature_cfg.get('provider')=='clicksign' %}
+    <form method="post" action="{{url_for('testar_clicksign')}}" style="margin-top:10px"><button class="btn-secondary" type="submit">Testar conexão Clicksign</button></form>
+    <p class="muted">No Sandbox, documentos são apenas para desenvolvimento e não têm valor jurídico.</p>
+    {% endif %}
+  </section>
+
+  <section class="card integration-card">
+    <h2>Próximos conectores</h2>
+    <p>Estrutura preparada para adicionar sem alterar os módulos existentes.</p>
+    <div class="integration-list">
+      <span class="badge">E-mail</span>
+      <span class="badge">SMS</span>
+      <span class="badge">SERPRO</span>
+      <span class="badge">Rastreadores</span>
+    </div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:20px">
+  <h2>Status de entrega do WhatsApp</h2>
+  <p class="muted">O Frota Fácil já está preparado para receber os retornos <strong>sent</strong>, <strong>delivered</strong>, <strong>read</strong> e <strong>failed</strong> da Meta.</p>
+  <div class="form-grid">
+    <label>URL de callback
+      <input type="text" readonly value="{{ webhook_url }}" onclick="this.select()">
+    </label>
+    <label>Verify Token
+      <input type="text" readonly value="{{ whatsapp_cfg.get('verify_token','') }}" onclick="this.select()">
+    </label>
+  </div>
+  {% if whatsapp_cfg.get('verify_token') %}
+    <p class="success-note"><strong>Webhook preparado.</strong> Cadastre a URL e o Verify Token acima no webhook do WhatsApp/Meta e assine o campo <code>messages</code>.</p>
+  {% else %}
+    <p class="warning-note"><strong>Falta o Verify Token.</strong> Preencha-o em Configuração avançada / manual, salve e depois use o mesmo valor na Meta.</p>
+  {% endif %}
+  <p class="muted">Depois de ativado na Meta, o histórico abaixo será atualizado automaticamente de “Aceita pela Meta” para <strong>Enviada</strong>, <strong>Entregue</strong>, <strong>Lida</strong> ou <strong>Falhou</strong> com o motivo retornado.</p>
+</section>
+
+<section class="card" style="margin-top:20px">
+  <div class="section-heading"><div><h2>Fila de automações</h2><p class="muted">Em produção, o endpoint protegido pode ser chamado por um Cron Job. O botão abaixo serve para testes.</p></div><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button class="btn-secondary" type="submit">Processar automações agora</button></form></div>
+</section>
+
+<section class="card" style="margin-top:20px">
+  <h2>Histórico recente de mensagens</h2>
+  {% if recentes %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Erro</th></tr></thead>
+    <tbody>
+      {% for item in recentes %}
+      <tr>
+        <td>{{ item.created_at|sp_datetime if item.created_at else '-' }}</td>
+        <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
+        <td>{{ item.message_type }}</td>
+        <td>{{ item.provider }}</td>
+        <td><span class="badge">{{ status_label(item.status) }}</span></td>
+        <td>{{ item.error_message or '-' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p>Nenhuma mensagem registrada ainda.</p>{% endif %}
+</section>
+
+{% if meta_embedded_ready %}
+<script>
+(function(){
+  let signupInfo = {};
+  const statusEl = document.getElementById('meta-connect-status');
+  window.fbAsyncInit = function() {
+    FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
+  };
+  let signupEvent = '';
+  let signupResolve = null;
+  let signupPromise = new Promise(function(resolve){ signupResolve = resolve; });
+
+  window.addEventListener('message', function(event) {
+    if (!event.origin || !event.origin.endsWith('facebook.com')) return;
+    let data = event.data;
+    try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
+
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP' &&
+        (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA')) {
+      signupEvent = data.event;
+      signupInfo = data.data || {};
+      if (signupResolve) signupResolve(signupInfo);
+    }
+  });
+
+  function waitSignupInfo(timeoutMs) {
+    if (signupInfo && (signupInfo.waba_id || signupInfo.phone_number_id || signupInfo.business_id)) {
+      return Promise.resolve(signupInfo);
+    }
+    return Promise.race([
+      signupPromise,
+      new Promise(function(resolve){
+        setTimeout(function(){ resolve(signupInfo || {}); }, timeoutMs);
+      })
+    ]);
+  }
+
+  const btn=document.getElementById('meta-connect-button');
+  if(btn) btn.addEventListener('click', function(){
+    signupInfo = {};
+    signupEvent = '';
+    signupPromise = new Promise(function(resolve){ signupResolve = resolve; });
+
+    let oauthRedirectUri = '';
+    const originalWindowOpen = window.open;
+
+    window.open = function(url, name, specs) {
+      try {
+        const parsed = new URL(url, window.location.href);
+        if (parsed.hostname.endsWith('facebook.com') && parsed.pathname.indexOf('/dialog/oauth') !== -1) {
+          oauthRedirectUri = parsed.searchParams.get('redirect_uri') || '';
+          console.log('META OAUTH REDIRECT URI:', oauthRedirectUri);
+        }
+      } catch(e) {
+        console.warn('Não foi possível inspecionar a URL OAuth da Meta.', e);
+      }
+      return originalWindowOpen.apply(window, arguments);
+    };
+
+    statusEl.textContent='Abrindo a Meta…';
+    FB.login(function(response){
+      // Restaura imediatamente o comportamento normal do navegador.
+      window.open = originalWindowOpen;
+      if (!response.authResponse || !response.authResponse.code) {
+        statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
+      }
+
+      statusEl.textContent='Recebendo dados da conta do WhatsApp…';
+      waitSignupInfo(5000).then(function(info){
+        statusEl.textContent='Concluindo conexão com segurança…';
+        return fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            code:response.authResponse.code,
+            redirect_uri:oauthRedirectUri||'',
+            waba_id:info.waba_id||'',
+            phone_number_id:info.phone_number_id||'',
+            business_id:info.business_id||'',
+            signup_event:signupEvent||''
+          })
+        });
+      }).then(function(r){
+        return r.json().then(function(j){ return {ok:r.ok,data:j}; });
+      }).then(function(x){
+        if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
+        statusEl.textContent='WhatsApp conectado. Atualizando…';
+        window.location.reload();
+      }).catch(function(err){
+        statusEl.textContent=err.message;
+      });
+    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
+    setTimeout(function(){
+      if (window.open !== originalWindowOpen) window.open = originalWindowOpen;
+    }, 15000);
+  });
+})();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
+{% endif %}
+
+{% endblock %}
