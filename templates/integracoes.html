@@ -233,6 +233,7 @@
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
             code:response.authResponse.code,
+            redirect_uri:window.location.origin + '/integracoes',
             waba_id:info.waba_id||'',
             phone_number_id:info.phone_number_id||'',
             business_id:info.business_id||'',
