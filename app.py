@@ -3031,61 +3031,125 @@ def concluir_whatsapp_embedded_signup():
  if not (META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID):
   return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
  data=request.get_json(silent=True) or {}
- access_token=str(data.get('access_token') or '').strip()
  code=str(data.get('code') or '').strip()
  waba_id=str(data.get('waba_id') or '').strip()
  phone_number_id=str(data.get('phone_number_id') or '').strip()
-
- # O Facebook JS SDK do Embedded Signup pode devolver o token diretamente em
- # authResponse.accessToken. Esse é o caminho preferencial e evita tratar IDs
- # internos do SDK como authorization codes.
- token=access_token
- if not token and code:
-  try:
-   resp=requests.get(
-    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
-    params={
-     'client_id':META_APP_ID,
-     'client_secret':META_APP_SECRET,
-     'code':code,
-    },
-    timeout=20,
-   )
-   payload=resp.json()
-  except Exception as exc:
-   app.logger.exception('Falha no Embedded Signup Meta')
-   return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
-  if not resp.ok or not payload.get('access_token'):
-   detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
-   return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
-  token=payload['access_token']
-
- if not token:
-  return {'ok':False,'error':'A Meta não retornou um token de acesso válido.'},400
+ business_id=str(data.get('business_id') or '').strip()
+ signup_event=str(data.get('signup_event') or '').strip()
+ if not code:
+  return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
+ try:
+  # No WhatsApp Embedded Signup / Facebook Login for Business, o authorization
+  # code retornado pelo FB.login() é trocado diretamente pelo business token.
+  # Não envie redirect_uri aqui: o SDK usa internamente o callback do próprio
+  # fluxo de login e um redirect_uri manual pode causar o erro 36008.
+  resp=requests.get(
+   f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
+   params={
+    'client_id':META_APP_ID,
+    'client_secret':META_APP_SECRET,
+    'code':code,
+   },
+   timeout=20,
+  )
+  payload=resp.json()
+ except Exception as exc:
+  app.logger.exception('Falha no Embedded Signup Meta')
+  return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
+ if not resp.ok or not payload.get('access_token'):
+  detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
+  return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
+ token=payload['access_token']
  # Se os IDs não vieram do evento SESSION_INFO, tenta descobrir WABA via token.
+ debug_data={}
  if not waba_id:
   try:
-   dbg=requests.get(f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',params={'input_token':token,'access_token':f'{META_APP_ID}|{META_APP_SECRET}'},timeout=20).json()
-   scopes=(dbg.get('data') or {}).get('granular_scopes') or []
+   dbg_resp=requests.get(
+    f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',
+    params={'input_token':token,'access_token':f'{META_APP_ID}|{META_APP_SECRET}'},
+    timeout=20,
+   )
+   debug_data=dbg_resp.json() if dbg_resp.content else {}
+   scopes=(debug_data.get('data') or {}).get('granular_scopes') or []
    for scope in scopes:
     if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
-     waba_id=str(scope['target_ids'][0]); break
+     targets=[str(x) for x in (scope.get('target_ids') or []) if x]
+     if len(targets)==1:
+      waba_id=targets[0]
+      break
   except Exception:
    app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
+
+ # Fallback adicional: se o evento informou o Business ID, consulta WABAs
+ # pertencentes/compartilhados com esse negócio. Só escolhe automaticamente
+ # quando houver um único WABA distinto, evitando associar o tenant à conta errada.
+ if not waba_id and business_id:
+  try:
+   headers={'Authorization':f'Bearer {token}'}
+   candidatos={}
+   for edge in ('owned_whatsapp_business_accounts','client_whatsapp_business_accounts'):
+    r=requests.get(
+     f'https://graph.facebook.com/{META_GRAPH_VERSION}/{business_id}/{edge}',
+     headers=headers,
+     params={'fields':'id,name'},
+     timeout=20,
+    )
+    payload_edge=r.json() if r.content else {}
+    for row in (payload_edge.get('data') or []):
+     rid=str(row.get('id') or '').strip()
+     if rid:
+      candidatos[rid]=row
+   if len(candidatos)==1:
+    waba_id=next(iter(candidatos))
+  except Exception:
+   app.logger.exception('Não foi possível descobrir WABA pelo Business ID')
+
  if waba_id and not phone_number_id:
   try:
-   nums=requests.get(f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',headers={'Authorization':f'Bearer {token}'},params={'fields':'id,display_phone_number,verified_name'},timeout=20).json()
-   if nums.get('data'):
-    phone_number_id=str(nums['data'][0].get('id') or '')
+   nums_resp=requests.get(
+    f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',
+    headers={'Authorization':f'Bearer {token}'},
+    params={'fields':'id,display_phone_number,verified_name'},
+    timeout=20,
+   )
+   nums=nums_resp.json() if nums_resp.content else {}
+   phone_rows=nums.get('data') or []
+   if len(phone_rows)==1:
+    phone_number_id=str(phone_rows[0].get('id') or '')
+   elif len(phone_rows)>1:
+    # Em uma WABA com vários números, não seleciona um arbitrariamente.
+    ids=[str(row.get('id') or '') for row in phone_rows if row.get('id')]
+    return {
+     'ok':False,
+     'error':'A conta WhatsApp possui mais de um número. Refazer o cadastro incorporado selecionando o número desejado.',
+     'waba_id':waba_id,
+     'phone_number_ids':ids,
+    },400
   except Exception:
    app.logger.exception('Não foi possível descobrir Phone Number ID')
+
  if not waba_id or not phone_number_id:
-  return {'ok':False,'error':'Autorização concluída, mas não foi possível identificar WABA e número. Use a configuração avançada enquanto revisamos a conta Meta.'},400
+  missing=[]
+  if not waba_id: missing.append('WABA ID')
+  if not phone_number_id: missing.append('Phone Number ID')
+  app.logger.warning(
+   'Embedded Signup autorizado, mas faltam IDs. tenant=%s event=%s business_id=%s waba_id=%s phone_number_id=%s',
+   tid(),signup_event,business_id,waba_id,phone_number_id,
+  )
+  return {
+   'ok':False,
+   'error':'Autorização concluída, mas faltou identificar: '+', '.join(missing)+'. Tente novamente; o Frota Fácil agora aguarda o evento de sessão da Meta antes de concluir.',
+   'signup_event':signup_event or None,
+   'business_id':business_id or None,
+   'waba_id':waba_id or None,
+  },400
  item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
  oldcfg=_integration_config(item)
  oldcfg.update({
   'provider':'business','onboarding_mode':'embedded_signup','business_account_id':waba_id,
   'phone_number_id':phone_number_id,'access_token':token,'graph_version':META_GRAPH_VERSION,
+  'meta_business_id':business_id or oldcfg.get('meta_business_id'),
+  'embedded_signup_event':signup_event or oldcfg.get('embedded_signup_event'),
   'embedded_connected_at':agora_sao_paulo_naive().isoformat(),
  })
  item.ativo=True; item.configuracao=json.dumps(oldcfg,ensure_ascii=False)
