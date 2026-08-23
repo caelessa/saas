@@ -181,38 +181,67 @@
   window.fbAsyncInit = function() {
     FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
   };
+  let signupEvent = '';
+  let signupInfoResolve = null;
+  let signupInfoPromise = new Promise(resolve => { signupInfoResolve = resolve; });
+
+  function captureSignupInfo(data) {
+    if (!data || data.type !== 'WA_EMBEDDED_SIGNUP') return;
+    if (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA') {
+      signupEvent = data.event;
+      signupInfo = data.data || {};
+      if (signupInfoResolve) signupInfoResolve(signupInfo);
+    }
+  }
+
   window.addEventListener('message', function(event) {
-    if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
+    if (!event.origin || !event.origin.endsWith('facebook.com')) return;
     let data = event.data;
     try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
-    if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.event === 'FINISH') {
-      signupInfo = data.data || {};
-    }
+    captureSignupInfo(data);
   });
+
+  async function waitForSignupInfo(timeoutMs) {
+    if (signupInfo && (signupInfo.waba_id || signupInfo.phone_number_id || signupInfo.business_id)) {
+      return signupInfo;
+    }
+    return Promise.race([
+      signupInfoPromise,
+      new Promise(resolve => setTimeout(() => resolve(signupInfo || {}), timeoutMs))
+    ]);
+  }
+
   const btn=document.getElementById('meta-connect-button');
   if(btn) btn.addEventListener('click', function(){
+    // Reinicia o estado a cada tentativa.
+    signupInfo = {};
+    signupEvent = '';
+    signupInfoPromise = new Promise(resolve => { signupInfoResolve = resolve; });
+
     statusEl.textContent='Abrindo a Meta…';
-    FB.login(function(response){
-      const auth = response && response.authResponse ? response.authResponse : {};
-      const accessToken = auth.accessToken || '';
-      const code = auth.code || '';
-      if (!accessToken && !code) {
+    FB.login(async function(response){
+      if (!response.authResponse || !response.authResponse.code) {
         statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
       }
+
+      statusEl.textContent='Recebendo dados da conta do WhatsApp…';
+      const info = await waitForSignupInfo(5000);
+
       statusEl.textContent='Concluindo conexão com segurança…';
       fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          access_token:accessToken,
-          code:code,
-          waba_id:signupInfo.waba_id||'',
-          phone_number_id:signupInfo.phone_number_id||''
+          code:response.authResponse.code,
+          waba_id:info.waba_id||'',
+          phone_number_id:info.phone_number_id||'',
+          business_id:info.business_id||'',
+          signup_event:signupEvent||''
         })
       }).then(r=>r.json().then(j=>({ok:r.ok,data:j}))).then(x=>{
         if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
         statusEl.textContent='WhatsApp conectado. Atualizando…'; window.location.reload();
       }).catch(err=>{statusEl.textContent=err.message;});
-    }, {config_id:'{{ meta_config_id|e }}', extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
+    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
   });
 })();
 </script>
