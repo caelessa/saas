@@ -182,41 +182,39 @@
     FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
   };
   let signupEvent = '';
-  let signupInfoResolve = null;
-  let signupInfoPromise = new Promise(resolve => { signupInfoResolve = resolve; });
-
-  function captureSignupInfo(data) {
-    if (!data || data.type !== 'WA_EMBEDDED_SIGNUP') return;
-    if (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA') {
-      signupEvent = data.event;
-      signupInfo = data.data || {};
-      if (signupInfoResolve) signupInfoResolve(signupInfo);
-    }
-  }
+  let signupResolve = null;
+  let signupPromise = new Promise(function(resolve){ signupResolve = resolve; });
 
   window.addEventListener('message', function(event) {
     if (!event.origin || !event.origin.endsWith('facebook.com')) return;
     let data = event.data;
     try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
-    captureSignupInfo(data);
+
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP' &&
+        (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA')) {
+      signupEvent = data.event;
+      signupInfo = data.data || {};
+      if (signupResolve) signupResolve(signupInfo);
+    }
   });
 
-  async function waitForSignupInfo(timeoutMs) {
+  function waitSignupInfo(timeoutMs) {
     if (signupInfo && (signupInfo.waba_id || signupInfo.phone_number_id || signupInfo.business_id)) {
-      return signupInfo;
+      return Promise.resolve(signupInfo);
     }
     return Promise.race([
-      signupInfoPromise,
-      new Promise(resolve => setTimeout(() => resolve(signupInfo || {}), timeoutMs))
+      signupPromise,
+      new Promise(function(resolve){
+        setTimeout(function(){ resolve(signupInfo || {}); }, timeoutMs);
+      })
     ]);
   }
 
   const btn=document.getElementById('meta-connect-button');
   if(btn) btn.addEventListener('click', function(){
-    // Reinicia o estado a cada tentativa.
     signupInfo = {};
     signupEvent = '';
-    signupInfoPromise = new Promise(resolve => { signupInfoResolve = resolve; });
+    signupPromise = new Promise(function(resolve){ signupResolve = resolve; });
 
     statusEl.textContent='Abrindo a Meta…';
     FB.login(function(response){
@@ -225,15 +223,13 @@
       }
 
       statusEl.textContent='Recebendo dados da conta do WhatsApp…';
-
-      waitForSignupInfo(5000).then(function(info){
+      waitSignupInfo(5000).then(function(info){
         statusEl.textContent='Concluindo conexão com segurança…';
         return fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
             code:response.authResponse.code,
-            redirect_uri:window.location.origin + '/integracoes',
             waba_id:info.waba_id||'',
             phone_number_id:info.phone_number_id||'',
             business_id:info.business_id||'',
