@@ -190,11 +190,13 @@
     let data = event.data;
     try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
 
-    if (data && data.type === 'WA_EMBEDDED_SIGNUP' &&
-        (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA')) {
-      signupEvent = data.event;
-      signupInfo = data.data || {};
-      if (signupResolve) signupResolve(signupInfo);
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
+      console.log('META WA EVENT:', data);
+      if (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA') {
+        signupEvent = data.event;
+        signupInfo = data.data || {};
+        if (signupResolve) signupResolve(signupInfo);
+      }
     }
   });
 
@@ -218,6 +220,8 @@
 
     statusEl.textContent='Abrindo a Meta…';
     FB.login(function(response){
+      console.log('META LOGIN RESPONSE:', response);
+      console.log('META AUTH RESPONSE:', response ? response.authResponse : null);
       if (!response.authResponse || !response.authResponse.code) {
         statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
       }
