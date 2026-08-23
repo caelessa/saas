@@ -17,8 +17,8 @@
         <button class="btn-secondary" type="submit">Desconectar do Frota Fácil</button>
       </form>
     {% elif meta_embedded_ready %}
-      <button class="btn" type="button" id="meta-connect-button">Conectar meu WhatsApp</button>
-      <p class="muted" id="meta-connect-status">Você será direcionado ao fluxo seguro da Meta para escolher/criar a conta e o número.</p>
+      <a class="btn" href="{{ url_for('iniciar_whatsapp_embedded_signup') }}">Conectar meu WhatsApp</a>
+      <p class="muted">Você será direcionado ao fluxo seguro da Meta e voltará automaticamente ao Frota Fácil após a autorização.</p>
     {% else %}
       <div class="notice-warning">
         <strong>Conexão simplificada preparada.</strong>
@@ -172,88 +172,5 @@
   </table></div>
   {% else %}<p>Nenhuma mensagem registrada ainda.</p>{% endif %}
 </section>
-
-{% if meta_embedded_ready %}
-<script>
-(function(){
-  let signupInfo = {};
-  const statusEl = document.getElementById('meta-connect-status');
-  window.fbAsyncInit = function() {
-    FB.init({appId: '{{ meta_app_id|e }}', autoLogAppEvents: true, xfbml: true, version: '{{ meta_graph_version|e }}'});
-  };
-  let signupEvent = '';
-  let signupResolve = null;
-  let signupPromise = new Promise(function(resolve){ signupResolve = resolve; });
-
-  window.addEventListener('message', function(event) {
-    if (!event.origin || !event.origin.endsWith('facebook.com')) return;
-    let data = event.data;
-    try { if (typeof data === 'string') data = JSON.parse(data); } catch(e) { return; }
-
-    if (data && data.type === 'WA_EMBEDDED_SIGNUP') {
-      console.log('META WA EVENT:', data);
-      if (data.event === 'FINISH' || data.event === 'FINISH_ONLY_WABA') {
-        signupEvent = data.event;
-        signupInfo = data.data || {};
-        if (signupResolve) signupResolve(signupInfo);
-      }
-    }
-  });
-
-  function waitSignupInfo(timeoutMs) {
-    if (signupInfo && (signupInfo.waba_id || signupInfo.phone_number_id || signupInfo.business_id)) {
-      return Promise.resolve(signupInfo);
-    }
-    return Promise.race([
-      signupPromise,
-      new Promise(function(resolve){
-        setTimeout(function(){ resolve(signupInfo || {}); }, timeoutMs);
-      })
-    ]);
-  }
-
-  const btn=document.getElementById('meta-connect-button');
-  if(btn) btn.addEventListener('click', function(){
-    signupInfo = {};
-    signupEvent = '';
-    signupPromise = new Promise(function(resolve){ signupResolve = resolve; });
-
-    statusEl.textContent='Abrindo a Meta…';
-    FB.login(function(response){
-      console.log('META LOGIN RESPONSE:', response);
-      console.log('META AUTH RESPONSE:', response ? response.authResponse : null);
-      if (!response.authResponse || !response.authResponse.code) {
-        statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
-      }
-
-      statusEl.textContent='Recebendo dados da conta do WhatsApp…';
-      waitSignupInfo(5000).then(function(info){
-        statusEl.textContent='Concluindo conexão com segurança…';
-        return fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({
-            code:response.authResponse.code,
-            waba_id:info.waba_id||'',
-            phone_number_id:info.phone_number_id||'',
-            business_id:info.business_id||'',
-            signup_event:signupEvent||''
-          })
-        });
-      }).then(function(r){
-        return r.json().then(function(j){ return {ok:r.ok,data:j}; });
-      }).then(function(x){
-        if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
-        statusEl.textContent='WhatsApp conectado. Atualizando…';
-        window.location.reload();
-      }).catch(function(err){
-        statusEl.textContent=err.message;
-      });
-    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
-  });
-})();
-</script>
-<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
-{% endif %}
 
 {% endblock %}
