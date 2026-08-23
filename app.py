@@ -760,6 +760,44 @@ def sobre_a_empresa():
     }
     return render_template('sobre_empresa.html', empresa=empresa)
 
+
+def _empresa_publica():
+    return {
+        'razao_social': (os.getenv('FROTA_FACIL_RAZAO_SOCIAL') or 'Gutos Car').strip(),
+        'nome_fantasia': (os.getenv('FROTA_FACIL_NOME_FANTASIA') or 'Frota Fácil').strip(),
+        'cnpj': (os.getenv('FROTA_FACIL_CNPJ') or '').strip(),
+        'endereco': (os.getenv('FROTA_FACIL_ENDERECO') or '').strip(),
+        'telefone': (os.getenv('FROTA_FACIL_TELEFONE') or '').strip(),
+        'email': (os.getenv('FROTA_FACIL_EMAIL') or '').strip(),
+    }
+
+
+@app.route('/politica-de-privacidade')
+def politica_de_privacidade():
+    return render_template(
+        'politica_privacidade.html',
+        empresa=_empresa_publica(),
+        atualizado_em=date.today().strftime('%d/%m/%Y'),
+    )
+
+
+@app.route('/termos-de-uso')
+def termos_de_uso():
+    return render_template(
+        'termos_uso.html',
+        empresa=_empresa_publica(),
+        atualizado_em=date.today().strftime('%d/%m/%Y'),
+    )
+
+
+@app.route('/exclusao-de-dados')
+def exclusao_de_dados():
+    return render_template(
+        'exclusao_dados.html',
+        empresa=_empresa_publica(),
+        atualizado_em=date.today().strftime('%d/%m/%Y'),
+    )
+
 @app.route('/criar-conta',methods=['GET','POST'])
 def criar_conta():
  if current_user.is_authenticated: return redirect(url_for('dashboard'))
