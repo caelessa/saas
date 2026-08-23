@@ -3031,33 +3031,37 @@ def concluir_whatsapp_embedded_signup():
  if not (META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID):
   return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
  data=request.get_json(silent=True) or {}
+ access_token=str(data.get('access_token') or '').strip()
  code=str(data.get('code') or '').strip()
  waba_id=str(data.get('waba_id') or '').strip()
  phone_number_id=str(data.get('phone_number_id') or '').strip()
- if not code:
-  return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
- try:
-  # No WhatsApp Embedded Signup / Facebook Login for Business, o authorization
-  # code retornado pelo FB.login() é trocado diretamente pelo business token.
-  # Não envie redirect_uri aqui: o SDK usa internamente o callback do próprio
-  # fluxo de login e um redirect_uri manual pode causar o erro 36008.
-  resp=requests.get(
-   f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
-   params={
-    'client_id':META_APP_ID,
-    'client_secret':META_APP_SECRET,
-    'code':code,
-   },
-   timeout=20,
-  )
-  payload=resp.json()
- except Exception as exc:
-  app.logger.exception('Falha no Embedded Signup Meta')
-  return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
- if not resp.ok or not payload.get('access_token'):
-  detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
-  return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
- token=payload['access_token']
+
+ # O Facebook JS SDK do Embedded Signup pode devolver o token diretamente em
+ # authResponse.accessToken. Esse é o caminho preferencial e evita tratar IDs
+ # internos do SDK como authorization codes.
+ token=access_token
+ if not token and code:
+  try:
+   resp=requests.get(
+    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
+    params={
+     'client_id':META_APP_ID,
+     'client_secret':META_APP_SECRET,
+     'code':code,
+    },
+    timeout=20,
+   )
+   payload=resp.json()
+  except Exception as exc:
+   app.logger.exception('Falha no Embedded Signup Meta')
+   return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
+  if not resp.ok or not payload.get('access_token'):
+   detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
+   return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
+  token=payload['access_token']
+
+ if not token:
+  return {'ok':False,'error':'A Meta não retornou um token de acesso válido.'},400
  # Se os IDs não vieram do evento SESSION_INFO, tenta descobrir WABA via token.
  if not waba_id:
   try:
