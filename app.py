@@ -762,41 +762,27 @@ def sobre_a_empresa():
 
 
 def _empresa_publica():
-    return {
-        'razao_social': (os.getenv('FROTA_FACIL_RAZAO_SOCIAL') or 'Gutos Car').strip(),
-        'nome_fantasia': (os.getenv('FROTA_FACIL_NOME_FANTASIA') or 'Frota Fácil').strip(),
-        'cnpj': (os.getenv('FROTA_FACIL_CNPJ') or '').strip(),
-        'endereco': (os.getenv('FROTA_FACIL_ENDERECO') or '').strip(),
-        'telefone': (os.getenv('FROTA_FACIL_TELEFONE') or '').strip(),
-        'email': (os.getenv('FROTA_FACIL_EMAIL') or '').strip(),
-    }
-
+ return {
+  'razao_social':(os.getenv('FROTA_FACIL_RAZAO_SOCIAL') or 'Gutos Car').strip(),
+  'nome_fantasia':(os.getenv('FROTA_FACIL_NOME_FANTASIA') or 'Frota Fácil').strip(),
+  'cnpj':(os.getenv('FROTA_FACIL_CNPJ') or '').strip(),
+  'endereco':(os.getenv('FROTA_FACIL_ENDERECO') or '').strip(),
+  'telefone':(os.getenv('FROTA_FACIL_TELEFONE') or '').strip(),
+  'email':(os.getenv('FROTA_FACIL_EMAIL') or '').strip(),
+ }
 
 @app.route('/politica-de-privacidade')
 def politica_de_privacidade():
-    return render_template(
-        'politica_privacidade.html',
-        empresa=_empresa_publica(),
-        atualizado_em=date.today().strftime('%d/%m/%Y'),
-    )
-
+ return render_template('politica_privacidade.html',empresa=_empresa_publica(),atualizado_em=date.today().strftime('%d/%m/%Y'))
 
 @app.route('/termos-de-uso')
 def termos_de_uso():
-    return render_template(
-        'termos_uso.html',
-        empresa=_empresa_publica(),
-        atualizado_em=date.today().strftime('%d/%m/%Y'),
-    )
-
+ return render_template('termos_uso.html',empresa=_empresa_publica(),atualizado_em=date.today().strftime('%d/%m/%Y'))
 
 @app.route('/exclusao-de-dados')
 def exclusao_de_dados():
-    return render_template(
-        'exclusao_dados.html',
-        empresa=_empresa_publica(),
-        atualizado_em=date.today().strftime('%d/%m/%Y'),
-    )
+ return render_template('exclusao_dados.html',empresa=_empresa_publica(),atualizado_em=date.today().strftime('%d/%m/%Y'))
+
 
 @app.route('/criar-conta',methods=['GET','POST'])
 def criar_conta():
@@ -3032,29 +3018,16 @@ def concluir_whatsapp_embedded_signup():
   return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
  data=request.get_json(silent=True) or {}
  code=str(data.get('code') or '').strip()
- redirect_uri=str(data.get('redirect_uri') or '').strip()
  waba_id=str(data.get('waba_id') or '').strip()
  phone_number_id=str(data.get('phone_number_id') or '').strip()
  business_id=str(data.get('business_id') or '').strip()
  signup_event=str(data.get('signup_event') or '').strip()
  if not code:
   return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
- if not redirect_uri:
-  return {'ok':False,'error':'A URL de retorno OAuth não foi informada.'},400
- # Usa exatamente o redirect_uri observado no diálogo OAuth.
- # Valida apenas que pertence ao mesmo host do Frota Fácil.
- expected_prefix='https://'+request.host+'/'
- if not redirect_uri.startswith(expected_prefix):
-  return {'ok':False,'error':'URL de retorno OAuth inválida para este domínio.'},400
  try:
   resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
-   params={
-    'client_id':META_APP_ID,
-    'client_secret':META_APP_SECRET,
-    'redirect_uri':redirect_uri,
-    'code':code,
-   },
+   params={'client_id':META_APP_ID,'client_secret':META_APP_SECRET,'code':code},
    timeout=20,
   )
   payload=resp.json()
@@ -3066,16 +3039,14 @@ def concluir_whatsapp_embedded_signup():
   return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
  token=payload['access_token']
  # Se os IDs não vieram do evento SESSION_INFO, tenta descobrir WABA via token.
- debug_data={}
  if not waba_id:
   try:
-   dbg_resp=requests.get(
+   dbg=requests.get(
     f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',
     params={'input_token':token,'access_token':f'{META_APP_ID}|{META_APP_SECRET}'},
     timeout=20,
-   )
-   debug_data=dbg_resp.json() if dbg_resp.content else {}
-   scopes=(debug_data.get('data') or {}).get('granular_scopes') or []
+   ).json()
+   scopes=(dbg.get('data') or {}).get('granular_scopes') or []
    for scope in scopes:
     if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
      targets=[str(x) for x in (scope.get('target_ids') or []) if x]
@@ -3085,21 +3056,19 @@ def concluir_whatsapp_embedded_signup():
   except Exception:
    app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
 
- # Fallback adicional: se o evento informou o Business ID, consulta WABAs
- # pertencentes/compartilhados com esse negócio. Só escolhe automaticamente
- # quando houver um único WABA distinto, evitando associar o tenant à conta errada.
+ # Fallback: quando a Meta entrega business_id, consulta os WABAs ligados ao negócio.
  if not waba_id and business_id:
   try:
    headers={'Authorization':f'Bearer {token}'}
    candidatos={}
    for edge in ('owned_whatsapp_business_accounts','client_whatsapp_business_accounts'):
-    r=requests.get(
+    resp_edge=requests.get(
      f'https://graph.facebook.com/{META_GRAPH_VERSION}/{business_id}/{edge}',
      headers=headers,
      params={'fields':'id,name'},
      timeout=20,
     )
-    payload_edge=r.json() if r.content else {}
+    payload_edge=resp_edge.json()
     for row in (payload_edge.get('data') or []):
      rid=str(row.get('id') or '').strip()
      if rid:
@@ -3111,39 +3080,32 @@ def concluir_whatsapp_embedded_signup():
 
  if waba_id and not phone_number_id:
   try:
-   nums_resp=requests.get(
+   nums=requests.get(
     f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',
     headers={'Authorization':f'Bearer {token}'},
     params={'fields':'id,display_phone_number,verified_name'},
     timeout=20,
-   )
-   nums=nums_resp.json() if nums_resp.content else {}
-   phone_rows=nums.get('data') or []
-   if len(phone_rows)==1:
-    phone_number_id=str(phone_rows[0].get('id') or '')
-   elif len(phone_rows)>1:
-    # Em uma WABA com vários números, não seleciona um arbitrariamente.
-    ids=[str(row.get('id') or '') for row in phone_rows if row.get('id')]
+   ).json()
+   rows=nums.get('data') or []
+   if len(rows)==1:
+    phone_number_id=str(rows[0].get('id') or '')
+   elif len(rows)>1:
     return {
      'ok':False,
      'error':'A conta WhatsApp possui mais de um número. Refazer o cadastro incorporado selecionando o número desejado.',
      'waba_id':waba_id,
-     'phone_number_ids':ids,
+     'phone_number_ids':[str(r.get('id')) for r in rows if r.get('id')],
     },400
   except Exception:
    app.logger.exception('Não foi possível descobrir Phone Number ID')
 
  if not waba_id or not phone_number_id:
-  missing=[]
-  if not waba_id: missing.append('WABA ID')
-  if not phone_number_id: missing.append('Phone Number ID')
-  app.logger.warning(
-   'Embedded Signup autorizado, mas faltam IDs. tenant=%s event=%s business_id=%s waba_id=%s phone_number_id=%s',
-   tid(),signup_event,business_id,waba_id,phone_number_id,
-  )
+  faltando=[]
+  if not waba_id: faltando.append('WABA ID')
+  if not phone_number_id: faltando.append('Phone Number ID')
   return {
    'ok':False,
-   'error':'Autorização concluída, mas faltou identificar: '+', '.join(missing)+'. Tente novamente; o Frota Fácil agora aguarda o evento de sessão da Meta antes de concluir.',
+   'error':'Autorização concluída, mas faltou identificar: '+', '.join(faltando)+'.',
    'signup_event':signup_event or None,
    'business_id':business_id or None,
    'waba_id':waba_id or None,
