@@ -23,12 +23,21 @@
 <section class="card">
   <h2>Histórico e conferência</h2>
   <table>
-    <tr><th>Data</th><th>Motorista / veículo</th><th>Total</th><th>Status</th><th>Comprovante</th><th>Baixa</th></tr>
+    <tr><th>Data</th><th>Motorista / veículo</th><th>Aluguel</th><th>Excesso KM</th><th>Total</th><th>Status</th><th>Comprovante</th><th>Baixa</th></tr>
     {% for a in auditoria %}
     <tr>
       <td>{{a.billing_date.strftime('%d/%m/%Y') if a.billing_date else '-'}}</td>
       <td>{{a.driver_name or '-'}}<br><small>{{a.vehicle_label or ''}} {{a.plate or ''}}</small></td>
-      <td>R$ {{a.total_amount|brl}}</td>
+      <td>R$ {{a.base_amount|brl}}</td>
+      <td>
+        {% if a.excess_amount and a.excess_amount > 0 %}
+          R$ {{a.excess_amount|brl}}
+          {% if a.km_excess %}<br><small>{{a.km_excess}} km excedentes{% if a.excess_rate %} × R$ {{a.excess_rate|brl}}{% endif %}</small>{% endif %}
+        {% else %}
+          R$ 0,00
+        {% endif %}
+      </td>
+      <td><strong>R$ {{a.total_amount|brl}}</strong></td>
       <td>
         {% if a.payment_status=='PAGO' %}<strong>Pago</strong>
         {% elif a.receipt_key %}<strong>Comprovante recebido</strong>
@@ -51,7 +60,7 @@
         {% endif %}
       </td>
     </tr>
-    {% else %}<tr><td colspan="6">Nenhuma cobrança registrada.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="8">Nenhuma cobrança registrada.</td></tr>{% endfor %}
   </table>
 </section>
 {% endblock %}
