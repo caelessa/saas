@@ -3032,22 +3032,27 @@ def concluir_whatsapp_embedded_signup():
   return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
  data=request.get_json(silent=True) or {}
  code=str(data.get('code') or '').strip()
+ redirect_uri=str(data.get('redirect_uri') or '').strip()
  waba_id=str(data.get('waba_id') or '').strip()
  phone_number_id=str(data.get('phone_number_id') or '').strip()
  business_id=str(data.get('business_id') or '').strip()
  signup_event=str(data.get('signup_event') or '').strip()
  if not code:
   return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
+ if not redirect_uri:
+  return {'ok':False,'error':'A URL de retorno OAuth não foi informada.'},400
+ # Usa exatamente o redirect_uri observado no diálogo OAuth.
+ # Valida apenas que pertence ao mesmo host do Frota Fácil.
+ expected_prefix='https://'+request.host+'/'
+ if not redirect_uri.startswith(expected_prefix):
+  return {'ok':False,'error':'URL de retorno OAuth inválida para este domínio.'},400
  try:
-  # No WhatsApp Embedded Signup / Facebook Login for Business, o authorization
-  # code retornado pelo FB.login() é trocado diretamente pelo business token.
-  # Não envie redirect_uri aqui: o SDK usa internamente o callback do próprio
-  # fluxo de login e um redirect_uri manual pode causar o erro 36008.
   resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
    params={
     'client_id':META_APP_ID,
     'client_secret':META_APP_SECRET,
+    'redirect_uri':redirect_uri,
     'code':code,
    },
    timeout=20,
