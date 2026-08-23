@@ -3018,16 +3018,36 @@ def concluir_whatsapp_embedded_signup():
   return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
  data=request.get_json(silent=True) or {}
  code=str(data.get('code') or '').strip()
+ redirect_uri=str(data.get('redirect_uri') or '').strip()
  waba_id=str(data.get('waba_id') or '').strip()
  phone_number_id=str(data.get('phone_number_id') or '').strip()
  business_id=str(data.get('business_id') or '').strip()
  signup_event=str(data.get('signup_event') or '').strip()
  if not code:
   return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
+ if not redirect_uri:
+  return {
+   'ok':False,
+   'error':'Não foi possível capturar o redirect_uri interno usado pelo SDK da Meta.',
+  },400
+ # O SDK usa o endpoint xd_arbiter do domínio staticxx.facebook.com como
+ # redirect_uri real do popup. Aceitamos somente esse host/caminho.
+ try:
+  from urllib.parse import urlparse
+  parsed_redirect=urlparse(redirect_uri)
+  if parsed_redirect.scheme!='https' or parsed_redirect.hostname!='staticxx.facebook.com' or not parsed_redirect.path.startswith('/x/connect/xd_arbiter/'):
+   return {'ok':False,'error':'redirect_uri OAuth inesperado retornado pelo SDK da Meta.'},400
+ except Exception:
+  return {'ok':False,'error':'redirect_uri OAuth inválido.'},400
  try:
   resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
-   params={'client_id':META_APP_ID,'client_secret':META_APP_SECRET,'code':code},
+   params={
+    'client_id':META_APP_ID,
+    'client_secret':META_APP_SECRET,
+    'redirect_uri':redirect_uri,
+    'code':code,
+   },
    timeout=20,
   )
   payload=resp.json()
