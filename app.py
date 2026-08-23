@@ -3006,10 +3006,32 @@ def integracoes():
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
 
+def _meta_graph_get(path, token, params=None):
+ """GET defensivo na Graph API, devolvendo (ok, payload)."""
+ try:
+  resp=requests.get(
+   f'https://graph.facebook.com/{META_GRAPH_VERSION}/{path.lstrip("/")}',
+   headers={'Authorization':f'Bearer {token}'},
+   params=params or {},
+   timeout=20,
+  )
+  try:
+   payload=resp.json() if resp.content else {}
+  except Exception:
+   payload={'raw':resp.text[:1000]}
+  return resp.ok,payload
+ except Exception as exc:
+  app.logger.exception('Falha Graph API em %s',path)
+  return False,{'error':{'message':str(exc)}}
+
+
 def _meta_descobrir_waba_e_numero(token):
- """Tenta descobrir WABA e Phone Number ID a partir do BISU token."""
- waba_id=''
- phone_number_id=''
+ """Descobre Business, WABA e número sem depender do evento JS do Embedded Signup."""
+ waba_ids={}
+ business_ids={}
+ diagnostico={'businesses':[],'wabas':[],'phones':[],'errors':[]}
+
+ # 1) debug_token: algumas configurações devolvem WABA e/ou Business em granular_scopes.
  try:
   dbg_resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',
@@ -3022,35 +3044,111 @@ def _meta_descobrir_waba_e_numero(token):
   dbg=dbg_resp.json() if dbg_resp.content else {}
   scopes=(dbg.get('data') or {}).get('granular_scopes') or []
   for scope in scopes:
-   if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
-    targets=[str(x) for x in (scope.get('target_ids') or []) if x]
-    if len(targets)==1:
-     waba_id=targets[0]
-     break
+   scope_name=str(scope.get('scope') or '')
+   targets=[str(x) for x in (scope.get('target_ids') or []) if x]
+   if scope_name=='whatsapp_business_management':
+    for target in targets:
+     waba_ids[target]={'id':target,'source':'debug_token'}
+   elif scope_name=='business_management':
+    for target in targets:
+     business_ids[target]={'id':target,'source':'debug_token'}
  except Exception:
-  app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
+  app.logger.exception('Não foi possível ler granular_scopes do token')
 
- if waba_id:
-  try:
-   nums_resp=requests.get(
-    f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',
-    headers={'Authorization':f'Bearer {token}'},
-    params={'fields':'id,display_phone_number,verified_name'},
-    timeout=20,
-   )
-   nums=nums_resp.json() if nums_resp.content else {}
-   rows=nums.get('data') or []
-   if len(rows)==1:
-    phone_number_id=str(rows[0].get('id') or '')
-   elif len(rows)>1:
-    return waba_id,'',[
-     {'id':str(row.get('id') or ''),'display_phone_number':row.get('display_phone_number'),'verified_name':row.get('verified_name')}
-     for row in rows if row.get('id')
-    ]
-  except Exception:
-   app.logger.exception('Não foi possível descobrir Phone Number ID')
+ # 2) Descobre os negócios acessíveis ao token.
+ # Primeiro tenta /me/businesses; depois /me?fields=businesses{...}.
+ ok,biz_payload=_meta_graph_get('me/businesses',token,{'fields':'id,name','limit':100})
+ if ok:
+  for row in (biz_payload.get('data') or []):
+   bid=str(row.get('id') or '').strip()
+   if bid:
+    business_ids[bid]={'id':bid,'name':row.get('name'),'source':'me/businesses'}
+ else:
+  err=((biz_payload.get('error') or {}).get('message') if isinstance(biz_payload,dict) else None)
+  if err: diagnostico['errors'].append('me/businesses: '+err)
 
- return waba_id,phone_number_id,[]
+ if not business_ids:
+  ok,me_payload=_meta_graph_get('me',token,{'fields':'id,name,businesses.limit(100){id,name}'})
+  if ok:
+   for row in (((me_payload.get('businesses') or {}).get('data')) or []):
+    bid=str(row.get('id') or '').strip()
+    if bid:
+     business_ids[bid]={'id':bid,'name':row.get('name'),'source':'me.fields'}
+  else:
+   err=((me_payload.get('error') or {}).get('message') if isinstance(me_payload,dict) else None)
+   if err: diagnostico['errors'].append('me: '+err)
+
+ diagnostico['businesses']=list(business_ids.values())
+
+ # 3) Para cada Business, procura WABAs próprias e WABAs de clientes/compartilhadas.
+ for bid,binfo in list(business_ids.items()):
+  for edge in ('owned_whatsapp_business_accounts','client_whatsapp_business_accounts'):
+   ok,payload=_meta_graph_get(f'{bid}/{edge}',token,{'fields':'id,name','limit':100})
+   if not ok:
+    err=((payload.get('error') or {}).get('message') if isinstance(payload,dict) else None)
+    if err:
+     diagnostico['errors'].append(f'{bid}/{edge}: {err}')
+    continue
+   for row in (payload.get('data') or []):
+    wid=str(row.get('id') or '').strip()
+    if wid:
+     waba_ids[wid]={
+      'id':wid,
+      'name':row.get('name'),
+      'business_id':bid,
+      'business_name':binfo.get('name'),
+      'source':edge,
+     }
+
+ diagnostico['wabas']=list(waba_ids.values())
+
+ # 4) Consulta os números de cada WABA encontrada.
+ candidatos=[]
+ for wid,winfo in list(waba_ids.items()):
+  ok,payload=_meta_graph_get(
+   f'{wid}/phone_numbers',
+   token,
+   {'fields':'id,display_phone_number,verified_name,status,quality_rating','limit':100},
+  )
+  if not ok:
+   err=((payload.get('error') or {}).get('message') if isinstance(payload,dict) else None)
+   if err:
+    diagnostico['errors'].append(f'{wid}/phone_numbers: {err}')
+   continue
+  for row in (payload.get('data') or []):
+   pid=str(row.get('id') or '').strip()
+   if not pid:
+    continue
+   item={
+    'waba_id':wid,
+    'waba_name':winfo.get('name'),
+    'business_id':winfo.get('business_id'),
+    'business_name':winfo.get('business_name'),
+    'phone_number_id':pid,
+    'display_phone_number':row.get('display_phone_number'),
+    'verified_name':row.get('verified_name'),
+    'status':row.get('status'),
+    'quality_rating':row.get('quality_rating'),
+   }
+   candidatos.append(item)
+
+ diagnostico['phones']=candidatos
+
+ # Seleção segura: só escolhe automaticamente se houver um único par WABA+número.
+ pares={(c['waba_id'],c['phone_number_id']):c for c in candidatos}
+ if len(pares)==1:
+  escolhido=next(iter(pares.values()))
+  return escolhido['waba_id'],escolhido['phone_number_id'],[],diagnostico
+
+ # Se há exatamente um WABA mas nenhum número, mantém o WABA para diagnóstico.
+ if len(waba_ids)==1 and not candidatos:
+  return next(iter(waba_ids)),'',[],diagnostico
+
+ # Mais de uma possibilidade: devolve lista para não vincular tenant errado.
+ if len(pares)>1:
+  return '','',list(pares.values()),diagnostico
+
+ return '','',[],diagnostico
 
 
 @app.route('/integracoes/whatsapp/embedded-signup/iniciar')
@@ -3140,18 +3238,26 @@ def whatsapp_embedded_signup_callback():
   return redirect(url_for('integracoes'))
 
  token=payload['access_token']
- waba_id,phone_number_id,multiple_numbers=_meta_descobrir_waba_e_numero(token)
+ waba_id,phone_number_id,candidatos,meta_diag=_meta_descobrir_waba_e_numero(token)
 
- if multiple_numbers:
-  ids=', '.join(x['id'] for x in multiple_numbers)
-  flash(f'A conta WhatsApp possui mais de um número ({ids}). Precisamos adicionar a tela de seleção do número.','warning')
+ if candidatos:
+  resumo=[]
+  for c in candidatos[:8]:
+   numero=c.get('display_phone_number') or c.get('phone_number_id')
+   nome=c.get('verified_name') or c.get('waba_name') or 'WhatsApp'
+   resumo.append(f'{nome} — {numero}')
+  flash('A Meta retornou mais de uma conta/número. Para evitar vincular a locadora errada, nenhuma foi escolhida automaticamente: '+ ' | '.join(resumo),'warning')
+  app.logger.warning('Embedded Signup com múltiplos candidatos tenant=%s diag=%s',tid(),json.dumps(meta_diag,ensure_ascii=False))
   return redirect(url_for('integracoes'))
 
  if not waba_id or not phone_number_id:
   faltando=[]
   if not waba_id: faltando.append('WABA ID')
   if not phone_number_id: faltando.append('Phone Number ID')
-  flash('Autorização concluída, mas faltou identificar: '+', '.join(faltando)+'.','danger')
+  erros=(meta_diag.get('errors') or [])[:3]
+  detalhe=(' Detalhes Meta: '+' | '.join(erros)) if erros else ''
+  flash('Autorização concluída, mas faltou identificar: '+', '.join(faltando)+'.'+detalhe,'danger')
+  app.logger.warning('Embedded Signup sem IDs tenant=%s diag=%s',tid(),json.dumps(meta_diag,ensure_ascii=False))
   return redirect(url_for('integracoes'))
 
  item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
@@ -3163,6 +3269,7 @@ def whatsapp_embedded_signup_callback():
   'phone_number_id':phone_number_id,
   'access_token':token,
   'graph_version':META_GRAPH_VERSION,
+  'meta_business_id':next((c.get('business_id') for c in (meta_diag.get('phones') or []) if c.get('waba_id')==waba_id and c.get('phone_number_id')==phone_number_id),None),
   'embedded_connected_at':agora_sao_paulo_naive().isoformat(),
  })
  item.ativo=True
