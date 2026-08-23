@@ -202,8 +202,7 @@
         body:JSON.stringify({
           code:response.authResponse.code,
           waba_id:signupInfo.waba_id||'',
-          phone_number_id:signupInfo.phone_number_id||'',
-          redirect_uri:window.location.origin + window.location.pathname
+          phone_number_id:signupInfo.phone_number_id||''
         })
       }).then(r=>r.json().then(j=>({ok:r.ok,data:j}))).then(x=>{
         if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
