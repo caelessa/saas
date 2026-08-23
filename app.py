@@ -2996,12 +2996,25 @@ def concluir_whatsapp_embedded_signup():
  code=str(data.get('code') or '').strip()
  waba_id=str(data.get('waba_id') or '').strip()
  phone_number_id=str(data.get('phone_number_id') or '').strip()
+ redirect_uri=str(data.get('redirect_uri') or '').strip()
  if not code:
   return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
+ if not redirect_uri:
+  return {'ok':False,'error':'Não foi possível identificar a URL que iniciou a autorização da Meta.'},400
+ # O redirect_uri usado para trocar o code precisa ser exatamente o mesmo da página
+ # que iniciou o FB.login(). Aceita apenas URL do próprio Frota Fácil.
+ current_origin=request.host_url.rstrip('/')
+ if not redirect_uri.startswith(current_origin + '/'):
+  return {'ok':False,'error':'URL de retorno da Meta inválida para este ambiente.'},400
  try:
   resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
-   params={'client_id':META_APP_ID,'client_secret':META_APP_SECRET,'code':code},
+   params={
+    'client_id':META_APP_ID,
+    'client_secret':META_APP_SECRET,
+    'code':code,
+    'redirect_uri':redirect_uri,
+   },
    timeout=20,
   )
   payload=resp.json()
