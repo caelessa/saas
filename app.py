@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort, session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
 from sqlalchemy import inspect, text, or_
@@ -3005,143 +3005,174 @@ def integracoes():
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
-@app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
-@login_required
-def concluir_whatsapp_embedded_signup():
- """Conclui o Embedded Signup sem remover o modo manual existente.
 
- O navegador entrega o authorization code e os IDs da sessão. O App Secret
- permanece somente no backend. A credencial resultante fica isolada no
- Integration do tenant atual.
- """
- if not (META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID):
-  return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
- data=request.get_json(silent=True) or {}
- code=str(data.get('code') or '').strip()
- redirect_uri=str(data.get('redirect_uri') or '').strip()
- waba_id=str(data.get('waba_id') or '').strip()
- phone_number_id=str(data.get('phone_number_id') or '').strip()
- business_id=str(data.get('business_id') or '').strip()
- signup_event=str(data.get('signup_event') or '').strip()
- if not code:
-  return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
- if not redirect_uri:
-  return {
-   'ok':False,
-   'error':'Não foi possível capturar o redirect_uri interno usado pelo SDK da Meta.',
-  },400
- # O SDK usa o endpoint xd_arbiter do domínio staticxx.facebook.com como
- # redirect_uri real do popup. Aceitamos somente esse host/caminho.
+def _meta_descobrir_waba_e_numero(token):
+ """Tenta descobrir WABA e Phone Number ID a partir do BISU token."""
+ waba_id=''
+ phone_number_id=''
  try:
-  from urllib.parse import urlparse
-  parsed_redirect=urlparse(redirect_uri)
-  if parsed_redirect.scheme!='https' or parsed_redirect.hostname!='staticxx.facebook.com' or not parsed_redirect.path.startswith('/x/connect/xd_arbiter/'):
-   return {'ok':False,'error':'redirect_uri OAuth inesperado retornado pelo SDK da Meta.'},400
+  dbg_resp=requests.get(
+   f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',
+   params={
+    'input_token':token,
+    'access_token':f'{META_APP_ID}|{META_APP_SECRET}',
+   },
+   timeout=20,
+  )
+  dbg=dbg_resp.json() if dbg_resp.content else {}
+  scopes=(dbg.get('data') or {}).get('granular_scopes') or []
+  for scope in scopes:
+   if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
+    targets=[str(x) for x in (scope.get('target_ids') or []) if x]
+    if len(targets)==1:
+     waba_id=targets[0]
+     break
  except Exception:
-  return {'ok':False,'error':'redirect_uri OAuth inválido.'},400
+  app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
+
+ if waba_id:
+  try:
+   nums_resp=requests.get(
+    f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',
+    headers={'Authorization':f'Bearer {token}'},
+    params={'fields':'id,display_phone_number,verified_name'},
+    timeout=20,
+   )
+   nums=nums_resp.json() if nums_resp.content else {}
+   rows=nums.get('data') or []
+   if len(rows)==1:
+    phone_number_id=str(rows[0].get('id') or '')
+   elif len(rows)>1:
+    return waba_id,'',[
+     {'id':str(row.get('id') or ''),'display_phone_number':row.get('display_phone_number'),'verified_name':row.get('verified_name')}
+     for row in rows if row.get('id')
+    ]
+  except Exception:
+   app.logger.exception('Não foi possível descobrir Phone Number ID')
+
+ return waba_id,phone_number_id,[]
+
+
+@app.route('/integracoes/whatsapp/embedded-signup/iniciar')
+@login_required
+def iniciar_whatsapp_embedded_signup():
+ """Inicia o Embedded Signup sem depender do redirect dinâmico do JS SDK."""
+ if not (META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID):
+  flash('Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.','danger')
+  return redirect(url_for('integracoes'))
+
+ state=uuid.uuid4().hex
+ session['meta_whatsapp_oauth_state']=state
+
+ callback_url=url_for(
+  'whatsapp_embedded_signup_callback',
+  _external=True,
+  _scheme='https',
+ )
+
+ extras=json.dumps({
+  'setup':{},
+  'featureType':'',
+  'sessionInfoVersion':'3',
+ },separators=(',',':'))
+
+ from urllib.parse import urlencode
+ params={
+  'client_id':META_APP_ID,
+  'config_id':META_WHATSAPP_CONFIG_ID,
+  'redirect_uri':callback_url,
+  'response_type':'code',
+  'override_default_response_type':'true',
+  'state':state,
+  'extras':extras,
+ }
+ oauth_url=f'https://www.facebook.com/{META_GRAPH_VERSION}/dialog/oauth?{urlencode(params)}'
+ return redirect(oauth_url)
+
+
+@app.route('/integracoes/whatsapp/embedded-signup/callback')
+@login_required
+def whatsapp_embedded_signup_callback():
+ """Recebe o code da Meta e usa exatamente o mesmo redirect_uri na troca."""
+ error=request.args.get('error')
+ if error:
+  detail=request.args.get('error_description') or error
+  flash(f'Conexão com a Meta cancelada ou recusada: {detail}','danger')
+  return redirect(url_for('integracoes'))
+
+ state=(request.args.get('state') or '').strip()
+ expected_state=(session.pop('meta_whatsapp_oauth_state',None) or '').strip()
+ if not state or not expected_state or state!=expected_state:
+  flash('Não foi possível validar o retorno de segurança da Meta. Tente novamente.','danger')
+  return redirect(url_for('integracoes'))
+
+ code=(request.args.get('code') or '').strip()
+ if not code:
+  flash('A Meta não retornou o código de autorização.','danger')
+  return redirect(url_for('integracoes'))
+
+ callback_url=url_for(
+  'whatsapp_embedded_signup_callback',
+  _external=True,
+  _scheme='https',
+ )
+
  try:
   resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
    params={
     'client_id':META_APP_ID,
     'client_secret':META_APP_SECRET,
-    'redirect_uri':redirect_uri,
+    'redirect_uri':callback_url,
     'code':code,
    },
    timeout=20,
   )
-  payload=resp.json()
+  payload=resp.json() if resp.content else {}
  except Exception as exc:
-  app.logger.exception('Falha no Embedded Signup Meta')
-  return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
+  app.logger.exception('Falha ao trocar code do Embedded Signup')
+  flash(f'Falha ao concluir autorização Meta: {exc}','danger')
+  return redirect(url_for('integracoes'))
+
  if not resp.ok or not payload.get('access_token'):
   detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
-  return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
+  flash(detail or 'A Meta não retornou um Access Token válido.','danger')
+  return redirect(url_for('integracoes'))
+
  token=payload['access_token']
- # Se os IDs não vieram do evento SESSION_INFO, tenta descobrir WABA via token.
- if not waba_id:
-  try:
-   dbg=requests.get(
-    f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',
-    params={'input_token':token,'access_token':f'{META_APP_ID}|{META_APP_SECRET}'},
-    timeout=20,
-   ).json()
-   scopes=(dbg.get('data') or {}).get('granular_scopes') or []
-   for scope in scopes:
-    if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
-     targets=[str(x) for x in (scope.get('target_ids') or []) if x]
-     if len(targets)==1:
-      waba_id=targets[0]
-      break
-  except Exception:
-   app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
+ waba_id,phone_number_id,multiple_numbers=_meta_descobrir_waba_e_numero(token)
 
- # Fallback: quando a Meta entrega business_id, consulta os WABAs ligados ao negócio.
- if not waba_id and business_id:
-  try:
-   headers={'Authorization':f'Bearer {token}'}
-   candidatos={}
-   for edge in ('owned_whatsapp_business_accounts','client_whatsapp_business_accounts'):
-    resp_edge=requests.get(
-     f'https://graph.facebook.com/{META_GRAPH_VERSION}/{business_id}/{edge}',
-     headers=headers,
-     params={'fields':'id,name'},
-     timeout=20,
-    )
-    payload_edge=resp_edge.json()
-    for row in (payload_edge.get('data') or []):
-     rid=str(row.get('id') or '').strip()
-     if rid:
-      candidatos[rid]=row
-   if len(candidatos)==1:
-    waba_id=next(iter(candidatos))
-  except Exception:
-   app.logger.exception('Não foi possível descobrir WABA pelo Business ID')
-
- if waba_id and not phone_number_id:
-  try:
-   nums=requests.get(
-    f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',
-    headers={'Authorization':f'Bearer {token}'},
-    params={'fields':'id,display_phone_number,verified_name'},
-    timeout=20,
-   ).json()
-   rows=nums.get('data') or []
-   if len(rows)==1:
-    phone_number_id=str(rows[0].get('id') or '')
-   elif len(rows)>1:
-    return {
-     'ok':False,
-     'error':'A conta WhatsApp possui mais de um número. Refazer o cadastro incorporado selecionando o número desejado.',
-     'waba_id':waba_id,
-     'phone_number_ids':[str(r.get('id')) for r in rows if r.get('id')],
-    },400
-  except Exception:
-   app.logger.exception('Não foi possível descobrir Phone Number ID')
+ if multiple_numbers:
+  ids=', '.join(x['id'] for x in multiple_numbers)
+  flash(f'A conta WhatsApp possui mais de um número ({ids}). Precisamos adicionar a tela de seleção do número.','warning')
+  return redirect(url_for('integracoes'))
 
  if not waba_id or not phone_number_id:
   faltando=[]
   if not waba_id: faltando.append('WABA ID')
   if not phone_number_id: faltando.append('Phone Number ID')
-  return {
-   'ok':False,
-   'error':'Autorização concluída, mas faltou identificar: '+', '.join(faltando)+'.',
-   'signup_event':signup_event or None,
-   'business_id':business_id or None,
-   'waba_id':waba_id or None,
-  },400
+  flash('Autorização concluída, mas faltou identificar: '+', '.join(faltando)+'.','danger')
+  return redirect(url_for('integracoes'))
+
  item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
  oldcfg=_integration_config(item)
  oldcfg.update({
-  'provider':'business','onboarding_mode':'embedded_signup','business_account_id':waba_id,
-  'phone_number_id':phone_number_id,'access_token':token,'graph_version':META_GRAPH_VERSION,
-  'meta_business_id':business_id or oldcfg.get('meta_business_id'),
-  'embedded_signup_event':signup_event or oldcfg.get('embedded_signup_event'),
+  'provider':'business',
+  'onboarding_mode':'embedded_signup',
+  'business_account_id':waba_id,
+  'phone_number_id':phone_number_id,
+  'access_token':token,
+  'graph_version':META_GRAPH_VERSION,
   'embedded_connected_at':agora_sao_paulo_naive().isoformat(),
  })
- item.ativo=True; item.configuracao=json.dumps(oldcfg,ensure_ascii=False)
- db.session.add(item); db.session.commit()
- return {'ok':True,'waba_id':waba_id,'phone_number_id':phone_number_id}
+ item.ativo=True
+ item.configuracao=json.dumps(oldcfg,ensure_ascii=False)
+ db.session.add(item)
+ db.session.commit()
+
+ flash('WhatsApp conectado com sucesso pela Meta.','success')
+ return redirect(url_for('integracoes'))
+
 
 @app.route('/integracoes/whatsapp/embedded-signup/desconectar',methods=['POST'])
 @login_required
