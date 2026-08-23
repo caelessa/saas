@@ -193,14 +193,18 @@
   if(btn) btn.addEventListener('click', function(){
     statusEl.textContent='Abrindo a Meta…';
     FB.login(function(response){
-      if (!response.authResponse || !response.authResponse.code) {
+      const auth = response && response.authResponse ? response.authResponse : {};
+      const accessToken = auth.accessToken || '';
+      const code = auth.code || '';
+      if (!accessToken && !code) {
         statusEl.textContent='Conexão cancelada ou não autorizada.'; return;
       }
       statusEl.textContent='Concluindo conexão com segurança…';
       fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          code:response.authResponse.code,
+          access_token:accessToken,
+          code:code,
           waba_id:signupInfo.waba_id||'',
           phone_number_id:signupInfo.phone_number_id||''
         })
@@ -208,7 +212,7 @@
         if(!x.ok) throw new Error(x.data.error||'Falha ao concluir conexão.');
         statusEl.textContent='WhatsApp conectado. Atualizando…'; window.location.reload();
       }).catch(err=>{statusEl.textContent=err.message;});
-    }, {config_id:'{{ meta_config_id|e }}', response_type:'code', override_default_response_type:true, extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
+    }, {config_id:'{{ meta_config_id|e }}', extras:{setup:{},featureType:'',sessionInfoVersion:'3'}});
   });
 })();
 </script>
