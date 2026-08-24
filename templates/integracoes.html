@@ -31,10 +31,16 @@
       <form method="post" class="form-grid" style="margin-top:14px">
         <input type="hidden" name="section" value="whatsapp">
         <label>Modo de envio
-          <select name="provider">
-            <option value="web" {% if whatsapp_cfg.get('provider','web')=='web' %}selected{% endif %}>WhatsApp Web — confirmação manual</option>
-            <option value="business" {% if whatsapp_cfg.get('provider')=='business' %}selected{% endif %}>WhatsApp Business Platform — automático</option>
-          </select>
+          {% if whatsapp_cfg.get('onboarding_mode')=='embedded_signup' and whatsapp_cfg.get('phone_number_id') and whatsapp_cfg.get('access_token') %}
+            <input type="hidden" name="provider" value="business">
+            <input value="WhatsApp Business Platform — automático" disabled>
+            <small class="muted">Modo mantido automaticamente porque esta locadora já possui conexão Business válida.</small>
+          {% else %}
+            <select name="provider">
+              <option value="web" {% if whatsapp_cfg.get('provider','web')=='web' %}selected{% endif %}>WhatsApp Web — confirmação manual</option>
+              <option value="business" {% if whatsapp_cfg.get('provider')=='business' %}selected{% endif %}>WhatsApp Business Platform — automático</option>
+            </select>
+          {% endif %}
         </label>
         <label>Business Account ID<input name="business_account_id" value="{{ whatsapp_cfg.get('business_account_id','') }}"></label>
         <label>Phone Number ID<input name="phone_number_id" value="{{ whatsapp_cfg.get('phone_number_id','') }}"></label>
