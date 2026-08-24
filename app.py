@@ -1683,15 +1683,30 @@ def contrato_whatsapp(id):
  cfg=CommunicationService.parse_config(integration)
  provider_cfg=(cfg.get('provider') or 'web').lower()
  template_name=(cfg.get('contract_template_name') or '').strip() or None
+ template_params=[
+  c.driver.nome if c.driver else 'Motorista',
+  c.vehicle.marca_modelo if c.vehicle and c.vehicle.marca_modelo else 'Veículo',
+  c.vehicle.placa if c.vehicle and c.vehicle.placa else '-',
+  c.numero_contrato or str(c.id),
+  link,
+ ]
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
   recipient_name=c.driver.nome,message_type='contrato',body=mensagem,template_name=template_name,
+  template_parameters=json.dumps(template_params,ensure_ascii=False),
   related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
  )
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR')
+  result=CommunicationService().send_whatsapp(
+   phone=telefone,
+   message=mensagem,
+   integration=integration,
+   template_name=template_name,
+   template_language=cfg.get('template_language') or 'pt_BR',
+   template_parameters=template_params,
+  )
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
   fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
