@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort, session
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
 from sqlalchemy import inspect, text, or_
@@ -76,7 +76,7 @@ def brl(value):
 
 
 class Tenant(db.Model):
- id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False); cobrar_km_excedente=db.Column(db.Boolean,default=False)
+ id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False)
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
@@ -288,8 +288,6 @@ class BillingAudit(db.Model):
  km_limit=db.Column(db.Integer)
  km_excess=db.Column(db.Integer,default=0)
  excess_rate=db.Column(db.Numeric(12,2),default=0)
- excess_calculated_amount=db.Column(db.Numeric(12,2),default=0)
- excess_charged=db.Column(db.Boolean,default=False)
  excess_amount=db.Column(db.Numeric(12,2),default=0)
  total_amount=db.Column(db.Numeric(12,2),nullable=False,default=0)
  body=db.Column(db.Text,nullable=False)
@@ -449,36 +447,13 @@ def motorista_atual_veiculo(vehicle):
  contrato=Contract.query.filter(Contract.tenant_id==vehicle.tenant_id,Contract.vehicle_id==vehicle.id,Contract.status.in_(['Gerado','Enviado','Visualizado','Assinado','Ativo'])).order_by(Contract.id.desc()).first()
  return contrato.driver if contrato else None
 
-def whatsapp_provider_efetivo(cfg):
- provider=(cfg.get('provider') or '').strip().lower()
- tem_business=bool(
-  (cfg.get('phone_number_id') or '').strip()
-  and (cfg.get('access_token') or '').strip()
- )
- if tem_business:
-  return 'business'
- return provider or 'web'
-
 def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_entity, related_entity_id, scheduled_at=None, template_name=None, template_parameters=None):
  telefone=normalize_phone(driver.telefone if driver else None)
  if not telefone:
   return None, None, 'Motorista sem telefone/WhatsApp válido.'
  integration=Integration.query.filter_by(tenant_id=tenant_id,tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
- provider_cfg=whatsapp_provider_efetivo(cfg)
-
- # Normaliza a integração antes de chamar CommunicationService.
- # Havia casos em que as credenciais Business estavam presentes,
- # mas o provider persistido continuava como 'web'; o serviço então
- # devolvia uma URL wa.me e o navegador abria o WhatsApp Web.
- if integration and provider_cfg=='business' and (cfg.get('provider') or '').strip().lower()!='business':
-  cfg=dict(cfg)
-  cfg['provider']='business'
-  integration.configuracao=json.dumps(cfg,ensure_ascii=False)
-  integration.ativo=True
-  db.session.add(integration)
-  db.session.flush()
-
+ provider_cfg=(cfg.get('provider') or 'web').lower()
  fila=MessageQueue(
   tenant_id=tenant_id,channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',
   recipient=telefone,recipient_name=driver.nome,message_type=message_type,body=body,template_name=template_name,template_parameters=json.dumps(template_parameters or [],ensure_ascii=False),
@@ -493,9 +468,7 @@ def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_en
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1
   fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event=result.status,description='Mensagem processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
-  # Em conexão Business válida nunca redireciona para WhatsApp Web.
-  redirect_result=None if provider_cfg=='business' else result.redirect_url
-  return fila, redirect_result, None
+  return fila, result.redirect_url, None
  except CommunicationError as exc:
   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
   db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
@@ -510,7 +483,7 @@ def processar_mensagens_agendadas(tenant_id=None, limit=100):
  for fila in items:
   integration=Integration.query.filter_by(tenant_id=fila.tenant_id,tipo='whatsapp').first()
   cfg=CommunicationService.parse_config(integration)
-  if whatsapp_provider_efetivo(cfg)!='business':
+  if (cfg.get('provider') or 'web').lower()!='business':
    fila.status='AGUARDANDO_MANUAL'; fila.updated_at=now
    db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='AGUARDANDO_MANUAL',description='WhatsApp Web não permite envio agendado automático.',created_at=now))
    processed+=1; continue
@@ -549,7 +522,7 @@ def recalcular_alertas(tenant_id):
 
 def migrate_schema():
  additions={
-  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE')],
+  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE')],
   'vehicle':[
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
@@ -568,9 +541,7 @@ def migrate_schema():
   'billing_audit':[
    ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
    ('payment_method','VARCHAR(50)'),('payment_notes','TEXT'),('reminder_count','INTEGER DEFAULT 0'),
-   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),
-   ('excess_calculated_amount','NUMERIC(12,2) DEFAULT 0'),('excess_charged','BOOLEAN DEFAULT FALSE'),
-   ('receipt_token','VARCHAR(64)'),('receipt_key','VARCHAR(255)'),('receipt_name','VARCHAR(255)'),('receipt_mime','VARCHAR(100)'),('receipt_uploaded_at','TIMESTAMP'),
+   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),('receipt_token','VARCHAR(64)'),('receipt_key','VARCHAR(255)'),('receipt_name','VARCHAR(255)'),('receipt_mime','VARCHAR(100)'),('receipt_uploaded_at','TIMESTAMP'),
   ],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
@@ -788,30 +759,6 @@ def sobre_a_empresa():
         'descricao': (os.getenv('FROTA_FACIL_DESCRICAO') or 'Empresa responsável pela operação piloto e uso da plataforma Frota Fácil para gestão de locação de veículos.').strip(),
     }
     return render_template('sobre_empresa.html', empresa=empresa)
-
-
-def _empresa_publica():
- return {
-  'razao_social':(os.getenv('FROTA_FACIL_RAZAO_SOCIAL') or 'Gutos Car').strip(),
-  'nome_fantasia':(os.getenv('FROTA_FACIL_NOME_FANTASIA') or 'Frota Fácil').strip(),
-  'cnpj':(os.getenv('FROTA_FACIL_CNPJ') or '').strip(),
-  'endereco':(os.getenv('FROTA_FACIL_ENDERECO') or '').strip(),
-  'telefone':(os.getenv('FROTA_FACIL_TELEFONE') or '').strip(),
-  'email':(os.getenv('FROTA_FACIL_EMAIL') or '').strip(),
- }
-
-@app.route('/politica-de-privacidade')
-def politica_de_privacidade():
- return render_template('politica_privacidade.html',empresa=_empresa_publica(),atualizado_em=date.today().strftime('%d/%m/%Y'))
-
-@app.route('/termos-de-uso')
-def termos_de_uso():
- return render_template('termos_uso.html',empresa=_empresa_publica(),atualizado_em=date.today().strftime('%d/%m/%Y'))
-
-@app.route('/exclusao-de-dados')
-def exclusao_de_dados():
- return render_template('exclusao_dados.html',empresa=_empresa_publica(),atualizado_em=date.today().strftime('%d/%m/%Y'))
-
 
 @app.route('/criar-conta',methods=['GET','POST'])
 def criar_conta():
@@ -1134,7 +1081,7 @@ def solicitar_km(id):
  cfg=CommunicationService.parse_config(integration)
  template_name=(cfg.get('mileage_template_name') or '').strip() or None
  template_params=[d.nome,v.marca_modelo or 'Veículo',v.placa,link]
- provider_cfg=whatsapp_provider_efetivo(cfg)
+ provider_cfg=(cfg.get('provider') or 'web').lower()
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
   recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,template_name=template_name,template_parameters=json.dumps(template_params,ensure_ascii=False),
@@ -1396,20 +1343,9 @@ def visualizar_comprovante_pagamento(id):
  except Exception: abort(503)
  return send_file(BytesIO(data),mimetype=audit.receipt_mime or 'application/octet-stream',download_name=audit.receipt_name or f'comprovante-{audit.id}',as_attachment=False)
 
-@app.route('/cobrancas',methods=['GET','POST'])
+@app.route('/cobrancas')
 @login_required
 def cobrancas():
- tenant=Tenant.query.get_or_404(tid())
- if request.method=='POST':
-  tenant.cobrar_km_excedente=request.form.get('cobrar_km_excedente')=='1'
-  db.session.commit()
-  flash(
-   'Cobrança de KM excedente ativada. O excedente passará a compor as novas cobranças.'
-   if tenant.cobrar_km_excedente
-   else 'Cobrança de KM excedente desativada. O cálculo continuará visível apenas para conferência.',
-   'success'
-  )
-  return redirect(url_for('cobrancas'))
  contratos_ativos=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(
   Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])
  ).order_by(Contract.id.desc()).all()
@@ -1427,7 +1363,7 @@ def cobrancas():
  for audit in auditoria:
   if not audit.receipt_token: garantir_token_comprovante(audit); alterou=True
  if alterou: db.session.commit()
- return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant)
+ return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria)
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
 @login_required
@@ -1721,32 +1657,17 @@ def contrato_whatsapp(id):
   db.session.rollback(); flash(str(exc),'danger'); return redirect(url_for('contrato_detalhe',id=id))
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
- provider_cfg=whatsapp_provider_efetivo(cfg)
+ provider_cfg=(cfg.get('provider') or 'web').lower()
  template_name=(cfg.get('contract_template_name') or '').strip() or None
- template_params=[
-  c.driver.nome if c.driver else 'Motorista',
-  c.vehicle.marca_modelo if c.vehicle and c.vehicle.marca_modelo else 'Veículo',
-  c.vehicle.placa if c.vehicle and c.vehicle.placa else '-',
-  c.numero_contrato or str(c.id),
-  link,
- ]
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
   recipient_name=c.driver.nome,message_type='contrato',body=mensagem,template_name=template_name,
-  template_parameters=json.dumps(template_params,ensure_ascii=False),
   related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
  )
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(
-   phone=telefone,
-   message=mensagem,
-   integration=integration,
-   template_name=template_name,
-   template_language=cfg.get('template_language') or 'pt_BR',
-   template_parameters=template_params,
-  )
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR')
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
   fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
@@ -2386,43 +2307,9 @@ def vistorias():
   token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
   expira_horas=int(request.form.get('expira_horas') or 48)
   item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
-  db.session.add(item); db.session.flush()
+  db.session.add(item); db.session.commit()
   link=url_for('vistoria_publica',token=item.token,_external=True)
-
-  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
-  cfg=CommunicationService.parse_config(integration)
-  template_name=(cfg.get('inspection_template_name') or '').strip() or None
-  body=(
-   f'Olá, {d.nome}! A locadora solicitou uma vistoria do veículo '
-   f'{v.marca_modelo or "Veículo"} — {v.placa}. '
-   f'Abra o link e grave o vídeo da vistoria: {link}'
-  )
-  template_params=[
-   d.nome,
-   v.marca_modelo or 'Veículo',
-   v.placa or '-',
-   link,
-  ]
-  fila,redirect_whatsapp,err=criar_mensagem_whatsapp(
-   tenant_id=tid(),
-   driver=d,
-   body=body,
-   message_type='solicitacao_vistoria',
-   related_entity='Vistoria',
-   related_entity_id=item.id,
-   template_name=template_name,
-   template_parameters=template_params,
-  )
-  db.session.commit()
-
-  if err:
-   flash('Vistoria criada, mas o envio pelo WhatsApp falhou: '+err,'warning')
-  elif redirect_whatsapp:
-   return redirect(redirect_whatsapp)
-  elif fila:
-   flash('Solicitação de vistoria criada e enviada pelo WhatsApp.','success')
-  else:
-   flash('Solicitação de vistoria criada. Link: '+link,'success')
+  flash('Solicitação de vistoria criada. Link: '+link,'success')
   return redirect(url_for('vistorias'))
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
  veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
@@ -2679,20 +2566,10 @@ def _ultimas_leituras_km(vehicle_id, limit=2, tenant_id=None):
 
 def calcular_cobranca_semanal(contract):
  valor_base=Decimal(str(contract.valor_locacao or 0))
- tenant=Tenant.query.get(contract.tenant_id)
- cobrar_excesso=bool(tenant and tenant.cobrar_km_excedente)
+ total=valor_base
  info={
-  'valor_base':valor_base,
-  'total':valor_base,
-  'km_periodo':None,
-  'limite_km':contract.limite_km,
-  'km_excedente':0,
-  'valor_excesso_teorico':Decimal('0'),
-  'valor_excesso':Decimal('0'),
-  'tem_historico_km':False,
-  'tem_excesso':False,
-  'cobrar_excesso':cobrar_excesso,
-  'usa_excesso':False,
+  'valor_base':valor_base,'total':total,'km_periodo':None,'limite_km':contract.limite_km,
+  'km_excedente':0,'valor_excesso':Decimal('0'),'tem_historico_km':False,'usa_excesso':False,
  }
  if not contract.vehicle_id or not contract.limite_km or not contract.valor_km_excedente:
   return info
@@ -2711,13 +2588,10 @@ def calcular_cobranca_semanal(contract):
  excedente=max(0,km_periodo-int(contract.limite_km or 0))
  info['km_excedente']=excedente
  if excedente>0:
-  valor_teorico=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
-  info['valor_excesso_teorico']=valor_teorico
-  info['tem_excesso']=True
-  if cobrar_excesso:
-   info['valor_excesso']=valor_teorico
-   info['total']=valor_base+valor_teorico
-   info['usa_excesso']=True
+  valor_excesso=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
+  info['valor_excesso']=valor_excesso
+  info['total']=valor_base+valor_excesso
+  info['usa_excesso']=True
  return info
 
 def cobranca_vence_hoje(contract):
@@ -2789,17 +2663,11 @@ def _reminder_interval(cfg):
  except Exception: return 1
 
 def _audit_info(audit):
- valor_cobrado=Decimal(str(audit.excess_amount or 0))
- valor_teorico=Decimal(str(audit.excess_calculated_amount or 0))
  return {
   'valor_base':Decimal(str(audit.base_amount or 0)),'total':Decimal(str(audit.total_amount or 0)),
   'km_periodo':audit.km_period,'limite_km':audit.km_limit,'km_excedente':audit.km_excess or 0,
-  'valor_excesso_teorico':valor_teorico,
-  'valor_excesso':valor_cobrado,
-  'tem_historico_km':audit.km_period is not None,
-  'tem_excesso':valor_teorico>0,
-  'cobrar_excesso':bool(audit.excess_charged),
-  'usa_excesso':bool(audit.excess_charged) and valor_cobrado>0,
+  'valor_excesso':Decimal(str(audit.excess_amount or 0)),'tem_historico_km':audit.km_period is not None,
+  'usa_excesso':Decimal(str(audit.excess_amount or 0))>0,
  }
 
 def _enviar_cobranca_audit(contract,audit,cfg):
@@ -2823,7 +2691,7 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  provider=(cfg.get('provider') or 'web').lower()
  template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
  hoje=datetime.now(SAO_PAULO).date()
- audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_calculated_amount=info.get('valor_excesso_teorico') or 0,excess_charged=bool(info.get('usa_excesso')),excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
+ audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
  db.session.add(audit); db.session.flush()
  comprovante_url=url_comprovante_cobranca(audit)
  audit.body=mensagem_cobranca_semanal(contract,info,comprovante_url)
@@ -2861,10 +2729,20 @@ def processar_km_automatico(tenant_id=None):
   integration,cfg=_automation_cfg(c.tenant_id)
   if not cfg.get('automatic_km_enabled',False) or not _automation_window_open(cfg,agora): continue
   if (cfg.get('provider') or 'web').lower()!='business': continue
+  # Se a foto/KM já foi recebida hoje, encerra a automação desse veículo no dia.
+  # submitted_at é salvo em UTC sem timezone; convertemos para São Paulo antes de comparar a data.
+  ultima_respondida=MileageRequest.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id).filter(
+   MileageRequest.status.in_(['Concluído','Aguardando conferência']),
+   MileageRequest.submitted_at.isnot(None),
+  ).order_by(MileageRequest.submitted_at.desc()).first()
+  if ultima_respondida and ultima_respondida.submitted_at:
+   submitted_sp=ultima_respondida.submitted_at.replace(tzinfo=timezone.utc).astimezone(SAO_PAULO)
+   if submitted_sp.date()==agora.date():
+    continue
+
   req=MileageRequest.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
   if not req:
    req=MileageRequest(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=c.vehicle.km_atual); db.session.add(req); db.session.flush()
-  # Se a foto/KM já foi recebida, não haverá request Pendente e nenhum novo lembrete é necessário no mesmo dia.
   ultimo=MessageQueue.query.filter_by(tenant_id=c.tenant_id,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id).filter(MessageQueue.created_at>=inicio).order_by(MessageQueue.id.desc()).first()
   intervalo=_reminder_interval(cfg)
   if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo): continue
@@ -3068,22 +2946,15 @@ def integracoes():
   section=request.form.get('section')
   if section=='whatsapp':
    item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
-   existente=_integration_config(item)
-   provider=request.form.get('provider',existente.get('provider') or 'web')
-   # Se já existe conexão Business válida, não rebaixa para WhatsApp Web
-   # apenas por salvar templates/automações na configuração avançada.
-   if whatsapp_provider_efetivo(existente)=='business':
-    provider='business'
-   cfg=dict(existente)
-   cfg.update({
+   provider=request.form.get('provider','web')
+   cfg={
     'provider':provider,
-    'phone_number_id':request.form.get('phone_number_id','').strip() or existente.get('phone_number_id',''),
-    'business_account_id':request.form.get('business_account_id','').strip() or existente.get('business_account_id',''),
-    'access_token':request.form.get('access_token','').strip() or existente.get('access_token',''),
-    'verify_token':request.form.get('verify_token','').strip() or existente.get('verify_token',''),
-    'graph_version':request.form.get('graph_version','v23.0').strip() or existente.get('graph_version') or 'v23.0',
+    'phone_number_id':request.form.get('phone_number_id','').strip(),
+    'business_account_id':request.form.get('business_account_id','').strip(),
+    'access_token':request.form.get('access_token','').strip(),
+    'verify_token':request.form.get('verify_token','').strip(),
+    'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
     'contract_template_name':request.form.get('contract_template_name','').strip(),
-    'inspection_template_name':request.form.get('inspection_template_name','').strip(),
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
     'maintenance_reminder_template_name':request.form.get('maintenance_reminder_template_name','').strip(),
@@ -3098,8 +2969,8 @@ def integracoes():
     'automatic_billing_enabled':bool(request.form.get('automatic_billing_enabled')),
     'automatic_km_enabled':bool(request.form.get('automatic_km_enabled')),
     'automatic_alerts_enabled':bool(request.form.get('automatic_alerts_enabled')),
-   })
-   item.ativo=(whatsapp_provider_efetivo(cfg)=='business')
+   }
+   item.ativo=(provider=='business')
    item.configuracao=json.dumps(cfg,ensure_ascii=False)
    db.session.add(item); db.session.commit(); flash('Configuração do WhatsApp salva.','success')
   elif section=='signature':
@@ -3120,281 +2991,79 @@ def integracoes():
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
-
-def _meta_graph_get(path, token, params=None):
- """GET defensivo na Graph API, devolvendo (ok, payload)."""
- try:
-  resp=requests.get(
-   f'https://graph.facebook.com/{META_GRAPH_VERSION}/{path.lstrip("/")}',
-   headers={'Authorization':f'Bearer {token}'},
-   params=params or {},
-   timeout=20,
-  )
-  try:
-   payload=resp.json() if resp.content else {}
-  except Exception:
-   payload={'raw':resp.text[:1000]}
-  return resp.ok,payload
- except Exception as exc:
-  app.logger.exception('Falha Graph API em %s',path)
-  return False,{'error':{'message':str(exc)}}
-
-
-def _meta_descobrir_waba_e_numero(token):
- """Descobre Business, WABA e número sem depender do evento JS do Embedded Signup."""
- waba_ids={}
- business_ids={}
- diagnostico={'businesses':[],'wabas':[],'phones':[],'errors':[]}
-
- # 1) debug_token: algumas configurações devolvem WABA e/ou Business em granular_scopes.
- try:
-  dbg_resp=requests.get(
-   f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',
-   params={
-    'input_token':token,
-    'access_token':f'{META_APP_ID}|{META_APP_SECRET}',
-   },
-   timeout=20,
-  )
-  dbg=dbg_resp.json() if dbg_resp.content else {}
-  scopes=(dbg.get('data') or {}).get('granular_scopes') or []
-  for scope in scopes:
-   scope_name=str(scope.get('scope') or '')
-   targets=[str(x) for x in (scope.get('target_ids') or []) if x]
-   if scope_name=='whatsapp_business_management':
-    for target in targets:
-     waba_ids[target]={'id':target,'source':'debug_token'}
-   elif scope_name=='business_management':
-    for target in targets:
-     business_ids[target]={'id':target,'source':'debug_token'}
- except Exception:
-  app.logger.exception('Não foi possível ler granular_scopes do token')
-
- # 2) Descobre os negócios acessíveis ao token.
- # Primeiro tenta /me/businesses; depois /me?fields=businesses{...}.
- ok,biz_payload=_meta_graph_get('me/businesses',token,{'fields':'id,name','limit':100})
- if ok:
-  for row in (biz_payload.get('data') or []):
-   bid=str(row.get('id') or '').strip()
-   if bid:
-    business_ids[bid]={'id':bid,'name':row.get('name'),'source':'me/businesses'}
- else:
-  err=((biz_payload.get('error') or {}).get('message') if isinstance(biz_payload,dict) else None)
-  if err: diagnostico['errors'].append('me/businesses: '+err)
-
- if not business_ids:
-  ok,me_payload=_meta_graph_get('me',token,{'fields':'id,name,businesses.limit(100){id,name}'})
-  if ok:
-   for row in (((me_payload.get('businesses') or {}).get('data')) or []):
-    bid=str(row.get('id') or '').strip()
-    if bid:
-     business_ids[bid]={'id':bid,'name':row.get('name'),'source':'me.fields'}
-  else:
-   err=((me_payload.get('error') or {}).get('message') if isinstance(me_payload,dict) else None)
-   if err: diagnostico['errors'].append('me: '+err)
-
- diagnostico['businesses']=list(business_ids.values())
-
- # 3) Para cada Business, procura WABAs próprias e WABAs de clientes/compartilhadas.
- for bid,binfo in list(business_ids.items()):
-  for edge in ('owned_whatsapp_business_accounts','client_whatsapp_business_accounts'):
-   ok,payload=_meta_graph_get(f'{bid}/{edge}',token,{'fields':'id,name','limit':100})
-   if not ok:
-    err=((payload.get('error') or {}).get('message') if isinstance(payload,dict) else None)
-    if err:
-     diagnostico['errors'].append(f'{bid}/{edge}: {err}')
-    continue
-   for row in (payload.get('data') or []):
-    wid=str(row.get('id') or '').strip()
-    if wid:
-     waba_ids[wid]={
-      'id':wid,
-      'name':row.get('name'),
-      'business_id':bid,
-      'business_name':binfo.get('name'),
-      'source':edge,
-     }
-
- diagnostico['wabas']=list(waba_ids.values())
-
- # 4) Consulta os números de cada WABA encontrada.
- candidatos=[]
- for wid,winfo in list(waba_ids.items()):
-  ok,payload=_meta_graph_get(
-   f'{wid}/phone_numbers',
-   token,
-   {'fields':'id,display_phone_number,verified_name,status,quality_rating','limit':100},
-  )
-  if not ok:
-   err=((payload.get('error') or {}).get('message') if isinstance(payload,dict) else None)
-   if err:
-    diagnostico['errors'].append(f'{wid}/phone_numbers: {err}')
-   continue
-  for row in (payload.get('data') or []):
-   pid=str(row.get('id') or '').strip()
-   if not pid:
-    continue
-   item={
-    'waba_id':wid,
-    'waba_name':winfo.get('name'),
-    'business_id':winfo.get('business_id'),
-    'business_name':winfo.get('business_name'),
-    'phone_number_id':pid,
-    'display_phone_number':row.get('display_phone_number'),
-    'verified_name':row.get('verified_name'),
-    'status':row.get('status'),
-    'quality_rating':row.get('quality_rating'),
-   }
-   candidatos.append(item)
-
- diagnostico['phones']=candidatos
-
- # Seleção segura: só escolhe automaticamente se houver um único par WABA+número.
- pares={(c['waba_id'],c['phone_number_id']):c for c in candidatos}
- if len(pares)==1:
-  escolhido=next(iter(pares.values()))
-  return escolhido['waba_id'],escolhido['phone_number_id'],[],diagnostico
-
- # Se há exatamente um WABA mas nenhum número, mantém o WABA para diagnóstico.
- if len(waba_ids)==1 and not candidatos:
-  return next(iter(waba_ids)),'',[],diagnostico
-
- # Mais de uma possibilidade: devolve lista para não vincular tenant errado.
- if len(pares)>1:
-  return '','',list(pares.values()),diagnostico
-
- return '','',[],diagnostico
-
-
-@app.route('/integracoes/whatsapp/embedded-signup/iniciar')
+@app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
 @login_required
-def iniciar_whatsapp_embedded_signup():
- """Inicia o Embedded Signup sem depender do redirect dinâmico do JS SDK."""
+def concluir_whatsapp_embedded_signup():
+ """Conclui o Embedded Signup sem remover o modo manual existente.
+
+ O navegador entrega o authorization code e os IDs da sessão. O App Secret
+ permanece somente no backend. A credencial resultante fica isolada no
+ Integration do tenant atual.
+ """
  if not (META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID):
-  flash('Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.','danger')
-  return redirect(url_for('integracoes'))
-
- state=uuid.uuid4().hex
- session['meta_whatsapp_oauth_state']=state
-
- callback_url=url_for(
-  'whatsapp_embedded_signup_callback',
-  _external=True,
-  _scheme='https',
- )
-
- extras=json.dumps({
-  'setup':{},
-  'featureType':'',
-  'sessionInfoVersion':'3',
- },separators=(',',':'))
-
- from urllib.parse import urlencode
- params={
-  'client_id':META_APP_ID,
-  'config_id':META_WHATSAPP_CONFIG_ID,
-  'redirect_uri':callback_url,
-  'response_type':'code',
-  'override_default_response_type':'true',
-  'state':state,
-  'extras':extras,
- }
- oauth_url=f'https://www.facebook.com/{META_GRAPH_VERSION}/dialog/oauth?{urlencode(params)}'
- return redirect(oauth_url)
-
-
-@app.route('/integracoes/whatsapp/embedded-signup/callback')
-@login_required
-def whatsapp_embedded_signup_callback():
- """Recebe o code da Meta e usa exatamente o mesmo redirect_uri na troca."""
- error=request.args.get('error')
- if error:
-  detail=request.args.get('error_description') or error
-  flash(f'Conexão com a Meta cancelada ou recusada: {detail}','danger')
-  return redirect(url_for('integracoes'))
-
- state=(request.args.get('state') or '').strip()
- expected_state=(session.pop('meta_whatsapp_oauth_state',None) or '').strip()
- if not state or not expected_state or state!=expected_state:
-  flash('Não foi possível validar o retorno de segurança da Meta. Tente novamente.','danger')
-  return redirect(url_for('integracoes'))
-
- code=(request.args.get('code') or '').strip()
+  return {'ok':False,'error':'Embedded Signup ainda não foi habilitado no ambiente do Frota Fácil.'},400
+ data=request.get_json(silent=True) or {}
+ code=str(data.get('code') or '').strip()
+ waba_id=str(data.get('waba_id') or '').strip()
+ phone_number_id=str(data.get('phone_number_id') or '').strip()
+ redirect_uri=str(data.get('redirect_uri') or '').strip()
  if not code:
-  flash('A Meta não retornou o código de autorização.','danger')
-  return redirect(url_for('integracoes'))
-
- callback_url=url_for(
-  'whatsapp_embedded_signup_callback',
-  _external=True,
-  _scheme='https',
- )
-
+  return {'ok':False,'error':'A Meta não retornou o código de autorização.'},400
+ if not redirect_uri:
+  return {'ok':False,'error':'Não foi possível identificar a URL que iniciou a autorização da Meta.'},400
+ # O redirect_uri usado para trocar o code precisa ser exatamente o mesmo da página
+ # que iniciou o FB.login(). Aceita apenas URL do próprio Frota Fácil.
+ current_origin=request.host_url.rstrip('/')
+ if not redirect_uri.startswith(current_origin + '/'):
+  return {'ok':False,'error':'URL de retorno da Meta inválida para este ambiente.'},400
  try:
   resp=requests.get(
    f'https://graph.facebook.com/{META_GRAPH_VERSION}/oauth/access_token',
    params={
     'client_id':META_APP_ID,
     'client_secret':META_APP_SECRET,
-    'redirect_uri':callback_url,
     'code':code,
+    'redirect_uri':redirect_uri,
    },
    timeout=20,
   )
-  payload=resp.json() if resp.content else {}
+  payload=resp.json()
  except Exception as exc:
-  app.logger.exception('Falha ao trocar code do Embedded Signup')
-  flash(f'Falha ao concluir autorização Meta: {exc}','danger')
-  return redirect(url_for('integracoes'))
-
+  app.logger.exception('Falha no Embedded Signup Meta')
+  return {'ok':False,'error':f'Falha ao concluir autorização Meta: {exc}'},502
  if not resp.ok or not payload.get('access_token'):
   detail=(payload.get('error') or {}).get('message') if isinstance(payload,dict) else None
-  flash(detail or 'A Meta não retornou um Access Token válido.','danger')
-  return redirect(url_for('integracoes'))
-
+  return {'ok':False,'error':detail or 'A Meta não retornou um Access Token válido.'},400
  token=payload['access_token']
- waba_id,phone_number_id,candidatos,meta_diag=_meta_descobrir_waba_e_numero(token)
-
- if candidatos:
-  resumo=[]
-  for c in candidatos[:8]:
-   numero=c.get('display_phone_number') or c.get('phone_number_id')
-   nome=c.get('verified_name') or c.get('waba_name') or 'WhatsApp'
-   resumo.append(f'{nome} — {numero}')
-  flash('A Meta retornou mais de uma conta/número. Para evitar vincular a locadora errada, nenhuma foi escolhida automaticamente: '+ ' | '.join(resumo),'warning')
-  app.logger.warning('Embedded Signup com múltiplos candidatos tenant=%s diag=%s',tid(),json.dumps(meta_diag,ensure_ascii=False))
-  return redirect(url_for('integracoes'))
-
+ # Se os IDs não vieram do evento SESSION_INFO, tenta descobrir WABA via token.
+ if not waba_id:
+  try:
+   dbg=requests.get(f'https://graph.facebook.com/{META_GRAPH_VERSION}/debug_token',params={'input_token':token,'access_token':f'{META_APP_ID}|{META_APP_SECRET}'},timeout=20).json()
+   scopes=(dbg.get('data') or {}).get('granular_scopes') or []
+   for scope in scopes:
+    if scope.get('scope')=='whatsapp_business_management' and scope.get('target_ids'):
+     waba_id=str(scope['target_ids'][0]); break
+  except Exception:
+   app.logger.exception('Não foi possível descobrir WABA pelo debug_token')
+ if waba_id and not phone_number_id:
+  try:
+   nums=requests.get(f'https://graph.facebook.com/{META_GRAPH_VERSION}/{waba_id}/phone_numbers',headers={'Authorization':f'Bearer {token}'},params={'fields':'id,display_phone_number,verified_name'},timeout=20).json()
+   if nums.get('data'):
+    phone_number_id=str(nums['data'][0].get('id') or '')
+  except Exception:
+   app.logger.exception('Não foi possível descobrir Phone Number ID')
  if not waba_id or not phone_number_id:
-  faltando=[]
-  if not waba_id: faltando.append('WABA ID')
-  if not phone_number_id: faltando.append('Phone Number ID')
-  erros=(meta_diag.get('errors') or [])[:3]
-  detalhe=(' Detalhes Meta: '+' | '.join(erros)) if erros else ''
-  flash('Autorização concluída, mas faltou identificar: '+', '.join(faltando)+'.'+detalhe,'danger')
-  app.logger.warning('Embedded Signup sem IDs tenant=%s diag=%s',tid(),json.dumps(meta_diag,ensure_ascii=False))
-  return redirect(url_for('integracoes'))
-
+  return {'ok':False,'error':'Autorização concluída, mas não foi possível identificar WABA e número. Use a configuração avançada enquanto revisamos a conta Meta.'},400
  item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
  oldcfg=_integration_config(item)
  oldcfg.update({
-  'provider':'business',
-  'onboarding_mode':'embedded_signup',
-  'business_account_id':waba_id,
-  'phone_number_id':phone_number_id,
-  'access_token':token,
-  'graph_version':META_GRAPH_VERSION,
-  'meta_business_id':next((c.get('business_id') for c in (meta_diag.get('phones') or []) if c.get('waba_id')==waba_id and c.get('phone_number_id')==phone_number_id),None),
+  'provider':'business','onboarding_mode':'embedded_signup','business_account_id':waba_id,
+  'phone_number_id':phone_number_id,'access_token':token,'graph_version':META_GRAPH_VERSION,
   'embedded_connected_at':agora_sao_paulo_naive().isoformat(),
  })
- item.ativo=True
- item.configuracao=json.dumps(oldcfg,ensure_ascii=False)
- db.session.add(item)
- db.session.commit()
-
- flash('WhatsApp conectado com sucesso pela Meta.','success')
- return redirect(url_for('integracoes'))
-
+ item.ativo=True; item.configuracao=json.dumps(oldcfg,ensure_ascii=False)
+ db.session.add(item); db.session.commit()
+ return {'ok':True,'waba_id':waba_id,'phone_number_id':phone_number_id}
 
 @app.route('/integracoes/whatsapp/embedded-signup/desconectar',methods=['POST'])
 @login_required
@@ -3471,7 +3140,7 @@ def testar_whatsapp_business():
  if not telefone:
   flash('Informe um telefone para o teste.','danger'); return redirect(url_for('integracoes'))
  mensagem='Teste de integração enviado pelo Frota Fácil.'
- provider_cfg=whatsapp_provider_efetivo(cfg)
+ provider_cfg=(cfg.get('provider') or 'web').lower()
  fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
  db.session.add(fila); db.session.flush()
  try:
