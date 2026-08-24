@@ -2346,9 +2346,43 @@ def vistorias():
   token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
   expira_horas=int(request.form.get('expira_horas') or 48)
   item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
-  db.session.add(item); db.session.commit()
+  db.session.add(item); db.session.flush()
   link=url_for('vistoria_publica',token=item.token,_external=True)
-  flash('Solicitação de vistoria criada. Link: '+link,'success')
+
+  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+  cfg=CommunicationService.parse_config(integration)
+  template_name=(cfg.get('inspection_template_name') or '').strip() or None
+  body=(
+   f'Olá, {d.nome}! A locadora solicitou uma vistoria do veículo '
+   f'{v.marca_modelo or "Veículo"} — {v.placa}. '
+   f'Abra o link e grave o vídeo da vistoria: {link}'
+  )
+  template_params=[
+   d.nome,
+   v.marca_modelo or 'Veículo',
+   v.placa or '-',
+   link,
+  ]
+  fila,redirect_whatsapp,err=criar_mensagem_whatsapp(
+   tenant_id=tid(),
+   driver=d,
+   body=body,
+   message_type='solicitacao_vistoria',
+   related_entity='Vistoria',
+   related_entity_id=item.id,
+   template_name=template_name,
+   template_parameters=template_params,
+  )
+  db.session.commit()
+
+  if err:
+   flash('Vistoria criada, mas o envio pelo WhatsApp falhou: '+err,'warning')
+  elif redirect_whatsapp:
+   return redirect(redirect_whatsapp)
+  elif fila:
+   flash('Solicitação de vistoria criada e enviada pelo WhatsApp.','success')
+  else:
+   flash('Solicitação de vistoria criada. Link: '+link,'success')
   return redirect(url_for('vistorias'))
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
  veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
@@ -2984,6 +3018,7 @@ def integracoes():
     'verify_token':request.form.get('verify_token','').strip(),
     'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
     'contract_template_name':request.form.get('contract_template_name','').strip(),
+    'inspection_template_name':request.form.get('inspection_template_name','').strip(),
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
     'maintenance_reminder_template_name':request.form.get('maintenance_reminder_template_name','').strip(),
