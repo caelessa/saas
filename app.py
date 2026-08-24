@@ -464,6 +464,19 @@ def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_en
  integration=Integration.query.filter_by(tenant_id=tenant_id,tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  provider_cfg=whatsapp_provider_efetivo(cfg)
+
+ # Normaliza a integração antes de chamar CommunicationService.
+ # Havia casos em que as credenciais Business estavam presentes,
+ # mas o provider persistido continuava como 'web'; o serviço então
+ # devolvia uma URL wa.me e o navegador abria o WhatsApp Web.
+ if integration and provider_cfg=='business' and (cfg.get('provider') or '').strip().lower()!='business':
+  cfg=dict(cfg)
+  cfg['provider']='business'
+  integration.configuracao=json.dumps(cfg,ensure_ascii=False)
+  integration.ativo=True
+  db.session.add(integration)
+  db.session.flush()
+
  fila=MessageQueue(
   tenant_id=tenant_id,channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',
   recipient=telefone,recipient_name=driver.nome,message_type=message_type,body=body,template_name=template_name,template_parameters=json.dumps(template_parameters or [],ensure_ascii=False),
@@ -478,7 +491,9 @@ def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_en
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1
   fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event=result.status,description='Mensagem processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
-  return fila, result.redirect_url, None
+  # Em conexão Business válida nunca redireciona para WhatsApp Web.
+  redirect_result=None if provider_cfg=='business' else result.redirect_url
+  return fila, redirect_result, None
  except CommunicationError as exc:
   fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
   db.session.add(MessageEvent(tenant_id=tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
@@ -1115,7 +1130,7 @@ def solicitar_km(id):
  cfg=CommunicationService.parse_config(integration)
  template_name=(cfg.get('mileage_template_name') or '').strip() or None
  template_params=[d.nome,v.marca_modelo or 'Veículo',v.placa,link]
- provider_cfg=(cfg.get('provider') or 'web').lower()
+ provider_cfg=whatsapp_provider_efetivo(cfg)
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
   recipient_name=d.nome,message_type='solicitacao_km',body=mensagem,template_name=template_name,template_parameters=json.dumps(template_params,ensure_ascii=False),
@@ -1691,7 +1706,7 @@ def contrato_whatsapp(id):
   db.session.rollback(); flash(str(exc),'danger'); return redirect(url_for('contrato_detalhe',id=id))
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
- provider_cfg=(cfg.get('provider') or 'web').lower()
+ provider_cfg=whatsapp_provider_efetivo(cfg)
  template_name=(cfg.get('contract_template_name') or '').strip() or None
  template_params=[
   c.driver.nome if c.driver else 'Motorista',
@@ -3422,7 +3437,7 @@ def testar_whatsapp_business():
  if not telefone:
   flash('Informe um telefone para o teste.','danger'); return redirect(url_for('integracoes'))
  mensagem='Teste de integração enviado pelo Frota Fácil.'
- provider_cfg=(cfg.get('provider') or 'web').lower()
+ provider_cfg=whatsapp_provider_efetivo(cfg)
  fila=MessageQueue(tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,recipient_name='Teste',message_type='teste',body=mensagem,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
  db.session.add(fila); db.session.flush()
  try:
