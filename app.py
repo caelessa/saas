@@ -76,7 +76,7 @@ def brl(value):
 
 
 class Tenant(db.Model):
- id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False)
+ id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False); cobrar_km_excedente=db.Column(db.Boolean,default=False)
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
@@ -288,6 +288,8 @@ class BillingAudit(db.Model):
  km_limit=db.Column(db.Integer)
  km_excess=db.Column(db.Integer,default=0)
  excess_rate=db.Column(db.Numeric(12,2),default=0)
+ excess_calculated_amount=db.Column(db.Numeric(12,2),default=0)
+ excess_charged=db.Column(db.Boolean,default=False)
  excess_amount=db.Column(db.Numeric(12,2),default=0)
  total_amount=db.Column(db.Numeric(12,2),nullable=False,default=0)
  body=db.Column(db.Text,nullable=False)
@@ -547,7 +549,7 @@ def recalcular_alertas(tenant_id):
 
 def migrate_schema():
  additions={
-  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE')],
+  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE')],
   'vehicle':[
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
@@ -566,7 +568,9 @@ def migrate_schema():
   'billing_audit':[
    ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
    ('payment_method','VARCHAR(50)'),('payment_notes','TEXT'),('reminder_count','INTEGER DEFAULT 0'),
-   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),('receipt_token','VARCHAR(64)'),('receipt_key','VARCHAR(255)'),('receipt_name','VARCHAR(255)'),('receipt_mime','VARCHAR(100)'),('receipt_uploaded_at','TIMESTAMP'),
+   ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),
+   ('excess_calculated_amount','NUMERIC(12,2) DEFAULT 0'),('excess_charged','BOOLEAN DEFAULT FALSE'),
+   ('receipt_token','VARCHAR(64)'),('receipt_key','VARCHAR(255)'),('receipt_name','VARCHAR(255)'),('receipt_mime','VARCHAR(100)'),('receipt_uploaded_at','TIMESTAMP'),
   ],
   'contract':[
    ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
@@ -1392,9 +1396,20 @@ def visualizar_comprovante_pagamento(id):
  except Exception: abort(503)
  return send_file(BytesIO(data),mimetype=audit.receipt_mime or 'application/octet-stream',download_name=audit.receipt_name or f'comprovante-{audit.id}',as_attachment=False)
 
-@app.route('/cobrancas')
+@app.route('/cobrancas',methods=['GET','POST'])
 @login_required
 def cobrancas():
+ tenant=Tenant.query.get_or_404(tid())
+ if request.method=='POST':
+  tenant.cobrar_km_excedente=request.form.get('cobrar_km_excedente')=='1'
+  db.session.commit()
+  flash(
+   'Cobrança de KM excedente ativada. O excedente passará a compor as novas cobranças.'
+   if tenant.cobrar_km_excedente
+   else 'Cobrança de KM excedente desativada. O cálculo continuará visível apenas para conferência.',
+   'success'
+  )
+  return redirect(url_for('cobrancas'))
  contratos_ativos=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(
   Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])
  ).order_by(Contract.id.desc()).all()
@@ -1412,7 +1427,7 @@ def cobrancas():
  for audit in auditoria:
   if not audit.receipt_token: garantir_token_comprovante(audit); alterou=True
  if alterou: db.session.commit()
- return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria)
+ return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant)
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
 @login_required
@@ -2664,10 +2679,20 @@ def _ultimas_leituras_km(vehicle_id, limit=2, tenant_id=None):
 
 def calcular_cobranca_semanal(contract):
  valor_base=Decimal(str(contract.valor_locacao or 0))
- total=valor_base
+ tenant=Tenant.query.get(contract.tenant_id)
+ cobrar_excesso=bool(tenant and tenant.cobrar_km_excedente)
  info={
-  'valor_base':valor_base,'total':total,'km_periodo':None,'limite_km':contract.limite_km,
-  'km_excedente':0,'valor_excesso':Decimal('0'),'tem_historico_km':False,'usa_excesso':False,
+  'valor_base':valor_base,
+  'total':valor_base,
+  'km_periodo':None,
+  'limite_km':contract.limite_km,
+  'km_excedente':0,
+  'valor_excesso_teorico':Decimal('0'),
+  'valor_excesso':Decimal('0'),
+  'tem_historico_km':False,
+  'tem_excesso':False,
+  'cobrar_excesso':cobrar_excesso,
+  'usa_excesso':False,
  }
  if not contract.vehicle_id or not contract.limite_km or not contract.valor_km_excedente:
   return info
@@ -2686,10 +2711,13 @@ def calcular_cobranca_semanal(contract):
  excedente=max(0,km_periodo-int(contract.limite_km or 0))
  info['km_excedente']=excedente
  if excedente>0:
-  valor_excesso=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
-  info['valor_excesso']=valor_excesso
-  info['total']=valor_base+valor_excesso
-  info['usa_excesso']=True
+  valor_teorico=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
+  info['valor_excesso_teorico']=valor_teorico
+  info['tem_excesso']=True
+  if cobrar_excesso:
+   info['valor_excesso']=valor_teorico
+   info['total']=valor_base+valor_teorico
+   info['usa_excesso']=True
  return info
 
 def cobranca_vence_hoje(contract):
@@ -2761,11 +2789,17 @@ def _reminder_interval(cfg):
  except Exception: return 1
 
 def _audit_info(audit):
+ valor_cobrado=Decimal(str(audit.excess_amount or 0))
+ valor_teorico=Decimal(str(audit.excess_calculated_amount or 0))
  return {
   'valor_base':Decimal(str(audit.base_amount or 0)),'total':Decimal(str(audit.total_amount or 0)),
   'km_periodo':audit.km_period,'limite_km':audit.km_limit,'km_excedente':audit.km_excess or 0,
-  'valor_excesso':Decimal(str(audit.excess_amount or 0)),'tem_historico_km':audit.km_period is not None,
-  'usa_excesso':Decimal(str(audit.excess_amount or 0))>0,
+  'valor_excesso_teorico':valor_teorico,
+  'valor_excesso':valor_cobrado,
+  'tem_historico_km':audit.km_period is not None,
+  'tem_excesso':valor_teorico>0,
+  'cobrar_excesso':bool(audit.excess_charged),
+  'usa_excesso':bool(audit.excess_charged) and valor_cobrado>0,
  }
 
 def _enviar_cobranca_audit(contract,audit,cfg):
@@ -2789,7 +2823,7 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  provider=(cfg.get('provider') or 'web').lower()
  template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
  hoje=datetime.now(SAO_PAULO).date()
- audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
+ audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_calculated_amount=info.get('valor_excesso_teorico') or 0,excess_charged=bool(info.get('usa_excesso')),excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
  db.session.add(audit); db.session.flush()
  comprovante_url=url_comprovante_cobranca(audit)
  audit.body=mensagem_cobranca_semanal(contract,info,comprovante_url)
