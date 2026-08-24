@@ -1,38 +1,116 @@
 {% extends 'base.html' %}
 {% block heading %}Cobranças{% endblock %}
-{% block subheading %}Acompanhe cobranças semanais, comprovantes enviados e baixas de pagamento.{% endblock %}
+{% block subheading %}Acompanhe cobranças semanais, confira a quilometragem e controle comprovantes e baixas.{% endblock %}
 {% block content %}
+
+<section class="card">
+  <h2>Configuração da cobrança de KM excedente</h2>
+  <form method="post" action="{{ url_for('cobrancas') }}">
+    <label class="check">
+      <input type="checkbox" name="cobrar_km_excedente" value="1" {% if tenant.cobrar_km_excedente %}checked{% endif %}>
+      Cobrar KM excedente
+    </label>
+    <p class="muted">
+      Mesmo desativado, o Frota Fácil continua calculando e mostrando o KM excedente e o valor teórico para conferência.
+      Quando desativado, esse valor não entra no total cobrado e não é enviado como cobrança de excesso ao motorista.
+    </p>
+    <button class="small">Salvar configuração</button>
+  </form>
+</section>
+
 <section class="card">
   <h2>Cobranças dos contratos ativos</h2>
   <table>
-    <tr><th>Motorista</th><th>Veículo</th><th>Vencimento</th><th>Valor</th><th>Ações</th></tr>
+    <tr>
+      <th>Motorista</th>
+      <th>Veículo</th>
+      <th>Vencimento</th>
+      <th>Aluguel</th>
+      <th>KM período</th>
+      <th>Limite</th>
+      <th>KM excedente</th>
+      <th>Excesso teórico</th>
+      <th>Situação do excesso</th>
+      <th>Total a cobrar</th>
+      <th>Ações</th>
+    </tr>
     {% for x in items %}
     <tr>
       <td>{{x.contract.driver.nome if x.contract.driver else '-'}}</td>
       <td>{{x.contract.vehicle.placa if x.contract.vehicle else '-'}}</td>
       <td>{{x.contract.dia_vencimento or '-'}}{% if x.vence_hoje %} <strong>(hoje)</strong>{% endif %}</td>
-      <td>R$ {{x.info.total|brl}}</td>
+      <td>R$ {{x.info.valor_base|brl}}</td>
+      <td>{{x.info.km_periodo if x.info.km_periodo is not none else '-' }}{% if x.info.km_periodo is not none %} km{% endif %}</td>
+      <td>{{x.info.limite_km if x.info.limite_km is not none else '-'}}{% if x.info.limite_km is not none %} km{% endif %}</td>
+      <td>{{x.info.km_excedente or 0}} km</td>
       <td>
-        <form method="post" action="{{url_for('cobranca_whatsapp',id=x.contract.id)}}" style="display:inline"><button class="small">Enviar lembrete</button></form>
+        {% if x.info.tem_excesso %}
+          R$ {{x.info.valor_excesso_teorico|brl}}
+          {% if x.contract.valor_km_excedente %}<br><small>{{x.info.km_excedente}} km × R$ {{x.contract.valor_km_excedente|brl}}</small>{% endif %}
+        {% else %}
+          R$ 0,00
+        {% endif %}
+      </td>
+      <td>
+        {% if x.info.tem_excesso and tenant.cobrar_km_excedente %}
+          <strong>Cobrado</strong>
+        {% elif x.info.tem_excesso %}
+          <strong>Somente conferência</strong>
+        {% else %}
+          Sem excesso
+        {% endif %}
+      </td>
+      <td><strong>R$ {{x.info.total|brl}}</strong></td>
+      <td>
+        <form method="post" action="{{url_for('cobranca_whatsapp',id=x.contract.id)}}" style="display:inline">
+          <button class="small">Enviar lembrete</button>
+        </form>
       </td>
     </tr>
-    {% else %}<tr><td colspan="5">Nenhum contrato ativo para cobrança.</td></tr>{% endfor %}
+    {% else %}
+    <tr><td colspan="11">Nenhum contrato ativo para cobrança.</td></tr>
+    {% endfor %}
   </table>
 </section>
 
 <section class="card">
   <h2>Histórico e conferência</h2>
   <table>
-    <tr><th>Data</th><th>Motorista / veículo</th><th>Aluguel</th><th>Excesso KM</th><th>Total</th><th>Status</th><th>Comprovante</th><th>Baixa</th></tr>
+    <tr>
+      <th>Data</th>
+      <th>Motorista / veículo</th>
+      <th>Aluguel</th>
+      <th>KM período</th>
+      <th>Limite</th>
+      <th>KM excedente</th>
+      <th>Excesso teórico</th>
+      <th>Excesso cobrado</th>
+      <th>Total</th>
+      <th>Status</th>
+      <th>Comprovante</th>
+      <th>Baixa</th>
+    </tr>
     {% for a in auditoria %}
     <tr>
       <td>{{a.billing_date.strftime('%d/%m/%Y') if a.billing_date else '-'}}</td>
       <td>{{a.driver_name or '-'}}<br><small>{{a.vehicle_label or ''}} {{a.plate or ''}}</small></td>
       <td>R$ {{a.base_amount|brl}}</td>
+      <td>{{a.km_period if a.km_period is not none else '-'}}{% if a.km_period is not none %} km{% endif %}</td>
+      <td>{{a.km_limit if a.km_limit is not none else '-'}}{% if a.km_limit is not none %} km{% endif %}</td>
+      <td>{{a.km_excess or 0}} km</td>
       <td>
-        {% if a.excess_amount and a.excess_amount > 0 %}
-          R$ {{a.excess_amount|brl}}
-          {% if a.km_excess %}<br><small>{{a.km_excess}} km excedentes{% if a.excess_rate %} × R$ {{a.excess_rate|brl}}{% endif %}</small>{% endif %}
+        {% if a.excess_calculated_amount and a.excess_calculated_amount > 0 %}
+          R$ {{a.excess_calculated_amount|brl}}
+          {% if a.excess_rate %}<br><small>{{a.km_excess or 0}} km × R$ {{a.excess_rate|brl}}</small>{% endif %}
+        {% else %}
+          R$ 0,00
+        {% endif %}
+      </td>
+      <td>
+        {% if a.excess_charged and a.excess_amount and a.excess_amount > 0 %}
+          <strong>R$ {{a.excess_amount|brl}}</strong>
+        {% elif a.excess_calculated_amount and a.excess_calculated_amount > 0 %}
+          R$ 0,00<br><small>Somente conferência</small>
         {% else %}
           R$ 0,00
         {% endif %}
@@ -45,22 +123,34 @@
         {% if a.receipt_uploaded_at %}<br><small>Enviado em {{a.receipt_uploaded_at|sp_datetime}}</small>{% endif %}
       </td>
       <td>
-        {% if a.receipt_key %}<a class="button small secondary" target="_blank" href="{{url_for('visualizar_comprovante_pagamento',id=a.id)}}">Visualizar</a>
-        {% else %}<span>-</span>{% endif %}
+        {% if a.receipt_key %}
+          <a class="button small secondary" target="_blank" href="{{url_for('visualizar_comprovante_pagamento',id=a.id)}}">Visualizar</a>
+        {% else %}
+          <span>-</span>
+        {% endif %}
       </td>
       <td>
         {% if a.payment_status!='PAGO' %}
         <form method="post" action="{{url_for('marcar_cobranca_paga',id=a.id)}}" class="inline">
-          <select name="payment_method"><option value="Pix">Pix</option><option value="Transferência">Transferência</option><option value="Dinheiro">Dinheiro</option><option value="Outro">Outro</option></select>
+          <select name="payment_method">
+            <option value="Pix">Pix</option>
+            <option value="Transferência">Transferência</option>
+            <option value="Dinheiro">Dinheiro</option>
+            <option value="Outro">Outro</option>
+          </select>
           <input name="payment_notes" placeholder="Observação">
           <button class="small">Confirmar pagamento</button>
         </form>
         {% else %}
-        <form method="post" action="{{url_for('reabrir_cobranca',id=a.id)}}"><button class="small secondary">Reabrir</button></form>
+        <form method="post" action="{{url_for('reabrir_cobranca',id=a.id)}}">
+          <button class="small secondary">Reabrir</button>
+        </form>
         {% endif %}
       </td>
     </tr>
-    {% else %}<tr><td colspan="8">Nenhuma cobrança registrada.</td></tr>{% endfor %}
+    {% else %}
+    <tr><td colspan="12">Nenhuma cobrança registrada.</td></tr>
+    {% endfor %}
   </table>
 </section>
 {% endblock %}
