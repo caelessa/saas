@@ -447,13 +447,23 @@ def motorista_atual_veiculo(vehicle):
  contrato=Contract.query.filter(Contract.tenant_id==vehicle.tenant_id,Contract.vehicle_id==vehicle.id,Contract.status.in_(['Gerado','Enviado','Visualizado','Assinado','Ativo'])).order_by(Contract.id.desc()).first()
  return contrato.driver if contrato else None
 
+def whatsapp_provider_efetivo(cfg):
+ provider=(cfg.get('provider') or '').strip().lower()
+ tem_business=bool(
+  (cfg.get('phone_number_id') or '').strip()
+  and (cfg.get('access_token') or '').strip()
+ )
+ if tem_business:
+  return 'business'
+ return provider or 'web'
+
 def criar_mensagem_whatsapp(*, tenant_id, driver, body, message_type, related_entity, related_entity_id, scheduled_at=None, template_name=None, template_parameters=None):
  telefone=normalize_phone(driver.telefone if driver else None)
  if not telefone:
   return None, None, 'Motorista sem telefone/WhatsApp válido.'
  integration=Integration.query.filter_by(tenant_id=tenant_id,tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
- provider_cfg=(cfg.get('provider') or 'web').lower()
+ provider_cfg=whatsapp_provider_efetivo(cfg)
  fila=MessageQueue(
   tenant_id=tenant_id,channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',
   recipient=telefone,recipient_name=driver.nome,message_type=message_type,body=body,template_name=template_name,template_parameters=json.dumps(template_parameters or [],ensure_ascii=False),
@@ -483,7 +493,7 @@ def processar_mensagens_agendadas(tenant_id=None, limit=100):
  for fila in items:
   integration=Integration.query.filter_by(tenant_id=fila.tenant_id,tipo='whatsapp').first()
   cfg=CommunicationService.parse_config(integration)
-  if (cfg.get('provider') or 'web').lower()!='business':
+  if whatsapp_provider_efetivo(cfg)!='business':
    fila.status='AGUARDANDO_MANUAL'; fila.updated_at=now
    db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='AGUARDANDO_MANUAL',description='WhatsApp Web não permite envio agendado automático.',created_at=now))
    processed+=1; continue
@@ -3009,14 +3019,20 @@ def integracoes():
   section=request.form.get('section')
   if section=='whatsapp':
    item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
-   provider=request.form.get('provider','web')
-   cfg={
+   existente=_integration_config(item)
+   provider=request.form.get('provider',existente.get('provider') or 'web')
+   # Se já existe conexão Business válida, não rebaixa para WhatsApp Web
+   # apenas por salvar templates/automações na configuração avançada.
+   if whatsapp_provider_efetivo(existente)=='business':
+    provider='business'
+   cfg=dict(existente)
+   cfg.update({
     'provider':provider,
-    'phone_number_id':request.form.get('phone_number_id','').strip(),
-    'business_account_id':request.form.get('business_account_id','').strip(),
-    'access_token':request.form.get('access_token','').strip(),
-    'verify_token':request.form.get('verify_token','').strip(),
-    'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
+    'phone_number_id':request.form.get('phone_number_id','').strip() or existente.get('phone_number_id',''),
+    'business_account_id':request.form.get('business_account_id','').strip() or existente.get('business_account_id',''),
+    'access_token':request.form.get('access_token','').strip() or existente.get('access_token',''),
+    'verify_token':request.form.get('verify_token','').strip() or existente.get('verify_token',''),
+    'graph_version':request.form.get('graph_version','v23.0').strip() or existente.get('graph_version') or 'v23.0',
     'contract_template_name':request.form.get('contract_template_name','').strip(),
     'inspection_template_name':request.form.get('inspection_template_name','').strip(),
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
@@ -3033,8 +3049,8 @@ def integracoes():
     'automatic_billing_enabled':bool(request.form.get('automatic_billing_enabled')),
     'automatic_km_enabled':bool(request.form.get('automatic_km_enabled')),
     'automatic_alerts_enabled':bool(request.form.get('automatic_alerts_enabled')),
-   }
-   item.ativo=(provider=='business')
+   })
+   item.ativo=(whatsapp_provider_efetivo(cfg)=='business')
    item.configuracao=json.dumps(cfg,ensure_ascii=False)
    db.session.add(item); db.session.commit(); flash('Configuração do WhatsApp salva.','success')
   elif section=='signature':
