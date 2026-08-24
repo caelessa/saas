@@ -42,6 +42,7 @@
         <label>Webhook Verify Token<input type="password" name="verify_token" value="{{ whatsapp_cfg.get('verify_token','') }}" autocomplete="new-password"></label>
         <label>Versão Graph API<input name="graph_version" value="{{ whatsapp_cfg.get('graph_version','v23.0') }}"></label>
         <label>Template de contrato<input name="contract_template_name" value="{{ whatsapp_cfg.get('contract_template_name','') }}"></label>
+        <label>Template solicitação de vistoria<input name="inspection_template_name" value="{{ whatsapp_cfg.get('inspection_template_name','') }}" placeholder="solicitacao_vistoria"></label>
         <label>Template solicitação de KM<input name="mileage_template_name" value="{{ whatsapp_cfg.get('mileage_template_name','') }}"></label>
         <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}"></label>
         <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}"></label>
