@@ -428,11 +428,41 @@ def valor_extenso(valor):
  except Exception: return "valor não informado"
 
 def normalize_phone(value):
+ """Normaliza telefones para o formato internacional usado pela Meta.
+
+ Para números brasileiros:
+ - aceita máscara, espaços e pontuação;
+ - aceita 10/11 dígitos sem DDI e acrescenta 55;
+ - aceita 12/13 dígitos já iniciados por 55;
+ - retorna vazio para formatos claramente inválidos.
+ """
  digits=re.sub(r'\D','',value or '')
- if not digits: return ''
- if digits.startswith('00'): digits=digits[2:]
- if len(digits) in (10,11): digits='55'+digits
+ if not digits:
+  return ''
+ if digits.startswith('00'):
+  digits=digits[2:]
+ if len(digits) in (10,11):
+  digits='55'+digits
+ if len(digits) not in (12,13) or not digits.startswith('55'):
+  return ''
  return digits
+
+def normalizar_telefones_form(campos):
+ """Normaliza campos de telefone recebidos de formulário.
+
+ Retorna (valores_normalizados, campo_invalido). Campos vazios são aceitos.
+ """
+ valores={}
+ for campo,valor in campos.items():
+  bruto=(valor or '').strip()
+  if not bruto:
+   valores[campo]=''
+   continue
+  normalizado=normalize_phone(bruto)
+  if not normalizado:
+   return {},campo
+  valores[campo]=normalizado
+ return valores,None
 
 def active_request(vehicle_id, driver_id):
  return MileageRequest.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id,driver_id=driver_id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
@@ -811,7 +841,18 @@ def dashboard():
 @login_required
 def motoristas():
  if request.method=='POST':
-  d=Driver(tenant_id=tid(),**{k:request.form.get(k) for k in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','telefone2','contato2_nome','contato2_parentesco','telefone3','contato3_nome','contato3_parentesco','email','endereco','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','status']})
+  campos=['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','telefone2','contato2_nome','contato2_parentesco','telefone3','contato3_nome','contato3_parentesco','email','endereco','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','status']
+  vals={k:request.form.get(k) for k in campos}
+  telefones,telefone_invalido=normalizar_telefones_form({
+   'telefone':vals.get('telefone'),
+   'telefone2':vals.get('telefone2'),
+   'telefone3':vals.get('telefone3'),
+  })
+  if telefone_invalido:
+   flash(f'Telefone inválido no campo {telefone_invalido}. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
+   return redirect(url_for('motoristas'))
+  vals.update(telefones)
+  d=Driver(tenant_id=tid(),**vals)
   db.session.add(d)
   try:
    db.session.flush()
@@ -846,8 +887,19 @@ def motoristas():
 def editar_motorista(id):
  d=Driver.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
-  for campo in ['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','telefone2','contato2_nome','contato2_parentesco','telefone3','contato3_nome','contato3_parentesco','email','endereco','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','status']:
-   setattr(d,campo,request.form.get(campo))
+  campos=['nome','cpf','rg','numero_cnh','categoria','data_nascimento','validade_cnh','telefone','telefone2','contato2_nome','contato2_parentesco','telefone3','contato3_nome','contato3_parentesco','email','endereco','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','status']
+  vals={campo:request.form.get(campo) for campo in campos}
+  telefones,telefone_invalido=normalizar_telefones_form({
+   'telefone':vals.get('telefone'),
+   'telefone2':vals.get('telefone2'),
+   'telefone3':vals.get('telefone3'),
+  })
+  if telefone_invalido:
+   flash(f'Telefone inválido no campo {telefone_invalido}. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
+   return redirect(url_for('editar_motorista',id=d.id))
+  vals.update(telefones)
+  for campo,valor in vals.items():
+   setattr(d,campo,valor)
   db.session.commit(); flash('Motorista atualizado com sucesso.','success'); return redirect(url_for('motoristas'))
  return render_template('editar_motorista.html',d=d)
 
@@ -888,7 +940,12 @@ def excluir_motorista(id):
 @login_required
 def investidores():
  if request.method=='POST':
-  x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=request.form.get('telefone'),email=request.form.get('email'),regra_repasse=request.form.get('regra_repasse'),observacoes=request.form.get('observacoes')); db.session.add(x); db.session.commit(); flash('Proprietário cadastrado.','success'); return redirect(url_for('investidores'))
+  telefone_bruto=request.form.get('telefone')
+  telefone=normalize_phone(telefone_bruto) if (telefone_bruto or '').strip() else ''
+  if (telefone_bruto or '').strip() and not telefone:
+   flash('Telefone inválido. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
+   return redirect(url_for('investidores'))
+  x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=telefone,email=request.form.get('email'),regra_repasse=request.form.get('regra_repasse'),observacoes=request.form.get('observacoes')); db.session.add(x); db.session.commit(); flash('Proprietário cadastrado.','success'); return redirect(url_for('investidores'))
  q=(request.args.get('q') or '').strip()
  query=Investor.query.filter_by(tenant_id=tid())
  if q:
@@ -901,8 +958,14 @@ def investidores():
 def editar_investidor(id):
  x=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
-  for campo in ['nome','cpf_cnpj','telefone','email','regra_repasse','observacoes']:
+  telefone_bruto=request.form.get('telefone')
+  telefone=normalize_phone(telefone_bruto) if (telefone_bruto or '').strip() else ''
+  if (telefone_bruto or '').strip() and not telefone:
+   flash('Telefone inválido. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
+   return redirect(url_for('editar_investidor',id=x.id))
+  for campo in ['nome','cpf_cnpj','email','regra_repasse','observacoes']:
    setattr(x,campo,request.form.get(campo))
+  x.telefone=telefone
   db.session.commit(); flash('Proprietário atualizado com sucesso.','success'); return redirect(url_for('investidores'))
  return render_template('editar_investidor.html',x=x)
 
@@ -1005,7 +1068,7 @@ def excluir_veiculo(id):
   return redirect(url_for('veiculos'))
  contratos=Contract.query.filter_by(tenant_id=tid(),vehicle_id=v.id).count()
  if contratos:
-  flash('Este veículo possui contrato(s) vinculado(s) e não pode ser excluído. Altere o status para Vendido ou Inativo para preservar o histórico.','danger')
+  flash('Este veículo possui histórico contratual e não pode ser excluído definitivamente. Mesmo que os contratos estejam cancelados ou encerrados, altere o status para Vendido ou Inativo para preservar a rastreabilidade.','danger')
   return redirect(url_for('veiculos'))
 
  # Remove as fotos de quilometragem antes dos registros.
@@ -1154,6 +1217,11 @@ def registrar_quilometragem_publica(token):
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
 
+@app.route('/configuracoes')
+@login_required
+def configuracoes():
+ return render_template('configuracoes.html')
+
 @app.route('/configuracoes/quilometragem',methods=['GET','POST'])
 @login_required
 def configuracoes_quilometragem():
@@ -1279,17 +1347,33 @@ def garantir_codigo_publico_contrato(contrato):
 
 
 def telefone_whatsapp(valor):
- digits=re.sub(r'\D','',valor or '')
- if len(digits) in (10,11): digits='55'+digits
- return digits
+ return normalize_phone(valor)
+
+def _dados_historico_veiculo(v):
+ eventos=VehicleEvent.query.options(joinedload(VehicleEvent.user),joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(VehicleEvent.criado_em.desc()).all()
+ contratos=Contract.query.options(joinedload(Contract.driver)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Contract.id.desc()).all()
+ odometros=Odometer.query.filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Odometer.data.desc(),Odometer.id.desc()).all()
+ manutencoes=Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Maintenance.id.desc()).all()
+ vistorias=Inspection.query.options(joinedload(Inspection.driver),joinedload(Inspection.contract)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).all()
+ documentos=Document.query.filter_by(tenant_id=tid(),entidade='Veículo',entidade_id=v.id,status='Ativo').order_by(Document.criado_em.desc(),Document.id.desc()).all()
+ return {
+  'eventos':eventos,'contratos':contratos,'odometros':odometros,
+  'manutencoes':manutencoes,'vistorias':vistorias,'documentos':documentos,
+ }
 
 @app.route('/veiculos/<int:id>/historico')
 @login_required
 def historico_veiculo(id):
  v=Vehicle.query.options(joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)).filter_by(id=id,tenant_id=tid()).first_or_404()
- eventos=VehicleEvent.query.options(joinedload(VehicleEvent.user),joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(VehicleEvent.criado_em.desc()).all()
- manutencoes_concluidas=Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id,status='Concluída').order_by(Maintenance.concluida_em.desc(),Maintenance.id.desc()).all()
- return render_template('veiculo_historico.html',v=v,eventos=eventos,manutencoes_concluidas=manutencoes_concluidas)
+ dados=_dados_historico_veiculo(v)
+ return render_template('veiculo_historico.html',v=v,**dados)
+
+@app.route('/veiculos/<int:id>/historico/imprimir')
+@login_required
+def imprimir_historico_veiculo(id):
+ v=Vehicle.query.options(joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ dados=_dados_historico_veiculo(v)
+ return render_template('veiculo_historico_impressao.html',v=v,gerado_em=agora_sao_paulo_naive(),**dados)
 
 def garantir_token_comprovante(audit):
  if audit.receipt_token: return audit.receipt_token
@@ -2620,15 +2704,16 @@ def mensagem_cobranca_semanal(contract, info, comprovante_url=None):
  linhas += ['', 'Obrigado.']
  return '\n'.join(linhas)
 
-def _cobranca_template_params(contract,info,comprovante_url=None,include_link=False):
+def _cobranca_template_params(contract,info,comprovante_url=None,include_link=True):
  d=contract.driver; v=contract.vehicle
  vencimento='hoje' if cobranca_vence_hoje(contract) else str(contract.dia_vencimento or 'semanal')
  if info.get('usa_excesso'):
-  # Template cobranca_semanal_com_excesso (pt_BR):
-  # 1 motorista, 2 placa, 3 valor semanal, 4 km período, 5 limite,
-  # 6 km excedente, 7 valor excesso, 8 total.
+  # cobranca_semanal_excesso_com_comprovante (pt_BR)
+  # 1 motorista, 2 veículo, 3 placa, 4 aluguel, 5 km período, 6 limite,
+  # 7 km excedente, 8 valor excesso, 9 total, 10 vencimento, 11 link comprovante.
   params=[
    d.nome if d else 'Motorista',
+   v.marca_modelo if v and v.marca_modelo else 'Veículo',
    v.placa if v else '-',
    moeda_br(info['valor_base']),
    str(info.get('km_periodo') or 0),
@@ -2636,10 +2721,20 @@ def _cobranca_template_params(contract,info,comprovante_url=None,include_link=Fa
    str(info.get('km_excedente') or 0),
    moeda_br(info['valor_excesso']),
    moeda_br(info['total']),
+   vencimento,
   ]
  else:
-  params=[d.nome if d else 'Motorista',v.marca_modelo or 'Veículo' if v else 'Veículo',v.placa if v else '-',moeda_br(info['valor_base']),vencimento]
- if include_link and comprovante_url: params.append(comprovante_url)
+  # cobranca_semanal_com_comprovante (pt_BR)
+  # 1 motorista, 2 veículo, 3 placa, 4 aluguel, 5 vencimento, 6 link comprovante.
+  params=[
+   d.nome if d else 'Motorista',
+   v.marca_modelo if v and v.marca_modelo else 'Veículo',
+   v.placa if v else '-',
+   moeda_br(info['valor_base']),
+   vencimento,
+  ]
+ if include_link and comprovante_url:
+  params.append(comprovante_url)
  return params
 
 def _automation_cfg(tenant_id):
@@ -2674,10 +2769,8 @@ def _enviar_cobranca_audit(contract,audit,cfg):
  info=_audit_info(audit)
  comprovante_url=url_comprovante_cobranca(audit)
  body=audit.body or mensagem_cobranca_semanal(contract,info,comprovante_url)
- receipt_template=(cfg.get('payment_receipt_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_receipt_template_name')) or ''
- receipt_template=receipt_template.strip()
- template_name=receipt_template or audit.template_name
- params=_cobranca_template_params(contract,info,comprovante_url,include_link=bool(receipt_template))
+ template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or audit.template_name
+ params=_cobranca_template_params(contract,info,comprovante_url,include_link=True)
  fila,redirect_url,err=criar_mensagem_whatsapp(tenant_id=contract.tenant_id,driver=contract.driver,body=body,message_type='lembrete_pagamento_semanal',related_entity='Cobranca',related_entity_id=audit.id,template_name=template_name,template_parameters=params)
  now=agora_sao_paulo_naive()
  if fila:
@@ -2947,17 +3040,18 @@ def integracoes():
   if section=='whatsapp':
    item=_integration('whatsapp') or Integration(tenant_id=tid(),tipo='whatsapp')
    provider=request.form.get('provider','web')
-   cfg={
+   cfg=dict(_integration_config(item))
+   cfg.update({
     'provider':provider,
-    'phone_number_id':request.form.get('phone_number_id','').strip(),
-    'business_account_id':request.form.get('business_account_id','').strip(),
-    'access_token':request.form.get('access_token','').strip(),
-    'verify_token':request.form.get('verify_token','').strip(),
+    'phone_number_id':request.form.get('phone_number_id','').strip() or cfg.get('phone_number_id',''),
+    'business_account_id':request.form.get('business_account_id','').strip() or cfg.get('business_account_id',''),
     'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
     'contract_template_name':request.form.get('contract_template_name','').strip(),
+    'inspection_template_name':request.form.get('inspection_template_name','').strip(),
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
     'maintenance_reminder_template_name':request.form.get('maintenance_reminder_template_name','').strip(),
+    'oil_change_template_name':request.form.get('oil_change_template_name','').strip(),
     'payment_template_name':request.form.get('payment_template_name','').strip(),
     'payment_excess_template_name':request.form.get('payment_excess_template_name','').strip(),
     'template_language':request.form.get('template_language','pt_BR').strip() or 'pt_BR',
@@ -2969,7 +3063,11 @@ def integracoes():
     'automatic_billing_enabled':bool(request.form.get('automatic_billing_enabled')),
     'automatic_km_enabled':bool(request.form.get('automatic_km_enabled')),
     'automatic_alerts_enabled':bool(request.form.get('automatic_alerts_enabled')),
-   }
+   })
+   novo_access_token=request.form.get('access_token','').strip()
+   novo_verify_token=request.form.get('verify_token','').strip()
+   if novo_access_token: cfg['access_token']=novo_access_token
+   if novo_verify_token: cfg['verify_token']=novo_verify_token
    item.ativo=(provider=='business')
    item.configuracao=json.dumps(cfg,ensure_ascii=False)
    db.session.add(item); db.session.commit(); flash('Configuração do WhatsApp salva.','success')
