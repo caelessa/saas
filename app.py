@@ -345,6 +345,88 @@ def tenant_backup_payload(tenant_id):
 
 
 
+def corrigir_dados_crlv_ocr(texto, dados):
+ """Aplica validações semânticas nos campos extraídos do CRLV.
+
+ O parser original continua sendo a primeira fonte. Esta camada corrige falsos
+ positivos comuns do layout do CRLV Digital, especialmente quando a linha de
+ CHASSI é confundida com MARCA / MODELO / VERSÃO.
+ """
+ dados=dict(dados or {})
+ linhas=[re.sub(r'\s+',' ',x).strip() for x in (texto or '').splitlines()]
+ linhas=[x for x in linhas if x]
+
+ # VIN/chassi: 17 caracteres, sem I/O/Q, conforme padrão usual do VIN.
+ vin_re=re.compile(r'(?<![A-Z0-9])([A-HJ-NPR-Z0-9]{17})(?![A-Z0-9])',re.I)
+ vins=[]
+ for linha in linhas:
+  for m in vin_re.finditer(linha.upper()):
+   vin=m.group(1).upper()
+   if any(c.isalpha() for c in vin) and any(c.isdigit() for c in vin):
+    vins.append(vin)
+
+ def parece_chassi(valor):
+  v=(valor or '').upper().strip()
+  return bool(vin_re.search(v)) or ('***' in v and any(ch.isdigit() for ch in v))
+
+ # Se o parser trouxe chassi incompleto ou colocou a linha do chassi em marca/modelo,
+ # usa o VIN detectado diretamente no texto.
+ if vins:
+  chassi_atual=(dados.get('chassi') or '').strip().upper()
+  if not vin_re.fullmatch(chassi_atual):
+   dados['chassi']=vins[0]
+
+ marca_atual=(dados.get('marca_modelo') or '').strip()
+ marca_invalida=(
+  not marca_atual
+  or parece_chassi(marca_atual)
+  or marca_atual.count('*')>=2
+  or bool(re.fullmatch(r'[\W_0-9]+',marca_atual))
+ )
+
+ if marca_invalida:
+  # No CRLV Digital, a linha MARCA/MODELO/VERSÃO normalmente aparece
+  # imediatamente antes da linha ESPÉCIE/TIPO (ex.: PASSAGEIRO AUTOMOVEL).
+  especie_re=re.compile(
+   r'^(PASSAGEIRO|CARGA|MISTO|ESPECIAL|TRACAO|COMPETICAO)\b.*\b'
+   r'(AUTOMOVEL|CAMIONETA|CAMINHONETE|UTILITARIO|MOTOCICLETA|MOTONETA|'
+   r'CAMINHAO|ONIBUS|MICROONIBUS|REBOQUE|SEMIRREBOQUE)\b',re.I
+  )
+  cabecalhos={
+   'MARCA / MODELO / VERSÃO','MARCA/MODELO/VERSÃO','PLACA ANTERIOR / UF CHASSI',
+   'PLACA ANTERIOR/UF CHASSI','COR PREDOMINANTE','ESPÉCIE / TIPO',
+   'ESPECIE / TIPO','COMBUSTÍVEL','COMBUSTIVEL'
+  }
+
+  candidato=None
+  for i,linha in enumerate(linhas):
+   if especie_re.search(linha) and i>0:
+    # olha até 3 linhas para trás porque alguns extratores inserem linhas vazias/ruído
+    for j in range(i-1,max(-1,i-4),-1):
+     c=linhas[j].strip()
+     cu=c.upper()
+     if cu in cabecalhos:
+      continue
+     if parece_chassi(c) or c.count('*')>=2:
+      continue
+     if not re.search(r'[A-ZÀ-Ü]',cu):
+      continue
+     if len(c)<3 or len(c)>90:
+      continue
+     # descarta campos que claramente são números/códigos soltos.
+     if re.fullmatch(r'[\d\s./-]+',c):
+      continue
+     candidato=c
+     break
+   if candidato:
+    break
+
+  if candidato:
+   dados['marca_modelo']=candidato
+
+ return dados
+
+
 def limpar_campo_ocr_veiculo(campo, valor):
  valor=(valor or '').strip()
  valor=re.sub(r'\s+',' ',valor)
@@ -1025,7 +1107,9 @@ def importar_veiculo():
  try:
   storage.upload(BytesIO(conteudo),temp_key,mimetype)
   arquivo_ocr=FileStorage(stream=BytesIO(conteudo),filename=nome_original,content_type=mimetype)
-  dados=parse_crlv(extract_text(arquivo_ocr))
+  texto_ocr=extract_text(arquivo_ocr)
+  dados=parse_crlv(texto_ocr)
+  dados=corrigir_dados_crlv_ocr(texto_ocr,dados)
   return render_template('confirmar_veiculo.html',dados=dados,investidores=Investor.query.filter_by(tenant_id=tid()).all(),documento_temp_key=temp_key,documento_nome=nome_original,documento_mimetype=mimetype)
  except Exception as exc:
   try: storage.delete(temp_key)
