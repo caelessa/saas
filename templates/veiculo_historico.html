@@ -1,19 +1,84 @@
 {% extends 'base.html' %}
-{% block heading %}{{v.placa}} — Histórico operacional{% endblock %}
-{% block subheading %}{{v.marca_modelo or 'Veículo'}}{% endblock %}
+{% block heading %}Histórico do veículo{% endblock %}
+{% block subheading %}{{ v.marca_modelo or 'Veículo' }} — {{ v.placa }}{% endblock %}
 {% block content %}
-<div class="cards contract-summary"><div class="card"><small>Status atual</small><strong>{{v.status}}</strong></div><div class="card"><small>Motorista atual</small><strong>{{v.current_driver.nome if v.current_driver else '-'}}</strong></div><div class="card"><small>Contrato atual</small><strong>{{v.current_contract.numero_contrato if v.current_contract else '-'}}</strong></div><div class="card"><small>Alterado em</small><strong>{{v.status_changed_at.strftime('%d/%m/%Y %H:%M') if v.status_changed_at else '-'}}</strong></div></div>
+<div class="section-heading">
+  <div>
+    <h2>{{ v.marca_modelo or 'Veículo' }} — {{ v.placa }}</h2>
+    <p class="muted">Status atual: <strong>{{ v.status or '-' }}</strong> · KM atual: <strong>{{ v.km_atual or 0 }}</strong></p>
+  </div>
+  <a class="btn" target="_blank" href="{{ url_for('imprimir_historico_veiculo',id=v.id) }}">🖨 Imprimir histórico</a>
+</div>
 
 <section class="card">
-  <h2>Histórico de manutenções</h2>
-  <div class="table-wrap"><table><tr><th>Data</th><th>Serviço</th><th>Km</th><th>Custo</th><th>Oficina</th><th>Observações</th></tr>
-  {% for m in manutencoes_concluidas %}<tr>
-    <td>{{m.data or '-'}}</td><td><b>{{m.tipo}}</b></td><td>{{m.km or '-'}} km</td>
-    <td>{% if m.custo %}R$ {{'%.2f'|format(m.custo)|replace('.',',')}}{% else %}-{% endif %}</td>
-    <td>{{m.oficina or '-'}}</td><td>{{m.observacoes or '-'}}</td>
-  </tr>{% else %}<tr><td colspan="6">Nenhuma manutenção concluída registrada.</td></tr>{% endfor %}</table></div>
+  <h2>Contratos</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Número</th><th>Motorista</th><th>Período</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for c in contratos %}
+      <tr><td>{{ c.numero_contrato or c.id }}</td><td>{{ c.driver.nome if c.driver else '-' }}</td><td>{{ c.data_inicio or '-' }} → {{ c.data_fim or '-' }}</td><td>{{ c.status or '-' }}</td></tr>
+    {% else %}<tr><td colspan="4">Nenhum contrato registrado.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
 </section>
 
-<section class="card"><h2>Linha do tempo</h2><div class="timeline">{% for e in eventos %}<div class="timeline-item"><strong>{% if e.evento %}{{e.evento}}{% else %}{{e.status_anterior or '-'}} → {{e.status_novo}}{% endif %}</strong><span>{{e.criado_em.strftime('%d/%m/%Y %H:%M')}}</span><p>{{e.descricao or ''}}</p><small>{% if e.contract %}Contrato {{e.contract.numero_contrato}} · {% endif %}{% if e.driver %}{{e.driver.nome}} · {% endif %}Responsável: {{e.user.nome if e.user else 'Sistema'}}</small></div>{% else %}<p>Nenhum evento operacional registrado.</p>{% endfor %}</div></section>
-<a class="button secondary" href="{{url_for('veiculos')}}">Voltar</a>
+<section class="card">
+  <h2>Eventos e mudanças de status</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>Evento</th><th>Descrição</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for e in eventos %}
+      <tr><td>{{ e.criado_em|sp_datetime if e.criado_em else '-' }}</td><td>{{ e.evento }}</td><td>{{ e.descricao or '-' }}</td><td>{{ e.status_anterior or '-' }} → {{ e.status_novo or '-' }}</td></tr>
+    {% else %}<tr><td colspan="4">Nenhum evento registrado.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Quilometragens</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Data</th><th>KM</th><th>Origem</th></tr></thead>
+    <tbody>
+    {% for o in odometros %}
+      <tr><td>{{ o.data|sp_datetime if o.data else '-' }}</td><td>{{ o.km }}</td><td>{{ o.origem or '-' }}</td></tr>
+    {% else %}<tr><td colspan="3">Nenhuma leitura registrada.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Manutenções</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tipo</th><th>Data</th><th>KM</th><th>Status</th><th>Observações</th></tr></thead>
+    <tbody>
+    {% for m in manutencoes %}
+      <tr><td>{{ m.tipo or '-' }}</td><td>{{ m.data or m.proxima_data or '-' }}</td><td>{{ m.km if m.km is not none else '-' }}</td><td>{{ m.status or '-' }}</td><td>{{ m.observacoes or '-' }}</td></tr>
+    {% else %}<tr><td colspan="5">Nenhuma manutenção registrada.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Vistorias</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Solicitada</th><th>Motorista</th><th>Status</th><th>Enviada</th></tr></thead>
+    <tbody>
+    {% for i in vistorias %}
+      <tr><td>{{ i.requested_at|sp_datetime if i.requested_at else '-' }}</td><td>{{ i.driver.nome if i.driver else '-' }}</td><td>{{ i.status or '-' }}</td><td>{{ i.submitted_at|sp_datetime if i.submitted_at else '-' }}</td></tr>
+    {% else %}<tr><td colspan="4">Nenhuma vistoria registrada.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Documentos do veículo</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tipo</th><th>Identificação</th><th>Data</th></tr></thead>
+    <tbody>
+    {% for d in documentos %}
+      <tr><td>{{ d.tipo or '-' }}</td><td>{{ d.identificador or d.nome_original or '-' }}</td><td>{{ d.criado_em|sp_datetime if d.criado_em else '-' }}</td></tr>
+    {% else %}<tr><td colspan="3">Nenhum documento registrado.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</section>
 {% endblock %}

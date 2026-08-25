@@ -2,6 +2,7 @@
 {% block heading %}Integrações{% endblock %}
 {% block subheading %}Conecte os serviços usados por cada locadora sem prender o Frota Fácil a um único fornecedor.{% endblock %}
 {% block content %}
+<div style="margin-bottom:16px"><a class="btn-secondary" href="{{ url_for('configuracoes') }}">⚙ Central de Configurações</a></div>
 <div class="integration-grid">
   <section class="card integration-card">
     <h2>WhatsApp Business Platform</h2>
@@ -53,8 +54,8 @@
         <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}"></label>
         <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}"></label>
         <label>Template alerta troca de óleo<input name="oil_change_template_name" value="{{ whatsapp_cfg.get('oil_change_template_name','') }}" placeholder="alerta_troca_oleo"></label>
-        <label>Template cobrança semanal<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="lembrete_pagamento_semanal"></label>
-        <label>Template cobrança com excesso KM<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="lembrete_pagamento_com_excesso"></label>
+        <label>Template cobrança semanal com comprovante<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="cobranca_semanal_com_comprovante"><small class="muted">Toda cobrança normal deve incluir o link público para envio do comprovante.</small></label>
+        <label>Template cobrança com excesso KM + comprovante<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="cobranca_semanal_excesso_com_comprovante"><small class="muted">Usado quando houver cobrança efetiva de KM excedente; também recebe o link de comprovante.</small></label>
         <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
         <div class="wide maintenance-box">
           <h3>Automação operacional semanal</h3>

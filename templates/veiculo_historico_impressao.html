@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Histórico {{ v.placa }}</title>
+<style>
+body{font-family:Arial,sans-serif;color:#111;margin:28px;font-size:12px}
+h1{font-size:22px;margin:0 0 6px} h2{font-size:15px;margin-top:24px;border-bottom:1px solid #bbb;padding-bottom:5px}
+.meta{margin-bottom:18px;color:#444}.actions{margin-bottom:20px}
+button{padding:8px 14px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 18px}
+.box{border:1px solid #ccc;padding:8px;border-radius:4px}
+table{width:100%;border-collapse:collapse;margin-top:8px} th,td{border:1px solid #ccc;padding:6px;text-align:left;vertical-align:top} th{background:#eee}
+@media print{.actions{display:none} body{margin:10mm} a{color:#000;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="actions"><button onclick="window.print()">Imprimir / salvar em PDF</button></div>
+<h1>Histórico do veículo — {{ v.placa }}</h1>
+<div class="meta">Gerado em {{ gerado_em|sp_datetime }} pelo Frota Fácil.</div>
+<div class="grid">
+ <div class="box"><strong>Veículo</strong><br>{{ v.marca_modelo or '-' }}</div>
+ <div class="box"><strong>Status atual</strong><br>{{ v.status or '-' }}</div>
+ <div class="box"><strong>KM atual</strong><br>{{ v.km_atual or 0 }} km</div>
+ <div class="box"><strong>Renavam</strong><br>{{ v.renavam or '-' }}</div>
+ <div class="box"><strong>Chassi</strong><br>{{ v.chassi or '-' }}</div>
+ <div class="box"><strong>Proprietário</strong><br>{{ v.proprietario_legal or '-' }}</div>
+</div>
+
+<h2>Contratos</h2>
+<table><tr><th>Número</th><th>Motorista</th><th>Início</th><th>Fim</th><th>Status</th></tr>
+{% for c in contratos %}<tr><td>{{ c.numero_contrato or c.id }}</td><td>{{ c.driver.nome if c.driver else '-' }}</td><td>{{ c.data_inicio or '-' }}</td><td>{{ c.data_fim or '-' }}</td><td>{{ c.status or '-' }}</td></tr>{% else %}<tr><td colspan="5">Nenhum registro.</td></tr>{% endfor %}</table>
+
+<h2>Eventos e mudanças de status</h2>
+<table><tr><th>Data</th><th>Evento</th><th>Descrição</th><th>Status anterior</th><th>Status novo</th></tr>
+{% for e in eventos %}<tr><td>{{ e.criado_em|sp_datetime if e.criado_em else '-' }}</td><td>{{ e.evento }}</td><td>{{ e.descricao or '-' }}</td><td>{{ e.status_anterior or '-' }}</td><td>{{ e.status_novo or '-' }}</td></tr>{% else %}<tr><td colspan="5">Nenhum registro.</td></tr>{% endfor %}</table>
+
+<h2>Quilometragens</h2>
+<table><tr><th>Data</th><th>KM</th><th>Origem</th></tr>
+{% for o in odometros %}<tr><td>{{ o.data|sp_datetime if o.data else '-' }}</td><td>{{ o.km }}</td><td>{{ o.origem or '-' }}</td></tr>{% else %}<tr><td colspan="3">Nenhum registro.</td></tr>{% endfor %}</table>
+
+<h2>Manutenções</h2>
+<table><tr><th>Tipo</th><th>Data</th><th>KM</th><th>Status</th><th>Observações</th></tr>
+{% for m in manutencoes %}<tr><td>{{ m.tipo or '-' }}</td><td>{{ m.data or m.proxima_data or '-' }}</td><td>{{ m.km if m.km is not none else '-' }}</td><td>{{ m.status or '-' }}</td><td>{{ m.observacoes or '-' }}</td></tr>{% else %}<tr><td colspan="5">Nenhum registro.</td></tr>{% endfor %}</table>
+
+<h2>Vistorias</h2>
+<table><tr><th>Solicitada</th><th>Motorista</th><th>Contrato</th><th>Status</th><th>Enviada</th></tr>
+{% for i in vistorias %}<tr><td>{{ i.requested_at|sp_datetime if i.requested_at else '-' }}</td><td>{{ i.driver.nome if i.driver else '-' }}</td><td>{{ i.contract.numero_contrato if i.contract else '-' }}</td><td>{{ i.status or '-' }}</td><td>{{ i.submitted_at|sp_datetime if i.submitted_at else '-' }}</td></tr>{% else %}<tr><td colspan="5">Nenhum registro.</td></tr>{% endfor %}</table>
+
+<h2>Documentos</h2>
+<table><tr><th>Tipo</th><th>Identificação</th><th>Data</th></tr>
+{% for d in documentos %}<tr><td>{{ d.tipo or '-' }}</td><td>{{ d.identificador or d.nome_original or '-' }}</td><td>{{ d.criado_em|sp_datetime if d.criado_em else '-' }}</td></tr>{% else %}<tr><td colspan="3">Nenhum registro.</td></tr>{% endfor %}</table>
+</body></html>
