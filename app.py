@@ -76,7 +76,7 @@ def brl(value):
 
 
 class Tenant(db.Model):
- id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False)
+ id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False); cobrar_km_excedente=db.Column(db.Boolean,default=False)
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
@@ -552,7 +552,7 @@ def recalcular_alertas(tenant_id):
 
 def migrate_schema():
  additions={
-  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE')],
+  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE')],
   'vehicle':[
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
@@ -1427,9 +1427,15 @@ def visualizar_comprovante_pagamento(id):
  except Exception: abort(503)
  return send_file(BytesIO(data),mimetype=audit.receipt_mime or 'application/octet-stream',download_name=audit.receipt_name or f'comprovante-{audit.id}',as_attachment=False)
 
-@app.route('/cobrancas')
+@app.route('/cobrancas',methods=['GET','POST'])
 @login_required
 def cobrancas():
+ tenant=Tenant.query.get_or_404(tid())
+ if request.method=='POST':
+  tenant.cobrar_km_excedente=bool(request.form.get('cobrar_km_excedente'))
+  db.session.commit()
+  flash('Configuração de cobrança de KM excedente atualizada.','success')
+  return redirect(url_for('cobrancas'))
  contratos_ativos=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(
   Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])
  ).order_by(Contract.id.desc()).all()
@@ -1447,7 +1453,7 @@ def cobrancas():
  for audit in auditoria:
   if not audit.receipt_token: garantir_token_comprovante(audit); alterou=True
  if alterou: db.session.commit()
- return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria)
+ return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant)
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
 @login_required
@@ -2653,7 +2659,8 @@ def calcular_cobranca_semanal(contract):
  total=valor_base
  info={
   'valor_base':valor_base,'total':total,'km_periodo':None,'limite_km':contract.limite_km,
-  'km_excedente':0,'valor_excesso':Decimal('0'),'tem_historico_km':False,'usa_excesso':False,
+  'km_excedente':0,'valor_excesso':Decimal('0'),'valor_excesso_teorico':Decimal('0'),
+  'tem_historico_km':False,'usa_excesso':False,'tem_excesso':False,
  }
  if not contract.vehicle_id or not contract.limite_km or not contract.valor_km_excedente:
   return info
@@ -2661,7 +2668,6 @@ def calcular_cobranca_semanal(contract):
  if len(leituras)<2:
   return info
  atual,anterior=leituras[0],leituras[1]
- # Evita reutilizar leitura muito antiga numa cobrança atual.
  agora=agora_sao_paulo_naive()
  data_atual=_as_sao_paulo(atual.data).replace(tzinfo=None) if atual.data else None
  if data_atual and (agora-data_atual)>timedelta(days=10):
@@ -2672,10 +2678,15 @@ def calcular_cobranca_semanal(contract):
  excedente=max(0,km_periodo-int(contract.limite_km or 0))
  info['km_excedente']=excedente
  if excedente>0:
-  valor_excesso=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
-  info['valor_excesso']=valor_excesso
-  info['total']=valor_base+valor_excesso
-  info['usa_excesso']=True
+  valor_excesso_teorico=Decimal(excedente)*Decimal(str(contract.valor_km_excedente or 0))
+  info['valor_excesso_teorico']=valor_excesso_teorico
+  info['tem_excesso']=True
+  tenant=Tenant.query.get(contract.tenant_id)
+  cobrar=bool(tenant and tenant.cobrar_km_excedente)
+  if cobrar:
+   info['valor_excesso']=valor_excesso_teorico
+   info['total']=valor_base+valor_excesso_teorico
+   info['usa_excesso']=True
  return info
 
 def cobranca_vence_hoje(contract):
