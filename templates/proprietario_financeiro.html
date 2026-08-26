@@ -1,5 +1,82 @@
 {% extends 'base.html' %}{% block heading %}{{x.nome}}{% endblock %}{% block subheading %}Veículos, condições comerciais e valores do proprietário.{% endblock %}{% block content %}
 <div class="integration-grid"><section class="card"><h3>Receita paga</h3><h2>R$ {{resumo.receita_paga|brl}}</h2></section><section class="card"><h3>Repasse do proprietário</h3><h2>R$ {{resumo.repasse_proprietario|brl}}</h2></section><section class="card"><h3>Custos registrados</h3><h2>R$ {{resumo.custos|brl}}</h2><p class="muted">Nesta RC: custos de manutenção registrados.</p></section><section class="card"><h3>Resultado do proprietário</h3><h2>R$ {{resumo.resultado_proprietario|brl}}</h2></section><section class="card"><h3>Receita da locadora</h3><h2>R$ {{resumo.receita_locadora|brl}}</h2></section><section class="card"><h3>Cobranças em aberto</h3><h2>R$ {{resumo.receita_aberta|brl}}</h2></section></div>
-<section class="card"><h2>Adicionar / alterar condição de um veículo</h2><p class="muted">Uma nova condição encerra a regra anterior no dia anterior, preservando o histórico.</p><form method="post" class="form-grid"><label>Veículo<select name="vehicle_id" required><option value="">Selecione</option>{% for v in veiculos_disponiveis %}<option value="{{v.id}}">{{v.placa}} — {{v.marca_modelo or 'Veículo'}}</option>{% endfor %}</select></label><label>Motorização<select name="motorizacao"><option value="">Não alterar</option><option>Combustão</option><option>Elétrico</option><option>Híbrido</option></select></label><label>% Proprietário<input type="number" name="percentual_proprietario" min="0" max="100" step="0.01" required placeholder="90"></label><label>% Locadora<input type="number" name="percentual_locadora" min="0" max="100" step="0.01" required placeholder="10"></label><label>Início da vigência<input type="date" name="vigencia_inicio" value="{{now_date if now_date is defined else ''}}"></label><label class="wide">Observações<textarea name="observacoes"></textarea></label><button>Salvar condição</button></form></section>
+
+<section class="card">
+  <h2>Criar regra em lote</h2>
+  <p class="muted">Selecione vários veículos e informe a condição uma única vez. Se já existir uma regra vigente para o veículo, será criada uma nova vigência preservando o histórico.</p>
+  <form method="post" class="form-grid" id="form-regra-lote">
+    <input type="hidden" name="acao" value="lote">
+    <div class="wide" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button type="button" class="button small secondary" onclick="marcarTodos(true)">Selecionar todos</button>
+      <button type="button" class="button small secondary" onclick="marcarTodos(false)">Limpar seleção</button>
+      <select id="filtroMotorizacao" onchange="filtrarMotorizacao()" style="max-width:220px">
+        <option value="">Todos os tipos</option><option>Combustão</option><option>Elétrico</option><option>Híbrido</option><option value="Sem informação">Sem informação</option>
+      </select>
+      <small class="muted"><span id="contadorSelecionados">0</span> veículo(s) selecionado(s)</small>
+    </div>
+    <div class="wide table-wrap" style="max-height:340px;overflow:auto">
+      <table>
+        <thead><tr><th style="width:45px"></th><th>Placa</th><th>Modelo</th><th>Motorização atual</th><th>Proprietário atual</th></tr></thead>
+        <tbody>
+        {% for v in veiculos_disponiveis %}
+          <tr class="linha-veiculo" data-motorizacao="{{v.motorizacao or 'Sem informação'}}">
+            <td><input class="check-veiculo" type="checkbox" name="vehicle_ids" value="{{v.id}}" onchange="atualizarContador()"></td>
+            <td><strong>{{v.placa}}</strong></td><td>{{v.marca_modelo or '-'}}</td><td>{{v.motorizacao or '-'}}</td><td>{{v.investor.nome if v.investor else 'Sem proprietário'}}</td>
+          </tr>
+        {% else %}<tr><td colspan="5">Nenhum veículo disponível para este proprietário.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <label>Motorização<select name="motorizacao"><option value="">Não alterar</option><option>Combustão</option><option>Elétrico</option><option>Híbrido</option></select></label>
+    <label>% Proprietário<input type="number" class="pct-proprietario" name="percentual_proprietario" min="0" max="100" step="0.01" required placeholder="90" oninput="calcularLocadora(this)"></label>
+    <label>% Locadora<input type="number" class="pct-locadora" name="percentual_locadora" min="0" max="100" step="0.01" required placeholder="10"></label>
+    <label>Início da vigência<input type="date" name="vigencia_inicio" value="{{now_date if now_date is defined else ''}}"></label>
+    <label class="wide">Observações<textarea name="observacoes" placeholder="Ex.: regra padrão para veículos elétricos"></textarea></label>
+    <button>Aplicar aos veículos selecionados</button>
+  </form>
+</section>
+
+<details class="card" style="margin-bottom:20px">
+  <summary><strong>Adicionar ou alterar apenas um veículo</strong></summary>
+  <p class="muted">Use esta opção para exceções individuais.</p>
+  <form method="post" class="form-grid" style="margin-top:14px">
+    <input type="hidden" name="acao" value="individual">
+    <label>Veículo<select name="vehicle_id" required><option value="">Selecione</option>{% for v in veiculos_disponiveis %}<option value="{{v.id}}">{{v.placa}} — {{v.marca_modelo or 'Veículo'}}</option>{% endfor %}</select></label>
+    <label>Motorização<select name="motorizacao"><option value="">Não alterar</option><option>Combustão</option><option>Elétrico</option><option>Híbrido</option></select></label>
+    <label>% Proprietário<input type="number" class="pct-proprietario" name="percentual_proprietario" min="0" max="100" step="0.01" required placeholder="90" oninput="calcularLocadora(this)"></label>
+    <label>% Locadora<input type="number" class="pct-locadora" name="percentual_locadora" min="0" max="100" step="0.01" required placeholder="10"></label>
+    <label>Início da vigência<input type="date" name="vigencia_inicio" value="{{now_date if now_date is defined else ''}}"></label>
+    <label class="wide">Observações<textarea name="observacoes"></textarea></label>
+    <button>Salvar condição</button>
+  </form>
+</details>
+
 <section class="card"><h2>Valores por veículo</h2><div class="table-wrap"><table><tr><th>Veículo</th><th>Motorização</th><th>Regra atual</th><th>Locação atual</th><th>Proprietário / cobrança</th><th>Locadora / cobrança</th><th>Pago acumulado</th><th>Repasse calculado</th><th>Custos</th></tr>{% for v in resumo.veiculos %}{% set p=previsoes.get(v.id) %}{% set pv=resumo.por_veiculo.get(v.id) %}<tr><td><strong>{{v.placa}}</strong><br>{{v.marca_modelo or '-'}}</td><td>{{v.motorizacao or '-'}}</td><td>{% if p %}{{p.regra.percentual_proprietario}}% / {{p.regra.percentual_locadora}}%{% else %}-{% endif %}</td><td>{% if p %}R$ {{p.base|brl}}<br><small>{{p.contrato.periodicidade or 'por cobrança'}}</small>{% else %}-{% endif %}</td><td>{% if p %}R$ {{p.proprietario|brl}}{% else %}-{% endif %}</td><td>{% if p %}R$ {{p.locadora|brl}}{% else %}-{% endif %}</td><td>R$ {{pv.receita_paga|brl}}</td><td>R$ {{pv.repasse|brl}}</td><td>R$ {{pv.custos|brl}}</td></tr>{% else %}<tr><td colspan="9">Nenhum veículo vinculado.</td></tr>{% endfor %}</table></div></section>
-<section class="card"><h2>Histórico das condições</h2><div class="table-wrap"><table><tr><th>Veículo</th><th>Proprietário</th><th>Locadora</th><th>Vigência</th><th>Observação</th></tr>{% for r in regras %}<tr><td>{{r.vehicle.placa}} — {{r.vehicle.marca_modelo or ''}}</td><td>{{r.percentual_proprietario}}%</td><td>{{r.percentual_locadora}}%</td><td>{{r.vigencia_inicio.strftime('%d/%m/%Y')}} até {{r.vigencia_fim.strftime('%d/%m/%Y') if r.vigencia_fim else 'atual'}}</td><td>{{r.observacoes or '-'}}</td></tr>{% else %}<tr><td colspan="5">Nenhuma condição cadastrada.</td></tr>{% endfor %}</table></div></section>{% endblock %}
+<section class="card"><h2>Histórico das condições</h2><div class="table-wrap"><table><tr><th>Veículo</th><th>Proprietário</th><th>Locadora</th><th>Vigência</th><th>Observação</th></tr>{% for r in regras %}<tr><td>{{r.vehicle.placa}} — {{r.vehicle.marca_modelo or ''}}</td><td>{{r.percentual_proprietario}}%</td><td>{{r.percentual_locadora}}%</td><td>{{r.vigencia_inicio.strftime('%d/%m/%Y')}} até {{r.vigencia_fim.strftime('%d/%m/%Y') if r.vigencia_fim else 'atual'}}</td><td>{{r.observacoes or '-'}}</td></tr>{% else %}<tr><td colspan="5">Nenhuma condição cadastrada.</td></tr>{% endfor %}</table></div></section>
+<script>
+function calcularLocadora(el){
+  const form=el.closest('form'); const out=form.querySelector('.pct-locadora');
+  const n=parseFloat((el.value||'').replace(',','.'));
+  if(!Number.isNaN(n) && n>=0 && n<=100) out.value=(100-n).toFixed(2).replace(/\.00$/,'');
+}
+function atualizarContador(){
+  document.getElementById('contadorSelecionados').textContent=document.querySelectorAll('#form-regra-lote .check-veiculo:checked').length;
+}
+function marcarTodos(valor){
+  document.querySelectorAll('#form-regra-lote .linha-veiculo').forEach(l=>{
+    if(l.style.display!=='none') l.querySelector('.check-veiculo').checked=valor;
+  }); atualizarContador();
+}
+function filtrarMotorizacao(){
+  const filtro=document.getElementById('filtroMotorizacao').value;
+  document.querySelectorAll('#form-regra-lote .linha-veiculo').forEach(l=>{
+    const mostra=!filtro || l.dataset.motorizacao===filtro;
+    l.style.display=mostra?'':'none';
+  });
+}
+document.getElementById('form-regra-lote')?.addEventListener('submit',function(e){
+  if(!this.querySelector('.check-veiculo:checked')){ e.preventDefault(); alert('Selecione pelo menos um veículo.'); }
+});
+atualizarContador();
+</script>
+{% endblock %}
