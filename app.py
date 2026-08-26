@@ -77,14 +77,30 @@ def brl(value):
 
 class Tenant(db.Model):
  id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False); cobrar_km_excedente=db.Column(db.Boolean,default=False)
+ razao_social=db.Column(db.String(180)); nome_fantasia=db.Column(db.String(150)); inscricao_estadual=db.Column(db.String(30)); inscricao_municipal=db.Column(db.String(30)); telefone=db.Column(db.String(30)); email=db.Column(db.String(150)); responsavel_legal=db.Column(db.String(150)); logradouro=db.Column(db.String(180)); numero_endereco=db.Column(db.String(30)); complemento=db.Column(db.String(100)); bairro=db.Column(db.String(100)); cidade=db.Column(db.String(100)); uf=db.Column(db.String(2)); cep=db.Column(db.String(10)); logo_key=db.Column(db.String(255)); favicon_key=db.Column(db.String(255)); cor_primaria=db.Column(db.String(7)); cor_secundaria=db.Column(db.String(7))
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf=db.Column(db.String(14)); rg=db.Column(db.String(30)); numero_cnh=db.Column(db.String(20)); categoria=db.Column(db.String(5)); data_nascimento=db.Column(db.String(10)); validade_cnh=db.Column(db.String(10)); telefone=db.Column(db.String(30)); telefone2=db.Column(db.String(30)); contato2_nome=db.Column(db.String(150)); contato2_parentesco=db.Column(db.String(40)); telefone3=db.Column(db.String(30)); contato3_nome=db.Column(db.String(150)); contato3_parentesco=db.Column(db.String(40)); email=db.Column(db.String(120)); endereco=db.Column(db.String(250)); logradouro=db.Column(db.String(160)); numero_endereco=db.Column(db.String(20)); complemento=db.Column(db.String(100)); bairro=db.Column(db.String(100)); cidade=db.Column(db.String(100)); uf=db.Column(db.String(2)); cep=db.Column(db.String(10)); status=db.Column(db.String(30),default='Ativo'); criado_em=db.Column(db.DateTime,default=datetime.utcnow)
 class Investor(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(150),nullable=False); cpf_cnpj=db.Column(db.String(20)); telefone=db.Column(db.String(30)); telefone2=db.Column(db.String(30)); contato2_nome=db.Column(db.String(150)); contato2_parentesco=db.Column(db.String(40)); telefone3=db.Column(db.String(30)); contato3_nome=db.Column(db.String(150)); contato3_parentesco=db.Column(db.String(40)); email=db.Column(db.String(120)); regra_repasse=db.Column(db.String(30),default='Valor fixo'); observacoes=db.Column(db.Text)
+class InvestorVehicleRule(db.Model):
+ __tablename__='investor_vehicle_rule'
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ investor_id=db.Column(db.Integer,db.ForeignKey('investor.id'),nullable=False,index=True)
+ vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False,index=True)
+ percentual_proprietario=db.Column(db.Numeric(6,2),nullable=False)
+ percentual_locadora=db.Column(db.Numeric(6,2),nullable=False)
+ vigencia_inicio=db.Column(db.Date,nullable=False,default=date.today)
+ vigencia_fim=db.Column(db.Date)
+ observacoes=db.Column(db.Text)
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ investor=db.relationship('Investor')
+ vehicle=db.relationship('Vehicle')
+
 class Vehicle(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(100)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); current_driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); current_contract_id=db.Column(db.Integer,db.ForeignKey('contract.id')); status_changed_at=db.Column(db.DateTime); status_reason=db.Column(db.String(255)); investor=db.relationship('Investor'); current_driver=db.relationship('Driver',foreign_keys=[current_driver_id]); current_contract=db.relationship('Contract',foreign_keys=[current_contract_id],post_update=True)
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(100)); motorizacao=db.Column(db.String(20)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); current_driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); current_contract_id=db.Column(db.Integer,db.ForeignKey('contract.id')); status_changed_at=db.Column(db.DateTime); status_reason=db.Column(db.String(255)); investor=db.relationship('Investor'); current_driver=db.relationship('Driver',foreign_keys=[current_driver_id]); current_contract=db.relationship('Contract',foreign_keys=[current_contract_id],post_update=True)
 class Odometer(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); km=db.Column(db.Integer,nullable=False); origem=db.Column(db.String(40)); data=db.Column(db.DateTime,default=datetime.utcnow); vehicle=db.relationship('Vehicle')
 class MileageRequest(db.Model):
@@ -334,11 +350,11 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit]
+ models=[Driver,Investor,InvestorVehicleRule,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
-  'tenant':{'id':tenant.id,'nome':tenant.nome,'cnpj':tenant.cnpj,'ativo':tenant.ativo},
+  'tenant':{column.name:json_safe(getattr(tenant,column.name)) for column in Tenant.__table__.columns},
   'usuarios':model_rows(User,tenant_id),
   'dados':{model.__tablename__:model_rows(model,tenant_id) for model in models},
  }
@@ -634,11 +650,11 @@ def recalcular_alertas(tenant_id):
 
 def migrate_schema():
  additions={
-  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE')],
+  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE'),('razao_social','VARCHAR(180)'),('nome_fantasia','VARCHAR(150)'),('inscricao_estadual','VARCHAR(30)'),('inscricao_municipal','VARCHAR(30)'),('telefone','VARCHAR(30)'),('email','VARCHAR(150)'),('responsavel_legal','VARCHAR(150)'),('logradouro','VARCHAR(180)'),('numero_endereco','VARCHAR(30)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)'),('logo_key','VARCHAR(255)'),('favicon_key','VARCHAR(255)'),('cor_primaria','VARCHAR(7)'),('cor_secundaria','VARCHAR(7)')],
   'vehicle':[
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
-   ('current_driver_id','INTEGER'),('current_contract_id','INTEGER'),('status_changed_at','TIMESTAMP'),('status_reason','VARCHAR(255)'),
+   ('current_driver_id','INTEGER'),('current_contract_id','INTEGER'),('status_changed_at','TIMESTAMP'),('status_reason','VARCHAR(255)'),('motorizacao','VARCHAR(20)'),
   ],
   'driver':[('telefone2','VARCHAR(30)'),('contato2_nome','VARCHAR(150)'),('contato2_parentesco','VARCHAR(40)'),('telefone3','VARCHAR(30)'),('contato3_nome','VARCHAR(150)'),('contato3_parentesco','VARCHAR(40)'),('logradouro','VARCHAR(160)'),('numero_endereco','VARCHAR(20)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)')],
   'contract_template':[
@@ -1018,6 +1034,41 @@ def importar_motorista():
 def excluir_motorista(id):
  x=Driver.query.filter_by(id=id,tenant_id=tid()).first_or_404(); db.session.delete(x); db.session.commit(); return redirect(url_for('motoristas'))
 
+def regra_proprietario_veiculo(vehicle_id, referencia=None):
+ referencia=referencia or date.today()
+ q=InvestorVehicleRule.query.filter_by(tenant_id=tid(),vehicle_id=vehicle_id).filter(InvestorVehicleRule.vigencia_inicio<=referencia).filter(or_(InvestorVehicleRule.vigencia_fim.is_(None),InvestorVehicleRule.vigencia_fim>=referencia)).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc())
+ return q.first()
+
+def resumo_financeiro_proprietario(investor_id):
+ veiculos=Vehicle.query.filter_by(tenant_id=tid(),investor_id=investor_id).order_by(Vehicle.placa).all()
+ ids={v.id for v in veiculos}
+ contratos=Contract.query.filter(Contract.tenant_id==tid(),Contract.vehicle_id.in_(ids)).all() if ids else []
+ contrato_por_id={c.id:c for c in contratos}
+ auditorias=BillingAudit.query.filter(BillingAudit.tenant_id==tid(),BillingAudit.contract_id.in_(list(contrato_por_id))).order_by(BillingAudit.billing_date.desc()).all() if contratos else []
+ receita_paga=Decimal('0'); receita_aberta=Decimal('0'); repasse_proprietario=Decimal('0'); receita_locadora=Decimal('0')
+ por_veiculo={v.id:{'receita_paga':Decimal('0'),'receita_aberta':Decimal('0'),'repasse':Decimal('0'),'locadora':Decimal('0')} for v in veiculos}
+ for a in auditorias:
+  c=contrato_por_id.get(a.contract_id)
+  if not c or c.vehicle_id not in ids: continue
+  total=Decimal(str(a.total_amount or 0))
+  regra=regra_proprietario_veiculo(c.vehicle_id,a.billing_date)
+  pct=Decimal(str(regra.percentual_proprietario or 0)) if regra else Decimal('0')
+  pct_l=Decimal(str(regra.percentual_locadora or 0)) if regra else Decimal('0')
+  if (a.payment_status or '').upper()=='PAGO':
+   receita_paga+=total; por_veiculo[c.vehicle_id]['receita_paga']+=total
+   rep=total*pct/Decimal('100'); loc=total*pct_l/Decimal('100')
+   repasse_proprietario+=rep; receita_locadora+=loc
+   por_veiculo[c.vehicle_id]['repasse']+=rep; por_veiculo[c.vehicle_id]['locadora']+=loc
+  else:
+   receita_aberta+=total; por_veiculo[c.vehicle_id]['receita_aberta']+=total
+ custos=Decimal('0')
+ for m in Maintenance.query.filter(Maintenance.tenant_id==tid(),Maintenance.vehicle_id.in_(ids)).all() if ids else []:
+  if m.custo:
+   valor=Decimal(str(m.custo)); custos+=valor
+   por_veiculo.setdefault(m.vehicle_id,{}).setdefault('custos',Decimal('0')); por_veiculo[m.vehicle_id]['custos']+=valor
+ for v in veiculos: por_veiculo[v.id].setdefault('custos',Decimal('0'))
+ return {'veiculos':veiculos,'receita_paga':receita_paga,'receita_aberta':receita_aberta,'repasse_proprietario':repasse_proprietario,'receita_locadora':receita_locadora,'custos':custos,'resultado_proprietario':repasse_proprietario-custos,'por_veiculo':por_veiculo}
+
 @app.route('/investidores',methods=['GET','POST'])
 @login_required
 def investidores():
@@ -1027,35 +1078,70 @@ def investidores():
   if (telefone_bruto or '').strip() and not telefone:
    flash('Telefone inválido. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
    return redirect(url_for('investidores'))
-  x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=telefone,email=request.form.get('email'),regra_repasse=request.form.get('regra_repasse'),observacoes=request.form.get('observacoes')); db.session.add(x); db.session.commit(); flash('Proprietário cadastrado.','success'); return redirect(url_for('investidores'))
- q=(request.args.get('q') or '').strip()
- query=Investor.query.filter_by(tenant_id=tid())
+  x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=telefone,email=request.form.get('email'),regra_repasse='Percentual por veículo',observacoes=request.form.get('observacoes'))
+  db.session.add(x); db.session.commit(); flash('Proprietário cadastrado. Agora você pode vincular os veículos e percentuais.','success'); return redirect(url_for('proprietario_financeiro',id=x.id))
+ q=(request.args.get('q') or '').strip(); query=Investor.query.filter_by(tenant_id=tid())
  if q:
-  like=f'%{q}%'
-  query=query.filter(or_(Investor.nome.ilike(like),Investor.cpf_cnpj.ilike(like),Investor.telefone.ilike(like),Investor.email.ilike(like)))
- return render_template('investidores.html',items=query.order_by(Investor.nome).all(),q=q)
+  like=f'%{q}%'; query=query.filter(or_(Investor.nome.ilike(like),Investor.cpf_cnpj.ilike(like),Investor.telefone.ilike(like),Investor.email.ilike(like)))
+ items=query.order_by(Investor.nome).all()
+ resumos={x.id:resumo_financeiro_proprietario(x.id) for x in items}
+ return render_template('investidores.html',items=items,resumos=resumos,q=q)
 
 @app.route('/investidores/<int:id>/editar',methods=['GET','POST'])
 @login_required
 def editar_investidor(id):
  x=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
-  telefone_bruto=request.form.get('telefone')
-  telefone=normalize_phone(telefone_bruto) if (telefone_bruto or '').strip() else ''
+  telefone_bruto=request.form.get('telefone'); telefone=normalize_phone(telefone_bruto) if (telefone_bruto or '').strip() else ''
   if (telefone_bruto or '').strip() and not telefone:
-   flash('Telefone inválido. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
-   return redirect(url_for('editar_investidor',id=x.id))
-  for campo in ['nome','cpf_cnpj','email','regra_repasse','observacoes']:
-   setattr(x,campo,request.form.get(campo))
-  x.telefone=telefone
-  db.session.commit(); flash('Proprietário atualizado com sucesso.','success'); return redirect(url_for('investidores'))
+   flash('Telefone inválido. Informe DDD + número.','danger'); return redirect(url_for('editar_investidor',id=x.id))
+  for campo in ['nome','cpf_cnpj','email','observacoes']: setattr(x,campo,request.form.get(campo))
+  x.telefone=telefone; x.regra_repasse='Percentual por veículo'; db.session.commit(); flash('Proprietário atualizado com sucesso.','success'); return redirect(url_for('proprietario_financeiro',id=x.id))
  return render_template('editar_investidor.html',x=x)
+
+@app.route('/investidores/<int:id>/financeiro',methods=['GET','POST'])
+@login_required
+def proprietario_financeiro(id):
+ x=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if request.method=='POST':
+  vehicle_id=request.form.get('vehicle_id',type=int)
+  v=Vehicle.query.filter_by(id=vehicle_id,tenant_id=tid()).first_or_404()
+  try:
+   pct=Decimal((request.form.get('percentual_proprietario') or '0').replace(',','.'))
+   pct_l=Decimal((request.form.get('percentual_locadora') or '0').replace(',','.'))
+  except Exception:
+   flash('Informe percentuais válidos.','danger'); return redirect(url_for('proprietario_financeiro',id=x.id))
+  if pct<0 or pct_l<0 or pct>100 or pct_l>100 or (pct+pct_l)!=Decimal('100'):
+   flash('Os percentuais do proprietário e da locadora devem somar exatamente 100%.','danger'); return redirect(url_for('proprietario_financeiro',id=x.id))
+  inicio_txt=request.form.get('vigencia_inicio') or date.today().isoformat()
+  try: inicio=datetime.strptime(inicio_txt,'%Y-%m-%d').date()
+  except Exception: inicio=date.today()
+  anterior=InvestorVehicleRule.query.filter_by(tenant_id=tid(),investor_id=x.id,vehicle_id=v.id,vigencia_fim=None).order_by(InvestorVehicleRule.id.desc()).first()
+  if anterior and anterior.vigencia_inicio<=inicio:
+   anterior.vigencia_fim=inicio-timedelta(days=1)
+  v.investor_id=x.id; v.proprietario_legal=x.nome; v.cpf_cnpj_proprietario=x.cpf_cnpj
+  mot=(request.form.get('motorizacao') or '').strip()
+  if mot in ('Combustão','Elétrico','Híbrido'): v.motorizacao=mot
+  db.session.add(InvestorVehicleRule(tenant_id=tid(),investor_id=x.id,vehicle_id=v.id,percentual_proprietario=pct,percentual_locadora=pct_l,vigencia_inicio=inicio,observacoes=(request.form.get('observacoes') or '').strip() or None))
+  db.session.commit(); flash('Condição comercial do veículo salva.','success'); return redirect(url_for('proprietario_financeiro',id=x.id))
+ resumo=resumo_financeiro_proprietario(x.id)
+ regras=InvestorVehicleRule.query.filter_by(tenant_id=tid(),investor_id=x.id).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).all()
+ disponiveis=Vehicle.query.filter(Vehicle.tenant_id==tid(),or_(Vehicle.investor_id==x.id,Vehicle.investor_id.is_(None))).order_by(Vehicle.placa).all()
+ # previsão do contrato vigente por veículo
+ previsoes={}
+ for v in resumo['veiculos']:
+  c=Contract.query.filter(Contract.tenant_id==tid(),Contract.vehicle_id==v.id,Contract.status.in_(['Assinado','Ativo'])).order_by(Contract.id.desc()).first()
+  regra=regra_proprietario_veiculo(v.id,date.today())
+  if c and regra:
+   base=Decimal(str(c.valor_locacao or 0)); pp=Decimal(str(regra.percentual_proprietario or 0)); pl=Decimal(str(regra.percentual_locadora or 0))
+   previsoes[v.id]={'contrato':c,'base':base,'proprietario':base*pp/Decimal('100'),'locadora':base*pl/Decimal('100'),'regra':regra}
+ return render_template('proprietario_financeiro.html',x=x,resumo=resumo,regras=regras,veiculos_disponiveis=disponiveis,previsoes=previsoes)
 
 @app.route('/veiculos',methods=['GET','POST'])
 @login_required
 def veiculos():
  if request.method=='POST':
-  campos_veiculo=['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']
+  campos_veiculo=['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','motorizacao','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']
   vals={k:limpar_campo_ocr_veiculo(k,request.form.get(k)) for k in campos_veiculo}
   v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100)
   # RC 1.0.15: o cadastro antes chamado Investidor passa a ser a fonte do Proprietário do veículo.
@@ -1123,7 +1209,7 @@ def importar_veiculo():
 def editar_veiculo(id):
  v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
-  for campo in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']:
+  for campo in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','motorizacao','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']:
    setattr(v,campo,request.form.get(campo))
   v.investor_id=request.form.get('investor_id') or None
   if v.investor_id:
@@ -1305,6 +1391,64 @@ def registrar_quilometragem_publica(token):
 @login_required
 def configuracoes():
  return render_template('configuracoes.html')
+
+@app.route('/configuracoes/locadora',methods=['GET','POST'])
+@login_required
+def configuracoes_locadora():
+ tenant=Tenant.query.get_or_404(tid())
+ if request.method=='POST':
+  campos=['razao_social','nome_fantasia','cnpj','inscricao_estadual','inscricao_municipal','telefone','email','responsavel_legal','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','cor_primaria','cor_secundaria']
+  for campo in campos:
+   valor=(request.form.get(campo) or '').strip() or None
+   if campo in ('cor_primaria','cor_secundaria') and valor and not re.fullmatch(r'#[0-9A-Fa-f]{6}',valor):
+    flash('As cores devem estar no formato #RRGGBB.','danger'); return redirect(url_for('configuracoes_locadora'))
+   setattr(tenant,campo,valor)
+  if tenant.nome_fantasia: tenant.nome=tenant.nome_fantasia
+  for field,form_name,prefix in [('logo_key','logo','logo'),('favicon_key','favicon','favicon')]:
+   f=request.files.get(form_name)
+   if f and f.filename:
+    ext=Path(secure_filename(f.filename)).suffix.lower()
+    allowed={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}
+    if ext not in allowed:
+     flash(f'Formato inválido para {form_name}. Use PNG, JPG, WEBP ou ICO.','danger'); return redirect(url_for('configuracoes_locadora'))
+    data=f.read(); key=f'{tid()}/configuracoes/identidade/{prefix}_{uuid.uuid4().hex}{ext}'
+    storage.upload(BytesIO(data),key,allowed[ext]); old=getattr(tenant,field)
+    setattr(tenant,field,key)
+    if old:
+     try: storage.delete(old)
+     except Exception: pass
+  db.session.commit(); flash('Dados e identidade visual da locadora atualizados.','success'); return redirect(url_for('configuracoes_locadora'))
+ return render_template('configuracoes_locadora.html',tenant=tenant)
+
+@app.route('/configuracoes/locadora/arquivo/<tipo>')
+@login_required
+def arquivo_identidade_locadora(tipo):
+ tenant=Tenant.query.get_or_404(tid()); key=tenant.logo_key if tipo=='logo' else tenant.favicon_key if tipo=='favicon' else None
+ if not key: abort(404)
+ data=storage.download(key); ext=Path(key).suffix.lower(); mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
+ return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
+
+@app.route('/configuracoes/automacoes',methods=['GET','POST'])
+@login_required
+def configuracoes_automacoes():
+ item=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(item)
+ if request.method=='POST':
+  if not item:
+   item=Integration(tenant_id=tid(),tipo='whatsapp',ativo=False,configuracao='{}'); db.session.add(item)
+  cfg=CommunicationService.parse_config(item)
+  cfg.update({
+   'automation_enabled':request.form.get('automation_enabled')=='1',
+   'automation_weekday':int(request.form.get('automation_weekday') or 0),
+   'automation_start_hour':int(request.form.get('automation_start_hour') or 7),
+   'automation_end_hour':int(request.form.get('automation_end_hour') or 20),
+   'reminder_interval_hours':int(request.form.get('reminder_interval_hours') or 1),
+   'automatic_billing_enabled':request.form.get('automatic_billing_enabled')=='1',
+   'automatic_km_enabled':request.form.get('automatic_km_enabled')=='1',
+   'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
+  })
+  item.configuracao=json.dumps(cfg,ensure_ascii=False); db.session.commit(); flash('Automações atualizadas.','success'); return redirect(url_for('configuracoes_automacoes'))
+ return render_template('configuracoes_automacoes.html',cfg=cfg,provider=(cfg.get('provider') or 'web'))
 
 @app.route('/configuracoes/quilometragem',methods=['GET','POST'])
 @login_required
@@ -3310,7 +3454,7 @@ def templates_meta_whatsapp():
 def processar_mensagens_manual():
  km=processar_km_automatico(tid()); cobrancas=processar_cobrancas_automaticas(tid()); alertas=processar_alertas_automaticos(tid()); quantidade=processar_mensagens_agendadas(tid(),limit=200)
  flash(f'Automação processada: {km} KM, {cobrancas} cobrança(s), {alertas} alerta(s) e {quantidade} mensagem(ns) agendada(s).','success')
- return redirect(url_for('integracoes'))
+ return redirect(url_for('configuracoes_automacoes'))
 
 @app.route('/jobs/processar-mensagens',methods=['GET','POST'])
 def processar_mensagens_job():
