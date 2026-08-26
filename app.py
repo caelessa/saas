@@ -1099,16 +1099,35 @@ def editar_investidor(id):
   x.telefone=telefone; x.regra_repasse='Percentual por veículo'; db.session.commit(); flash('Proprietário atualizado com sucesso.','success'); return redirect(url_for('proprietario_financeiro',id=x.id))
  return render_template('editar_investidor.html',x=x)
 
+def aplicar_regra_proprietario_veiculo(*,proprietario,veiculo,pct,pct_l,inicio,motorizacao=None,observacoes=None):
+ # Não permite tomar silenciosamente um veículo que já pertence a outro proprietário.
+ if veiculo.investor_id and veiculo.investor_id!=proprietario.id:
+  raise ValueError(f'O veículo {veiculo.placa} já está vinculado a outro proprietário.')
+ anterior=InvestorVehicleRule.query.filter_by(tenant_id=tid(),investor_id=proprietario.id,vehicle_id=veiculo.id,vigencia_fim=None).order_by(InvestorVehicleRule.id.desc()).first()
+ # Se a regra atual começou na mesma data, atualiza em vez de criar duplicidade.
+ if anterior and anterior.vigencia_inicio==inicio:
+  anterior.percentual_proprietario=pct
+  anterior.percentual_locadora=pct_l
+  anterior.observacoes=observacoes
+ else:
+  if anterior and anterior.vigencia_inicio<inicio:
+   anterior.vigencia_fim=inicio-timedelta(days=1)
+  db.session.add(InvestorVehicleRule(tenant_id=tid(),investor_id=proprietario.id,vehicle_id=veiculo.id,percentual_proprietario=pct,percentual_locadora=pct_l,vigencia_inicio=inicio,observacoes=observacoes))
+ veiculo.investor_id=proprietario.id
+ veiculo.proprietario_legal=proprietario.nome
+ veiculo.cpf_cnpj_proprietario=proprietario.cpf_cnpj
+ mot=(motorizacao or '').strip()
+ if mot in ('Combustão','Elétrico','Híbrido'):
+  veiculo.motorizacao=mot
+
 @app.route('/investidores/<int:id>/financeiro',methods=['GET','POST'])
 @login_required
 def proprietario_financeiro(id):
  x=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
-  vehicle_id=request.form.get('vehicle_id',type=int)
-  v=Vehicle.query.filter_by(id=vehicle_id,tenant_id=tid()).first_or_404()
   try:
    pct=Decimal((request.form.get('percentual_proprietario') or '0').replace(',','.'))
-   pct_l=Decimal((request.form.get('percentual_locadora') or '0').replace(',','.'))
+   pct_l=Decimal((request.form.get('percentual_locadora') or str(Decimal('100')-pct)).replace(',','.'))
   except Exception:
    flash('Informe percentuais válidos.','danger'); return redirect(url_for('proprietario_financeiro',id=x.id))
   if pct<0 or pct_l<0 or pct>100 or pct_l>100 or (pct+pct_l)!=Decimal('100'):
@@ -1116,14 +1135,34 @@ def proprietario_financeiro(id):
   inicio_txt=request.form.get('vigencia_inicio') or date.today().isoformat()
   try: inicio=datetime.strptime(inicio_txt,'%Y-%m-%d').date()
   except Exception: inicio=date.today()
-  anterior=InvestorVehicleRule.query.filter_by(tenant_id=tid(),investor_id=x.id,vehicle_id=v.id,vigencia_fim=None).order_by(InvestorVehicleRule.id.desc()).first()
-  if anterior and anterior.vigencia_inicio<=inicio:
-   anterior.vigencia_fim=inicio-timedelta(days=1)
-  v.investor_id=x.id; v.proprietario_legal=x.nome; v.cpf_cnpj_proprietario=x.cpf_cnpj
   mot=(request.form.get('motorizacao') or '').strip()
-  if mot in ('Combustão','Elétrico','Híbrido'): v.motorizacao=mot
-  db.session.add(InvestorVehicleRule(tenant_id=tid(),investor_id=x.id,vehicle_id=v.id,percentual_proprietario=pct,percentual_locadora=pct_l,vigencia_inicio=inicio,observacoes=(request.form.get('observacoes') or '').strip() or None))
-  db.session.commit(); flash('Condição comercial do veículo salva.','success'); return redirect(url_for('proprietario_financeiro',id=x.id))
+  obs=(request.form.get('observacoes') or '').strip() or None
+  acao=(request.form.get('acao') or 'individual').strip()
+  try:
+   if acao=='lote':
+    ids=[]
+    for raw in request.form.getlist('vehicle_ids'):
+     try: ids.append(int(raw))
+     except Exception: pass
+    ids=list(dict.fromkeys(ids))
+    if not ids:
+     flash('Selecione pelo menos um veículo para aplicar a regra em lote.','warning'); return redirect(url_for('proprietario_financeiro',id=x.id))
+    veiculos=Vehicle.query.filter(Vehicle.tenant_id==tid(),Vehicle.id.in_(ids)).order_by(Vehicle.placa).all()
+    if len(veiculos)!=len(ids):
+     raise ValueError('Um ou mais veículos selecionados não pertencem a esta locadora.')
+    for v in veiculos:
+     aplicar_regra_proprietario_veiculo(proprietario=x,veiculo=v,pct=pct,pct_l=pct_l,inicio=inicio,motorizacao=mot,observacoes=obs)
+    db.session.commit(); flash(f'Regra aplicada com sucesso a {len(veiculos)} veículo(s).','success')
+   else:
+    vehicle_id=request.form.get('vehicle_id',type=int)
+    v=Vehicle.query.filter_by(id=vehicle_id,tenant_id=tid()).first_or_404()
+    aplicar_regra_proprietario_veiculo(proprietario=x,veiculo=v,pct=pct,pct_l=pct_l,inicio=inicio,motorizacao=mot,observacoes=obs)
+    db.session.commit(); flash('Condição comercial do veículo salva.','success')
+  except ValueError as exc:
+   db.session.rollback(); flash(str(exc),'danger')
+  except Exception:
+   db.session.rollback(); app.logger.exception('Falha ao salvar condição comercial do proprietário %s',x.id); flash('Não foi possível salvar a condição comercial.','danger')
+  return redirect(url_for('proprietario_financeiro',id=x.id))
  resumo=resumo_financeiro_proprietario(x.id)
  regras=InvestorVehicleRule.query.filter_by(tenant_id=tid(),investor_id=x.id).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).all()
  disponiveis=Vehicle.query.filter(Vehicle.tenant_id==tid(),or_(Vehicle.investor_id==x.id,Vehicle.investor_id.is_(None))).order_by(Vehicle.placa).all()
