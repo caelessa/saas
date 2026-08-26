@@ -57,20 +57,6 @@
         <label>Template cobrança semanal com comprovante<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="cobranca_semanal_com_comprovante"><small class="muted">Toda cobrança normal deve incluir o link público para envio do comprovante.</small></label>
         <label>Template cobrança com excesso KM + comprovante<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="cobranca_semanal_excesso_com_comprovante"><small class="muted">Usado quando houver cobrança efetiva de KM excedente; também recebe o link de comprovante.</small></label>
         <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
-        <div class="wide maintenance-box">
-          <h3>Automação operacional semanal</h3>
-          <p class="muted">Por padrão: segunda-feira, das 07h às 20h, repetindo pendências a cada 1 hora. Cobranças param quando recebem baixa; KM para quando a foto/leitura é enviada.</p>
-          <label class="check"><input type="checkbox" name="automation_enabled" value="1" {% if whatsapp_cfg.get('automation_enabled') %}checked{% endif %}> Ativar automações</label>
-          <div class="maintenance-fields">
-            <label>Dia da semana<select name="automation_weekday"><option value="0" {% if whatsapp_cfg.get('automation_weekday',0)|int==0 %}selected{% endif %}>Segunda-feira</option><option value="1" {% if whatsapp_cfg.get('automation_weekday')|int==1 %}selected{% endif %}>Terça-feira</option><option value="2" {% if whatsapp_cfg.get('automation_weekday')|int==2 %}selected{% endif %}>Quarta-feira</option><option value="3" {% if whatsapp_cfg.get('automation_weekday')|int==3 %}selected{% endif %}>Quinta-feira</option><option value="4" {% if whatsapp_cfg.get('automation_weekday')|int==4 %}selected{% endif %}>Sexta-feira</option></select></label>
-            <label>Início (hora)<input type="number" min="0" max="23" name="automation_start_hour" value="{{ whatsapp_cfg.get('automation_start_hour',7) }}"></label>
-            <label>Fim (hora)<input type="number" min="0" max="23" name="automation_end_hour" value="{{ whatsapp_cfg.get('automation_end_hour',20) }}"></label>
-            <label>Repetir a cada (horas)<input type="number" min="1" max="12" name="reminder_interval_hours" value="{{ whatsapp_cfg.get('reminder_interval_hours',1) }}"></label>
-          </div>
-          <label class="check"><input type="checkbox" name="automatic_billing_enabled" value="1" {% if whatsapp_cfg.get('automatic_billing_enabled') %}checked{% endif %}> Cobrança automática enquanto não houver baixa</label>
-          <label class="check"><input type="checkbox" name="automatic_km_enabled" value="1" {% if whatsapp_cfg.get('automatic_km_enabled') %}checked{% endif %}> Solicitação de KM/foto enquanto estiver pendente</label>
-          <label class="check"><input type="checkbox" name="automatic_alerts_enabled" value="1" {% if whatsapp_cfg.get('automatic_alerts_enabled') %}checked{% endif %}> Alertas operacionais automáticos</label>
-        </div>
         <div class="form-actions"><button class="btn" type="submit">Salvar configuração manual</button></div>
       </form>
     </details>
