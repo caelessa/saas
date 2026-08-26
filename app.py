@@ -1176,12 +1176,54 @@ def proprietario_financeiro(id):
    previsoes[v.id]={'contrato':c,'base':base,'proprietario':base*pp/Decimal('100'),'locadora':base*pl/Decimal('100'),'regra':regra}
  return render_template('proprietario_financeiro.html',x=x,resumo=resumo,regras=regras,veiculos_disponiveis=disponiveis,previsoes=previsoes)
 
+def normalizar_identificador_veiculo(valor):
+ """Normaliza placa/RENAVAM/chassi para comparação de duplicidade."""
+ return re.sub(r'[^A-Za-z0-9]','',str(valor or '')).upper().strip()
+
+def localizar_veiculo_duplicado(tenant_id, *, placa=None, renavam=None, chassi=None, excluir_id=None):
+ """Bloqueia duplicidade dentro do tenant por placa, RENAVAM ou chassi.
+
+ A comparação é normalizada em Python para também encontrar registros antigos
+ gravados com pontos, hífens, espaços ou diferenças de maiúsculas/minúsculas.
+ """
+ identificadores={
+  'placa':normalizar_identificador_veiculo(placa),
+  'renavam':normalizar_identificador_veiculo(renavam),
+  'chassi':normalizar_identificador_veiculo(chassi),
+ }
+ query=Vehicle.query.filter_by(tenant_id=tenant_id)
+ if excluir_id is not None:
+  query=query.filter(Vehicle.id!=excluir_id)
+ for existente in query.all():
+  atuais={
+   'placa':normalizar_identificador_veiculo(existente.placa),
+   'renavam':normalizar_identificador_veiculo(existente.renavam),
+   'chassi':normalizar_identificador_veiculo(existente.chassi),
+  }
+  for campo,valor in identificadores.items():
+   if valor and atuais.get(campo)==valor:
+    return campo,existente
+ return None,None
+
+def mensagem_duplicidade_veiculo(campo, existente):
+ rotulos={'placa':'placa','renavam':'RENAVAM','chassi':'chassi'}
+ identificacao=(existente.placa or existente.marca_modelo or f'ID {existente.id}')
+ return f'Este veículo já está cadastrado nesta locadora: {rotulos.get(campo,campo)} já pertence ao veículo {identificacao}.'
+
 @app.route('/veiculos',methods=['GET','POST'])
 @login_required
 def veiculos():
  if request.method=='POST':
   campos_veiculo=['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','motorizacao','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']
   vals={k:limpar_campo_ocr_veiculo(k,request.form.get(k)) for k in campos_veiculo}
+  # Canonicaliza os identificadores antes de validar e gravar.
+  vals['placa']=normalizar_identificador_veiculo(vals.get('placa'))
+  vals['renavam']=normalizar_identificador_veiculo(vals.get('renavam')) or None
+  vals['chassi']=normalizar_identificador_veiculo(vals.get('chassi')) or None
+  campo_dup,veiculo_dup=localizar_veiculo_duplicado(tid(),placa=vals.get('placa'),renavam=vals.get('renavam'),chassi=vals.get('chassi'))
+  if veiculo_dup:
+   flash(mensagem_duplicidade_veiculo(campo_dup,veiculo_dup),'danger')
+   return redirect(url_for('veiculos'))
   v=Vehicle(tenant_id=tid(),**vals,km_atual=int(request.form.get('km_atual') or 0),investor_id=request.form.get('investor_id') or None,valor_repasse=request.form.get('valor_repasse') or 0,limite_km=request.form.get('limite_km') or None,valor_km_excedente=request.form.get('valor_km_excedente') or 0,controlar_oleo=bool(request.form.get('controlar_oleo')),ultima_troca_oleo_km=request.form.get('ultima_troca_oleo_km') or None,intervalo_oleo_km=request.form.get('intervalo_oleo_km') or 10000,alerta_oleo_km=request.form.get('alerta_oleo_km') or 100)
   # RC 1.0.15: o cadastro antes chamado Investidor passa a ser a fonte do Proprietário do veículo.
   if v.investor_id:
@@ -1248,8 +1290,16 @@ def importar_veiculo():
 def editar_veiculo(id):
  v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if request.method=='POST':
-  for campo in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','motorizacao','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']:
-   setattr(v,campo,request.form.get(campo))
+  novos={campo:request.form.get(campo) for campo in ['placa','renavam','chassi','marca_modelo','ano_fabricacao','ano_modelo','cor','combustivel','motorizacao','status','proprietario_legal','cpf_cnpj_proprietario','rastreador_id']}
+  novos['placa']=normalizar_identificador_veiculo(novos.get('placa'))
+  novos['renavam']=normalizar_identificador_veiculo(novos.get('renavam')) or None
+  novos['chassi']=normalizar_identificador_veiculo(novos.get('chassi')) or None
+  campo_dup,veiculo_dup=localizar_veiculo_duplicado(tid(),placa=novos.get('placa'),renavam=novos.get('renavam'),chassi=novos.get('chassi'),excluir_id=v.id)
+  if veiculo_dup:
+   flash(mensagem_duplicidade_veiculo(campo_dup,veiculo_dup),'danger')
+   return redirect(url_for('editar_veiculo',id=v.id))
+  for campo,valor in novos.items():
+   setattr(v,campo,valor)
   v.investor_id=request.form.get('investor_id') or None
   if v.investor_id:
    proprietario=Investor.query.filter_by(id=v.investor_id,tenant_id=tid()).first()
