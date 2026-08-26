@@ -1330,6 +1330,17 @@ def excluir_veiculo(id):
   flash('Este veículo possui histórico contratual e não pode ser excluído definitivamente. Mesmo que os contratos estejam cancelados ou encerrados, altere o status para Vendido ou Inativo para preservar a rastreabilidade.','danger')
   return redirect(url_for('veiculos'))
 
+ # Regras de repasse são configurações dependentes do veículo.
+ # Se o veículo puder ser excluído (sem histórico contratual), removemos essas regras
+ # antes do DELETE do veículo para respeitar a chave estrangeira.
+ InvestorVehicleRule.query.filter_by(tenant_id=tid(),vehicle_id=v.id).delete(synchronize_session=False)
+
+ # Se já houver histórico operacional que deve ser preservado, não removemos o veículo.
+ if Inspection.query.filter_by(tenant_id=tid(),vehicle_id=v.id).first() or VehicleEvent.query.filter_by(tenant_id=tid(),vehicle_id=v.id).first():
+  db.session.rollback()
+  flash('Este veículo possui histórico operacional e não pode ser excluído definitivamente. Altere o status para Vendido ou Inativo para preservar a rastreabilidade.','danger')
+  return redirect(url_for('veiculos'))
+
  # Remove as fotos de quilometragem antes dos registros.
  # Fotos novas ficam no Cloudflare R2; nomes antigos sem "/" continuam
  # compatíveis com o armazenamento local usado anteriormente.
