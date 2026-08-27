@@ -1368,6 +1368,115 @@ def portal_proprietario():
  tenant=Tenant.query.get(tenant_id)
  return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),**data)
 
+
+def _veiculo_portal_proprietario(vehicle_id):
+ tenant_id=int(session['owner_tenant_id'])
+ investor_id=int(session['owner_investor_id'])
+ return Vehicle.query.options(
+  joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)
+ ).filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
+
+def _dados_historico_portal_proprietario(vehicle):
+ """Histórico visível ao proprietário, sempre restrito ao tenant e ao veículo dele."""
+ tenant_id=int(session['owner_tenant_id'])
+ eventos=VehicleEvent.query.options(
+  joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)
+ ).filter_by(tenant_id=tenant_id,vehicle_id=vehicle.id).order_by(VehicleEvent.criado_em.desc()).all()
+ contratos=Contract.query.options(joinedload(Contract.driver)).filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Contract.id.desc()).all()
+ odometros=Odometer.query.filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Odometer.data.desc(),Odometer.id.desc()).all()
+ manutencoes=Maintenance.query.filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Maintenance.id.desc()).all()
+ vistorias=Inspection.query.options(joinedload(Inspection.driver),joinedload(Inspection.contract)).filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).all()
+ documentos=Document.query.filter_by(
+  tenant_id=tenant_id,entidade='Veículo',entidade_id=vehicle.id,status='Ativo'
+ ).order_by(Document.criado_em.desc(),Document.id.desc()).all()
+
+ # Linha do tempo unificada, contendo apenas informações adequadas ao proprietário.
+ timeline=[]
+ for x in eventos:
+  timeline.append({
+   'data':x.criado_em,'tipo':'Ocorrência','titulo':x.evento or 'Evento do veículo',
+   'descricao':x.descricao or '', 'km':None
+  })
+ for x in odometros:
+  timeline.append({
+   'data':x.data,'tipo':'Quilometragem','titulo':f'{x.km:,} km'.replace(',','.'),
+   'descricao':x.origem or 'Leitura registrada','km':x.km
+  })
+ for x in manutencoes:
+  try: dt=datetime.strptime(x.data,'%Y-%m-%d') if x.data else None
+  except Exception: dt=None
+  timeline.append({
+   'data':dt,'tipo':'Manutenção','titulo':x.tipo or 'Manutenção',
+   'descricao':(' · '.join([p for p in [
+    f'KM: {x.km:,}'.replace(',','.') if x.km is not None else None,
+    f'Oficina: {x.oficina}' if x.oficina else None,
+    f'Custo: R$ {brl(x.custo)}' if x.custo is not None else None,
+    x.observacoes or None
+   ] if p])), 'km':x.km
+  })
+ for x in contratos:
+  try: dt=datetime.strptime(x.data_inicio,'%Y-%m-%d') if x.data_inicio else x.criado_em
+  except Exception: dt=x.criado_em
+  timeline.append({
+   'data':dt,'tipo':'Contrato','titulo':x.numero_contrato or f'Contrato #{x.id}',
+   'descricao':f"Motorista: {x.driver.nome if x.driver else '-'} · Status: {x.status or '-'}",
+   'km':None
+  })
+ for x in vistorias:
+  timeline.append({
+   'data':x.submitted_at or x.requested_at,'tipo':'Vistoria','titulo':'Vistoria do veículo',
+   'descricao':f"Status: {x.status or '-'}" + (f" · Motorista: {x.driver.nome}" if x.driver else ''),
+   'km':None
+  })
+ for x in documentos:
+  timeline.append({
+   'data':x.criado_em,'tipo':'Documento','titulo':x.tipo or 'Documento',
+   'descricao':x.nome_original or x.identificador or '', 'km':None
+  })
+ timeline.sort(key=lambda item:item['data'] or datetime.min,reverse=True)
+ return {
+  'eventos':eventos,'contratos':contratos,'odometros':odometros,'manutencoes':manutencoes,
+  'vistorias':vistorias,'documentos':documentos,'timeline':timeline
+ }
+
+@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico')
+@owner_portal_required
+def portal_proprietario_historico_veiculo(vehicle_id):
+ vehicle=_veiculo_portal_proprietario(vehicle_id)
+ tenant=Tenant.query.get(int(session['owner_tenant_id']))
+ investor=Investor.query.filter_by(
+  id=int(session['owner_investor_id']),tenant_id=int(session['owner_tenant_id'])
+ ).first_or_404()
+ data=_dados_historico_portal_proprietario(vehicle)
+ return render_template(
+  'portal_proprietario_historico.html',
+  tenant=tenant,investor=investor,vehicle=vehicle,**data
+ )
+
+@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico/imprimir')
+@owner_portal_required
+def portal_proprietario_imprimir_historico_veiculo(vehicle_id):
+ vehicle=_veiculo_portal_proprietario(vehicle_id)
+ tenant=Tenant.query.get(int(session['owner_tenant_id']))
+ investor=Investor.query.filter_by(
+  id=int(session['owner_investor_id']),tenant_id=int(session['owner_tenant_id'])
+ ).first_or_404()
+ data=_dados_historico_portal_proprietario(vehicle)
+ return render_template(
+  'portal_proprietario_historico_impressao.html',
+  tenant=tenant,investor=investor,vehicle=vehicle,
+  gerado_em=agora_sao_paulo_naive(),**data
+ )
+
+
 @app.route('/health')
 def health():
  try:
