@@ -1,102 +1,73 @@
 {% extends 'base.html' %}
 {% block heading %}Dashboard do proprietário{% endblock %}
-{% block subheading %}Visão financeira e operacional exclusiva dos veículos de {{ investor.nome }}.{% endblock %}
+{% block subheading %}Resumo financeiro e operacional de {{ investor.nome }}.{% endblock %}
 {% block content %}
 <style>
-.owner-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
-.owner-kpi{padding:16px;border:1px solid #e5e7eb;border-radius:14px;background:#fff}
-.owner-kpi small{display:block;color:#64748b;margin-bottom:6px}.owner-kpi strong{font-size:1.35rem}
-.owner-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px}
-.owner-car{border:1px solid #e5e7eb;border-radius:14px;padding:16px;background:#fff}
-.owner-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;font-size:.93rem}
-.owner-status{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2ff}
-.chart-wrap{height:310px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:16px 0}
+.kpi,.vehicle-card{border:1px solid #e5e7eb;border-radius:14px;padding:16px;background:#fff}
+.kpi small{display:block;color:#64748b;margin-bottom:6px}.kpi strong{font-size:1.35rem}
+.grid-cars{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:16px}
+.chart-box{height:300px}
+.vehicle-info{display:grid;grid-template-columns:1fr 1fr;gap:9px 14px}
 </style>
 
 <section class="card">
-  <form method="get" class="inline">
-    <label>De <input type="date" name="inicio" value="{{inicio}}"></label>
-    <label>Até <input type="date" name="fim" value="{{fim}}"></label>
-    <button type="submit">Aplicar período</button>
-    <a class="button secondary" href="{{url_for('investidores')}}">Voltar</a>
-  </form>
+<form method="get" class="inline">
+<label>De <input type="date" name="inicio" value="{{ inicio }}"></label>
+<label>Até <input type="date" name="fim" value="{{ fim }}"></label>
+<button>Aplicar período</button>
+<a class="button secondary" href="{{ url_for('proprietario_financeiro',id=investor.id) }}">Condições comerciais</a>
+<a class="button secondary" href="{{ url_for('investidores') }}">Proprietários</a>
+</form>
 </section>
 
-<div class="owner-kpis">
-  <div class="owner-kpi"><small>Receita bruta paga</small><strong>R$ {{ '%.2f'|format(totals.revenue|float) }}</strong></div>
-  <div class="owner-kpi"><small>Repasse do proprietário</small><strong>R$ {{ '%.2f'|format(totals.owner_share|float) }}</strong></div>
-  <div class="owner-kpi"><small>Custos de manutenção</small><strong>R$ {{ '%.2f'|format(totals.costs|float) }}</strong></div>
-  <div class="owner-kpi"><small>Resultado líquido</small><strong>R$ {{ '%.2f'|format(totals.result|float) }}</strong></div>
-  <div class="owner-kpi"><small>Cobranças em aberto</small><strong>R$ {{ '%.2f'|format(totals.open_amount|float) }}</strong></div>
-  <div class="owner-kpi"><small>Veículos</small><strong>{{ vehicles|length }}</strong></div>
+<div class="kpis">
+<div class="kpi"><small>Receita bruta paga</small><strong>R$ {{ totais.receita|brl }}</strong></div>
+<div class="kpi"><small>Repasse do proprietário</small><strong>R$ {{ totais.repasse|brl }}</strong></div>
+<div class="kpi"><small>Custos de manutenção</small><strong>R$ {{ totais.custos|brl }}</strong></div>
+<div class="kpi"><small>Resultado líquido</small><strong>R$ {{ totais.resultado|brl }}</strong></div>
+<div class="kpi"><small>Cobranças em aberto</small><strong>R$ {{ totais.aberto|brl }}</strong></div>
+<div class="kpi"><small>Veículos</small><strong>{{ veiculos|length }}</strong></div>
 </div>
 
-<section class="card">
-  <h2>Receita, custos e resultado por mês</h2>
-  <div class="chart-wrap"><canvas id="financeChart"></canvas></div>
-</section>
+<section class="card"><h2>Evolução financeira</h2><div class="chart-box"><canvas id="financeChart"></canvas></div></section>
+<section class="card"><h2>Resultado por veículo</h2><div class="chart-box"><canvas id="vehicleChart"></canvas></div></section>
 
 <section class="card">
-  <h2>Rentabilidade por veículo</h2>
-  <div class="chart-wrap"><canvas id="vehicleChart"></canvas></div>
-</section>
-
-<section class="card">
-  <h2>Veículos do proprietário</h2>
-  <div class="owner-grid">
-    {% for row in vehicles %}
-    {% set v=row.vehicle %}
-    <article class="owner-car">
-      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
-        <h3 style="margin:0">{{v.placa}} · {{v.marca_modelo}}</h3>
-        <span class="owner-status">{{v.status}}</span>
-      </div>
-      <div class="owner-meta" style="margin-top:14px">
-        <div><strong>Motorista</strong><br>{{row.driver.nome if row.driver else 'Sem motorista'}}</div>
-        <div><strong>KM atual</strong><br>{{v.km_atual or 0}} km</div>
-        <div><strong>Receita paga</strong><br>R$ {{'%.2f'|format(row.revenue|float)}}</div>
-        <div><strong>Repasse</strong><br>R$ {{'%.2f'|format(row.owner_share|float)}}</div>
-        <div><strong>Custos</strong><br>R$ {{'%.2f'|format(row.costs|float)}}</div>
-        <div><strong>Resultado</strong><br>R$ {{'%.2f'|format(row.result|float)}}</div>
-        <div><strong>Contrato</strong><br>{{row.active_contract.numero_contrato if row.active_contract else 'Sem contrato ativo'}}</div>
-        <div><strong>Alertas</strong><br>{{row.alerts}}</div>
-        <div><strong>Próxima manutenção</strong><br>
-          {% if row.next_maintenance %}
-            {{row.next_maintenance.tipo or 'Manutenção'}}{% if row.next_maintenance.proxima_km %} · {{row.next_maintenance.proxima_km}} km{% endif %}
-          {% else %}Sem previsão{% endif %}
-        </div>
-        <div><strong>Em aberto</strong><br>R$ {{'%.2f'|format(row.open_amount|float)}}</div>
-      </div>
-      <hr style="margin:16px 0">
-      <form method="post" action="{{url_for('salvar_condicao_investidor',id=investor.id,vehicle_id=v.id)}}" class="form-grid">
-        <label>% proprietário<input type="number" step="0.01" min="0" max="100" name="owner_percent" value="90" required></label>
-        <label>% locadora<input type="number" step="0.01" min="0" max="100" name="manager_percent" value="10" required></label>
-        <label>Vigência a partir de<input type="date" name="valid_from" value="{{fim}}" required></label>
-        <button type="submit">Salvar condição comercial</button>
-      </form>
-    </article>
-    {% else %}<p>Nenhum veículo vinculado a este proprietário.</p>{% endfor %}
-  </div>
+<h2>Estado dos veículos</h2>
+<div class="grid-cars">
+{% for row in veiculos %}
+{% set v=row.vehicle %}
+<article class="vehicle-card">
+<h3>{{ v.placa }} · {{ v.marca_modelo or 'Veículo' }}</h3>
+<div class="vehicle-info">
+<div><strong>Status</strong><br>{{ v.status }}</div>
+<div><strong>KM atual</strong><br>{{ v.km_atual or 0 }} km</div>
+<div><strong>Motorista</strong><br>{{ row.motorista.nome if row.motorista else 'Sem motorista' }}</div>
+<div><strong>Contrato</strong><br>{{ row.contrato.numero_contrato if row.contrato else 'Sem contrato ativo' }}</div>
+<div><strong>Receita</strong><br>R$ {{ row.receita|brl }}</div>
+<div><strong>Repasse</strong><br>R$ {{ row.repasse|brl }}</div>
+<div><strong>Custos</strong><br>R$ {{ row.custos|brl }}</div>
+<div><strong>Resultado</strong><br>R$ {{ row.resultado|brl }}</div>
+<div><strong>Em aberto</strong><br>R$ {{ row.aberto|brl }}</div>
+<div><strong>Alertas</strong><br>{{ row.alertas }}</div>
+<div><strong>Próxima manutenção</strong><br>{% if row.manutencao %}{{ row.manutencao.tipo or 'Manutenção' }}{% if row.manutencao.proxima_km %} · {{ row.manutencao.proxima_km }} km{% endif %}{% else %}Sem previsão{% endif %}</div>
+</div>
+</article>
+{% else %}
+<p>Nenhum veículo vinculado a este proprietário.</p>
+{% endfor %}
+</div>
 </section>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-const months={{ months|tojson }};
-const vehicleData={{ vehicles|map(attribute='vehicle.placa')|list|tojson }};
-const vehicleResults={{ vehicles|map(attribute='result')|map('float')|list|tojson }};
-new Chart(document.getElementById('financeChart'),{
- type:'line',
- data:{labels:months.map(x=>x.label),datasets:[
-  {label:'Repasse/receita do proprietário',data:months.map(x=>x.revenue)},
-  {label:'Custos',data:months.map(x=>x.costs)},
-  {label:'Resultado',data:months.map(x=>x.result)}
- ]},
- options:{responsive:true,maintainAspectRatio:false}
-});
-new Chart(document.getElementById('vehicleChart'),{
- type:'bar',
- data:{labels:vehicleData,datasets:[{label:'Resultado líquido (R$)',data:vehicleResults}]},
- options:{responsive:true,maintainAspectRatio:false}
-});
+const meses={{ meses|tojson }};
+const placas={{ veiculos|map(attribute='vehicle.placa')|list|tojson }};
+const resultados=[{% for row in veiculos %}{{ row.resultado|float }}{% if not loop.last %},{% endif %}{% endfor %}];
+new Chart(document.getElementById('financeChart'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[
+{label:'Repasse',data:meses.map(x=>x.repasse)},{label:'Custos',data:meses.map(x=>x.custos)},{label:'Resultado',data:meses.map(x=>x.resultado)}
+]},options:{responsive:true,maintainAspectRatio:false}});
+new Chart(document.getElementById('vehicleChart'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado líquido (R$)',data:resultados}]},options:{responsive:true,maintainAspectRatio:false}});
 </script>
 {% endblock %}
