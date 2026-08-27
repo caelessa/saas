@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><title>Histórico {{vehicle.placa}}</title>
+<style>
+body{font-family:Arial,sans-serif;color:#111827;margin:28px;font-size:12px}
+.header{border-bottom:2px solid #111827;padding-bottom:12px;margin-bottom:16px}.header h1{margin:0 0 5px;font-size:22px}
+.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0}.box{border:1px solid #d1d5db;padding:9px}.box small{display:block;color:#6b7280}
+table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border-bottom:1px solid #ddd;text-align:left;padding:8px;vertical-align:top}th{background:#f3f4f6}
+.actions{margin-bottom:15px}.actions button{padding:9px 12px}
+.footer{margin-top:20px;color:#6b7280;font-size:10px}
+@media print{.actions{display:none}body{margin:10mm}}
+</style>
+</head>
+<body>
+<div class="actions"><button onclick="window.print()">Imprimir / Salvar em PDF</button></div>
+<div class="header">
+<h1>Histórico do veículo {{vehicle.placa}}</h1>
+<div>{{vehicle.marca_modelo or ''}} · Proprietário: {{investor.nome}}</div>
+<div>{{tenant.nome_fantasia or tenant.nome}}</div>
+</div>
+<div class="meta">
+<div class="box"><small>Status</small><strong>{{vehicle.status}}</strong></div>
+<div class="box"><small>KM atual</small><strong>{{vehicle.km_atual or 0}} km</strong></div>
+<div class="box"><small>Motorista atual</small><strong>{{vehicle.current_driver.nome if vehicle.current_driver else 'Sem motorista'}}</strong></div>
+<div class="box"><small>Contrato atual</small><strong>{{vehicle.current_contract.numero_contrato if vehicle.current_contract else 'Sem contrato ativo'}}</strong></div>
+</div>
+<table>
+<thead><tr><th>Data</th><th>Tipo</th><th>Registro</th><th>Detalhes</th></tr></thead>
+<tbody>
+{% for item in timeline %}
+<tr>
+<td>{{item.data|sp_datetime if item.data else '-'}}</td>
+<td>{{item.tipo}}</td>
+<td>{{item.titulo}}</td>
+<td>{{item.descricao}}</td>
+</tr>
+{% else %}
+<tr><td colspan="4">Nenhum registro encontrado.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<div class="footer">Gerado em {{gerado_em|sp_datetime}} · Tecnologia Frota Fácil</div>
+<script>window.addEventListener('load',()=>{});</script>
+</body></html>

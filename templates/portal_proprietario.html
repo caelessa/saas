@@ -16,6 +16,7 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 .charts{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(360px,1.65fr);gap:18px}.chart{height:290px}
 .cars{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.car-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status{padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:.82rem}
 .info,.finance{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:14px}.info strong,.finance small{display:block;color:#64748b;margin-bottom:3px}.finance{border-top:1px solid #eef2f7;padding-top:14px}.finance div{background:#f8fafc;padding:10px;border-radius:10px}
+.car-actions{margin-top:14px}.history-btn{display:inline-block;padding:9px 12px;border-radius:9px;background:var(--primary);color:#fff;text-decoration:none;font-weight:700;font-size:.9rem}
 section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85rem}
 @media(max-width:850px){.charts{grid-template-columns:1fr}.info{grid-template-columns:1fr}}
 </style>
@@ -30,7 +31,6 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 <div><h1>Olá, {{ investor.nome }}</h1><p class="muted">Aqui estão somente os seus veículos e resultados vinculados a esta locadora.</p></div>
 <form method="get" class="filters"><label>De<input type="date" name="inicio" value="{{inicio}}"></label><label>Até<input type="date" name="fim" value="{{fim}}"></label><button>Aplicar período</button></form>
 </div>
-
 <div class="kpis">
 <div class="kpi"><small>Receita bruta paga</small><strong>R$ {{ totals.receita|brl }}</strong><em>Total recebido dos seus veículos</em></div>
 <div class="kpi"><small>Seu repasse</small><strong>R$ {{ totals.repasse|brl }}</strong><em>Parcela destinada ao proprietário</em></div>
@@ -39,14 +39,11 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 <div class="kpi"><small>Valores em aberto</small><strong>R$ {{ totals.aberto|brl }}</strong><em>Cobranças ainda não pagas</em></div>
 <div class="kpi"><small>Veículos</small><strong>{{ vehicles|length }}</strong><em>Vinculados a você</em></div>
 </div>
-
 <div class="charts">
 <section class="panel"><h2>Para onde foi o dinheiro</h2><div class="chart"><canvas id="donut"></canvas></div></section>
 <section class="panel"><h2>Evolução mensal</h2><div class="chart"><canvas id="line"></canvas></div></section>
 </div>
-
 <section class="panel"><h2>Resultado por veículo</h2><div class="chart"><canvas id="bar"></canvas></div></section>
-
 <section>
 <h2>Estado dos veículos</h2>
 <div class="cars">
@@ -68,6 +65,7 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 <div><small>Custos</small><strong>R$ {{row.custos|brl}}</strong></div>
 <div><small>Resultado</small><strong>R$ {{row.resultado|brl}}</strong></div>
 </div>
+<div class="car-actions"><a class="history-btn" href="{{url_for('portal_proprietario_historico_veiculo',vehicle_id=v.id)}}">Histórico do veículo</a></div>
 </article>
 {% else %}<p>Nenhum veículo vinculado ao seu cadastro.</p>{% endfor %}
 </div>

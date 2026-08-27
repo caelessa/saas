@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Histórico do veículo · Portal do Proprietário</title>
+<style>
+:root{--primary:{{ tenant.cor_primaria or '#111827' }}}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f6f8fb;color:#172033}
+header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+main{max-width:1100px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;padding:10px 14px;border-radius:9px;text-decoration:none;font-weight:700;background:var(--primary);color:#fff}.btn.secondary{background:#e2e8f0;color:#172033}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0}.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:15px}
+.card small{display:block;color:#64748b;margin-bottom:5px}.timeline{position:relative;margin-top:18px}.item{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:15px 16px;margin-bottom:12px;border-left:4px solid var(--primary)}
+.item-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.badge{font-size:.78rem;padding:4px 8px;border-radius:999px;background:#eef2ff}.date{color:#64748b;font-size:.84rem}.desc{margin-top:7px;color:#475569}.empty{background:#fff;padding:20px;border-radius:12px;color:#64748b}
+h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}
+</style>
+</head>
+<body>
+<header>
+<div><strong>{{ tenant.nome_fantasia or tenant.nome }}</strong><div class="brand">Portal do Proprietário · Tecnologia Frota Fácil</div></div>
+<a href="{{url_for('portal_proprietario_sair')}}" style="color:#475569;text-decoration:none;font-weight:700">Sair</a>
+</header>
+<main>
+<div class="top">
+<div>
+<h1>{{ vehicle.placa }} · {{ vehicle.marca_modelo or 'Veículo' }}</h1>
+<p style="color:#64748b;margin:0">Histórico do veículo de {{ investor.nome }}</p>
+</div>
+<div class="actions">
+<a class="btn secondary" href="{{url_for('portal_proprietario')}}">Voltar ao dashboard</a>
+<a class="btn" href="{{url_for('portal_proprietario_imprimir_historico_veiculo',vehicle_id=vehicle.id)}}" target="_blank">Imprimir / Salvar em PDF</a>
+</div>
+</div>
+
+<div class="summary">
+<div class="card"><small>Status atual</small><strong>{{vehicle.status}}</strong></div>
+<div class="card"><small>KM atual</small><strong>{{vehicle.km_atual or 0}} km</strong></div>
+<div class="card"><small>Motorista atual</small><strong>{{vehicle.current_driver.nome if vehicle.current_driver else 'Sem motorista'}}</strong></div>
+<div class="card"><small>Contrato atual</small><strong>{{vehicle.current_contract.numero_contrato if vehicle.current_contract else 'Sem contrato ativo'}}</strong></div>
+</div>
+
+<section>
+<h2>Linha do tempo</h2>
+<div class="timeline">
+{% for item in timeline %}
+<div class="item">
+<div class="item-head">
+<div><span class="badge">{{item.tipo}}</span> <strong>{{item.titulo}}</strong></div>
+<div class="date">{{item.data|sp_datetime if item.data else '-'}}</div>
+</div>
+{% if item.descricao %}<div class="desc">{{item.descricao}}</div>{% endif %}
+</div>
+{% else %}
+<div class="empty">Ainda não há registros históricos para este veículo.</div>
+{% endfor %}
+</div>
+</section>
+</main>
+</body></html>
