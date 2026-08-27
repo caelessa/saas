@@ -1999,6 +1999,115 @@ def cobranca_whatsapp(id):
  else: flash('Lembrete de cobrança enviado pelo provedor configurado.','success')
  return redirect(url_for('cobrancas'))
 
+
+def enviar_contrato_whatsapp_automatico(c, user_id=None):
+ """Envia o contrato pela WhatsApp Business Platform sem comprometer a geração do contrato."""
+ if not c or not c.driver or not c.vehicle or not c.arquivo_pdf:
+  return False,'Contrato sem dados suficientes para envio automático.'
+
+ # Evita segundo envio automático do mesmo contrato.
+ ja_enviado=MessageQueue.query.filter(
+  MessageQueue.tenant_id==c.tenant_id,
+  MessageQueue.related_entity=='Contrato',
+  MessageQueue.related_entity_id==c.id,
+  MessageQueue.message_type=='contrato',
+  MessageQueue.status.in_(['ENVIADA','PENDENTE','AGENDADA'])
+ ).order_by(MessageQueue.id.desc()).first()
+ if ja_enviado:
+  return True,'Contrato já possui envio de WhatsApp registrado.'
+
+ telefone=telefone_whatsapp(c.driver.telefone)
+ if not telefone:
+  return False,'Contrato gerado, mas o motorista não possui telefone válido para envio automático.'
+
+ integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ provider_cfg=(cfg.get('provider') or 'web').lower()
+ if provider_cfg!='business':
+  return False,'Contrato gerado. O envio automático requer WhatsApp Business conectado.'
+
+ template_name=(cfg.get('contract_template_name') or '').strip() or None
+ if not template_name:
+  return False,'Contrato gerado, mas o template de contrato do WhatsApp não está configurado.'
+
+ codigo_publico=garantir_codigo_publico_contrato(c)
+ link=url_for('contrato_publico',codigo=codigo_publico,_external=True)
+ mensagem=(f'Olá, {c.driver.nome}! Segue o contrato {c.numero_contrato} referente ao veículo '
+           f'{c.vehicle.marca_modelo} - placa {c.vehicle.placa}. Clique no link para visualizar o documento oficial: {link}')
+ template_parameters=[
+  c.driver.nome or '',
+  c.numero_contrato or '',
+  c.vehicle.marca_modelo or '',
+  c.vehicle.placa or '',
+  link,
+ ]
+
+ fila=MessageQueue(
+  tenant_id=c.tenant_id,channel='whatsapp',provider='whatsapp_business',recipient=telefone,
+  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,template_name=template_name,
+  template_parameters=json.dumps(template_parameters,ensure_ascii=False),
+  related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
+  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila)
+ db.session.flush()
+
+ try:
+  result=CommunicationService().send_whatsapp(
+   phone=telefone,message=mensagem,integration=integration,
+   template_name=template_name,
+   template_language=cfg.get('template_language') or 'pt_BR',
+   template_parameters=template_parameters,
+  )
+  fila.provider=result.provider
+  fila.status=result.status
+  fila.external_id=result.external_id
+  fila.attempts=(fila.attempts or 0)+1
+  fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  fila.updated_at=agora_sao_paulo_naive()
+  db.session.add(MessageEvent(
+   tenant_id=c.tenant_id,message_id=fila.id,event=result.status,
+   description='Contrato enviado automaticamente após a geração.',
+   created_at=agora_sao_paulo_naive()
+  ))
+
+  if result.status=='ENVIADA':
+   c.enviado_whatsapp_em=agora_sao_paulo_naive()
+   if c.status in ('Gerado','Rascunho'):
+    try:
+     ContractStateService(db.session,ContractEvent,VehicleEvent).transition(
+      contract=c,new_status='Enviado',user_id=user_id,now=agora_sao_paulo_naive()
+     )
+    except (ContractStateError,VehicleStateError):
+     # O envio já ocorreu; não desfazemos a mensagem por falha de transição de estado.
+     app.logger.exception('Contrato %s enviado, mas falhou a transição para Enviado.',c.id)
+   registrar_evento_contrato(
+    db.session,ContractEvent,tenant_id=c.tenant_id,contract_id=c.id,user_id=user_id,
+    evento='WHATSAPP_ENVIADO_AUTOMATICO',
+    descricao=f'Contrato {c.numero_contrato} enviado automaticamente para {c.driver.nome}.',
+    status_novo=c.status
+   )
+  db.session.commit()
+  if result.status=='ENVIADA':
+   return True,'Contrato gerado e enviado automaticamente pelo WhatsApp.'
+  return False,f'Contrato gerado, mas o WhatsApp retornou status {result.status}.'
+ except CommunicationError as exc:
+  fila.status='FALHA'
+  fila.error_message=str(exc)
+  fila.attempts=(fila.attempts or 0)+1
+  fila.updated_at=agora_sao_paulo_naive()
+  db.session.add(MessageEvent(
+   tenant_id=c.tenant_id,message_id=fila.id,event='FALHA',
+   description=str(exc),created_at=agora_sao_paulo_naive()
+  ))
+  db.session.commit()
+  return False,f'Contrato gerado, mas o envio automático falhou: {exc}'
+ except Exception:
+  db.session.rollback()
+  app.logger.exception('Falha inesperada no envio automático do contrato %s',c.id)
+  return False,'Contrato gerado, mas ocorreu uma falha inesperada no envio automático.'
+
+
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
 def contratos():
@@ -2084,7 +2193,12 @@ def contratos():
    db.session.rollback()
    flash(str(exc),'danger')
    return redirect(url_for('contratos'))
-  flash(f'Contrato {c.numero_contrato} gerado; veículo {v.placa} reservado.','success')
+  enviado_auto,mensagem_auto=enviar_contrato_whatsapp_automatico(c,user_id=current_user.id)
+  if enviado_auto:
+   flash(f'Contrato {c.numero_contrato} gerado; veículo {v.placa} reservado e contrato enviado automaticamente pelo WhatsApp.','success')
+  else:
+   flash(f'Contrato {c.numero_contrato} gerado; veículo {v.placa} reservado.','success')
+   flash(mensagem_auto,'warning')
   return redirect(url_for('contrato_detalhe',id=c.id))
  hoje=date.today(); fim=hoje+timedelta(days=90)
  q=(request.args.get('q') or '').strip()
