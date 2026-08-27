@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portal do Proprietário · Frota Fácil</title>
+<style>
+body{margin:0;font-family:Arial,sans-serif;background:#f6f8fb;color:#172033;display:grid;place-items:center;min-height:100vh}
+.card{width:min(420px,92vw);background:#fff;border:1px solid #e4e8ef;border-radius:18px;padding:28px;box-shadow:0 14px 40px rgba(15,23,42,.08)}
+h1{margin:0 0 8px}p{color:#64748b}label{display:block;margin:16px 0 6px;font-weight:600}input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px}
+button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:10px;background:#111827;color:white;font-weight:700;cursor:pointer}
+.flash{padding:10px 12px;border-radius:10px;background:#fee2e2;color:#991b1b;margin:12px 0}.brand{font-size:.9rem;color:#64748b;margin-bottom:18px}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="brand">Tecnologia Frota Fácil</div>
+<h1>Portal do Proprietário</h1>
+<p>Acesse apenas as informações financeiras e operacionais dos seus veículos.</p>
+{% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="flash">{{msg}}</div>{% endfor %}{% endwith %}
+<form method="post">
+<label>E-mail</label><input type="email" name="email" required autocomplete="username">
+<label>Senha</label><input type="password" name="senha" required autocomplete="current-password">
+<button type="submit">Entrar</button>
+</form>
+</div>
+</body></html>

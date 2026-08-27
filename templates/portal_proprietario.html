@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portal do Proprietário · Frota Fácil</title>
+<style>
+:root{--primary:{{ tenant.cor_primaria or '#111827' }};--secondary:{{ tenant.cor_secundaria or '#475569' }}}
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f6f8fb;color:#172033}
+header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px;position:sticky;top:0;z-index:10}
+.brand strong{display:block;font-size:1.1rem}.brand span{color:#64748b;font-size:.85rem}.logout{color:#475569;text-decoration:none;font-weight:600}
+main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-content:space-between;gap:16px;align-items:end;flex-wrap:wrap}
+.filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;padding:14px;border-radius:14px}
+.filters label{font-size:.85rem;color:#64748b}.filters input{display:block;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px}.filters button{padding:9px 14px;border:0;border-radius:8px;background:var(--primary);color:white}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:14px;margin:18px 0}.kpi,.panel,.car{background:white;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
+.kpi small{display:block;color:#64748b;margin-bottom:6px}.kpi strong{font-size:1.35rem}.kpi em{display:block;color:#94a3b8;font-size:.78rem;margin-top:6px;font-style:normal}
+.charts{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(360px,1.65fr);gap:18px}.chart{height:290px}
+.cars{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.car-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status{padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:.82rem}
+.info,.finance{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:14px}.info strong,.finance small{display:block;color:#64748b;margin-bottom:3px}.finance{border-top:1px solid #eef2f7;padding-top:14px}.finance div{background:#f8fafc;padding:10px;border-radius:10px}
+section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85rem}
+@media(max-width:850px){.charts{grid-template-columns:1fr}.info{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+<div class="brand"><strong>{{ tenant.nome_fantasia or tenant.nome }}</strong><span>Portal do Proprietário · Tecnologia Frota Fácil</span></div>
+<a class="logout" href="{{ url_for('portal_proprietario_sair') }}">Sair</a>
+</header>
+<main>
+<div class="hero">
+<div><h1>Olá, {{ investor.nome }}</h1><p class="muted">Aqui estão somente os seus veículos e resultados vinculados a esta locadora.</p></div>
+<form method="get" class="filters"><label>De<input type="date" name="inicio" value="{{inicio}}"></label><label>Até<input type="date" name="fim" value="{{fim}}"></label><button>Aplicar período</button></form>
+</div>
+
+<div class="kpis">
+<div class="kpi"><small>Receita bruta paga</small><strong>R$ {{ totals.receita|brl }}</strong><em>Total recebido dos seus veículos</em></div>
+<div class="kpi"><small>Seu repasse</small><strong>R$ {{ totals.repasse|brl }}</strong><em>Parcela destinada ao proprietário</em></div>
+<div class="kpi"><small>Custos registrados</small><strong>R$ {{ totals.custos|brl }}</strong><em>Manutenções registradas no período</em></div>
+<div class="kpi"><small>Resultado líquido</small><strong>R$ {{ totals.resultado|brl }}</strong><em>Repasse menos custos</em></div>
+<div class="kpi"><small>Valores em aberto</small><strong>R$ {{ totals.aberto|brl }}</strong><em>Cobranças ainda não pagas</em></div>
+<div class="kpi"><small>Veículos</small><strong>{{ vehicles|length }}</strong><em>Vinculados a você</em></div>
+</div>
+
+<div class="charts">
+<section class="panel"><h2>Para onde foi o dinheiro</h2><div class="chart"><canvas id="donut"></canvas></div></section>
+<section class="panel"><h2>Evolução mensal</h2><div class="chart"><canvas id="line"></canvas></div></section>
+</div>
+
+<section class="panel"><h2>Resultado por veículo</h2><div class="chart"><canvas id="bar"></canvas></div></section>
+
+<section>
+<h2>Estado dos veículos</h2>
+<div class="cars">
+{% for row in vehicles %}
+{% set v=row.vehicle %}
+<article class="car">
+<div class="car-head"><h3>{{v.placa}} · {{v.marca_modelo or 'Veículo'}}</h3><span class="status">{{v.status}}</span></div>
+<div class="info">
+<div><strong>Motorista</strong>{{row.driver.nome if row.driver else 'Sem motorista'}}</div>
+<div><strong>KM atual</strong>{{v.km_atual or 0}} km</div>
+<div><strong>Contrato</strong>{{row.contract.numero_contrato if row.contract else 'Sem contrato ativo'}}</div>
+<div><strong>Alertas</strong>{{row.alerts}}</div>
+<div><strong>Próxima manutenção</strong>{% if row.maintenance %}{{row.maintenance.tipo or 'Manutenção'}}{% if row.maintenance.proxima_km %} · {{row.maintenance.proxima_km}} km{% endif %}{% else %}Sem previsão{% endif %}</div>
+<div><strong>Em aberto</strong>R$ {{row.aberto|brl}}</div>
+</div>
+<div class="finance">
+<div><small>Receita</small><strong>R$ {{row.receita|brl}}</strong></div>
+<div><small>Repasse</small><strong>R$ {{row.repasse|brl}}</strong></div>
+<div><small>Custos</small><strong>R$ {{row.custos|brl}}</strong></div>
+<div><small>Resultado</small><strong>R$ {{row.resultado|brl}}</strong></div>
+</div>
+</article>
+{% else %}<p>Nenhum veículo vinculado ao seu cadastro.</p>{% endfor %}
+</div>
+</section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const meses={{months|tojson}};
+const placas={{vehicles|map(attribute='vehicle.placa')|list|tojson}};
+const resultados=[{% for row in vehicles %}{{row.resultado|float}}{% if not loop.last %},{% endif %}{% endfor %}];
+new Chart(document.getElementById('donut'),{type:'doughnut',data:{labels:['Custos','Resultado líquido'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max({{totals.resultado|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
+new Chart(document.getElementById('line'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse',data:meses.map(x=>x.repasse),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado',data:meses.map(x=>x.resultado),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+new Chart(document.getElementById('bar'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado líquido (R$)',data:resultados}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+</script>
+</body></html>

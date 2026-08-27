@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block heading %}Acesso do proprietário{% endblock %}
+{% block subheading %}Crie ou controle o acesso exclusivo de {{ investor.nome }} ao Portal do Proprietário.{% endblock %}
+{% block content %}
+<section class="card">
+<h2>Portal exclusivo</h2>
+<p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por tenant + proprietário.</p>
+<form method="post" class="form-grid">
+<input type="hidden" name="acao" value="salvar">
+<label>E-mail de acesso<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
+<label>Nova senha{% if access %} (deixe em branco para manter){% endif %}<input type="text" name="senha"></label>
+<button type="submit">{{ 'Atualizar acesso' if access else 'Criar acesso' }}</button>
+</form>
+{% if senha_temporaria %}
+<div class="flash success" style="margin-top:16px">
+<strong>Acesso criado.</strong><br>
+E-mail: {{ access.email }}<br>
+Senha temporária: <strong>{{ senha_temporaria }}</strong><br>
+Envie esses dados ao proprietário e peça para guardar a senha com segurança.
+</div>
+{% endif %}
+{% if access %}
+<p><strong>Status:</strong> {{ 'Ativo' if access.ativo else 'Bloqueado' }} · <strong>Último acesso:</strong> {{ access.ultimo_acesso_em|sp_datetime if access.ultimo_acesso_em else 'Nunca' }}</p>
+<div class="inline">
+<form method="post"><input type="hidden" name="acao" value="{{ 'bloquear' if access.ativo else 'ativar' }}"><button class="secondary">{{ 'Bloquear acesso' if access.ativo else 'Ativar acesso' }}</button></form>
+<a class="button secondary" href="{{ url_for('portal_proprietario_entrar') }}" target="_blank">Abrir tela de login</a>
+</div>
+{% endif %}
+</section>
+{% endblock %}
