@@ -1,28 +1,81 @@
-{% extends 'base.html' %}
-{% block heading %}Enviar comprovante de pagamento{% endblock %}
-{% block subheading %}Envie o comprovante desta cobrança para conferência da locadora.{% endblock %}
-{% block content %}
-<section class="card" style="max-width:760px;margin:auto">
-  {% if concluido %}
-    <h2>Comprovante recebido</h2>
-    <p>O arquivo foi armazenado e ficará disponível para conferência da locadora. O pagamento só será considerado baixado após a confirmação do administrador.</p>
-  {% else %}
-    <h2>Dados da cobrança</h2>
-    <p><strong>Motorista:</strong> {{audit.driver_name or (contrato.driver.nome if contrato and contrato.driver else '-')}}</p>
-    <p><strong>Veículo:</strong> {{audit.vehicle_label or '-'}} — {{audit.plate or '-'}}</p>
-    <p><strong>Data da cobrança:</strong> {{audit.billing_date.strftime('%d/%m/%Y') if audit.billing_date else '-'}}</p>
-    <p><strong>Valor:</strong> R$ {{audit.total_amount|brl}}</p>
-    {% if audit.payment_status=='PAGO' %}
-      <p><strong>Status:</strong> Pagamento já confirmado.</p>
-    {% else %}
-      <form method="post" enctype="multipart/form-data" class="form-grid">
-        <label class="wide">Comprovante
-          <input type="file" name="comprovante" accept=".pdf,.jpg,.jpeg,.png,.webp" required>
-          <small>PDF, JPG, PNG ou WEBP, até 15 MB.</small>
-        </label>
-        <div class="wide"><button>Enviar comprovante</button></div>
-      </form>
-    {% endif %}
-  {% endif %}
-</section>
-{% endblock %}
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Comprovante de pagamento · {{ tenant.nome_fantasia if tenant and tenant.nome_fantasia else 'Frota Fácil' }}</title>
+{% if tenant and tenant.favicon_key %}
+<link rel="icon" href="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon')}}">
+{% endif %}
+<style>
+:root{
+ --primary:{{ tenant.cor_primaria if tenant and tenant.cor_primaria else '#111827' }};
+ --secondary:{{ tenant.cor_secundaria if tenant and tenant.cor_secundaria else '#475569' }};
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f6f8fb;color:#172033;min-height:100vh}
+.wrap{max-width:620px;margin:0 auto;padding:24px}
+.brand{display:flex;align-items:center;gap:12px;margin:12px 0 22px}
+.logo{width:58px;height:58px;object-fit:contain;border-radius:10px;background:#fff}
+.brand strong{display:block;font-size:1.1rem}.brand span{font-size:.82rem;color:#64748b}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:22px;box-shadow:0 8px 28px rgba(15,23,42,.05)}
+h1{margin:0 0 8px;font-size:1.6rem}.muted{color:#64748b;margin-top:0}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0}
+.item{background:#f8fafc;border-radius:12px;padding:11px}.item small{display:block;color:#64748b;margin-bottom:4px}
+.total{font-size:1.2rem}
+label{display:block;font-weight:700;margin:16px 0 7px}
+input[type=file]{width:100%;padding:11px;border:1px dashed #94a3b8;border-radius:12px;background:#fff}
+button{width:100%;margin-top:16px;padding:13px;border:0;border-radius:11px;background:var(--primary);color:#fff;font-weight:700;font-size:1rem}
+.flash{padding:11px 13px;border-radius:10px;background:#fee2e2;color:#991b1b;margin:12px 0}
+.ok{padding:16px;border-radius:12px;background:#ecfdf5;color:#166534;margin:16px 0}
+.powered{text-align:center;color:#94a3b8;font-size:.78rem;margin-top:18px}
+@media(max-width:520px){.summary{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="brand">
+{% if tenant and tenant.logo_key %}
+<img class="logo" src="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='logo')}}" alt="Logo da locadora">
+{% endif %}
+<div>
+<strong>{{ tenant.nome_fantasia if tenant and tenant.nome_fantasia else (tenant.nome if tenant else 'Frota Fácil') }}</strong>
+<span>Envio de comprovante</span>
+</div>
+</div>
+
+<div class="card">
+<h1>Comprovante de pagamento</h1>
+{% if contrato %}
+<p class="muted">Envie o comprovante referente ao veículo {{ contrato.vehicle.placa if contrato.vehicle else '-' }}.</p>
+{% endif %}
+
+{% with msgs=get_flashed_messages(with_categories=true) %}
+{% for cat,msg in msgs %}<div class="flash">{{msg}}</div>{% endfor %}
+{% endwith %}
+
+<div class="summary">
+<div class="item"><small>Motorista</small><strong>{{ audit.driver_name or (contrato.driver.nome if contrato and contrato.driver else '-') }}</strong></div>
+<div class="item"><small>Veículo</small><strong>{{ audit.vehicle_label or (contrato.vehicle.marca_modelo if contrato and contrato.vehicle else '-') }}</strong></div>
+<div class="item"><small>Placa</small><strong>{{ audit.plate or (contrato.vehicle.placa if contrato and contrato.vehicle else '-') }}</strong></div>
+<div class="item"><small>Valor</small><strong class="total">R$ {{ audit.total_amount|brl }}</strong></div>
+</div>
+
+{% if concluido or (audit.payment_status or '') == 'PAGO' %}
+<div class="ok">
+<strong>{{ 'Pagamento já confirmado.' if (audit.payment_status or '') == 'PAGO' else 'Comprovante enviado com sucesso.' }}</strong><br>
+A locadora poderá conferir o arquivo no Frota Fácil.
+</div>
+{% else %}
+<form method="post" enctype="multipart/form-data">
+<label for="comprovante">Selecione o comprovante</label>
+<input id="comprovante" type="file" name="comprovante" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" required>
+<p class="muted" style="font-size:.85rem">Formatos aceitos: PDF, JPG, PNG ou WEBP. Limite de 15 MB.</p>
+<button type="submit">Enviar comprovante</button>
+</form>
+{% endif %}
+</div>
+<div class="powered">Tecnologia Frota Fácil</div>
+</div>
+</body>
+</html>
