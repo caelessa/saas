@@ -20,10 +20,12 @@ Envie esses dados ao proprietário e peça para guardar a senha com segurança.
 </div>
 {% endif %}
 {% if access %}
+<p><strong>Link do portal:</strong><br>
+<code>{{url_for('portal_proprietario_entrar',tenant=current_user.tenant_id,_external=True)}}</code></p>
 <p><strong>Status:</strong> {{ 'Ativo' if access.ativo else 'Bloqueado' }} · <strong>Último acesso:</strong> {{ access.ultimo_acesso_em|sp_datetime if access.ultimo_acesso_em else 'Nunca' }}</p>
 <div class="inline">
 <form method="post"><input type="hidden" name="acao" value="{{ 'bloquear' if access.ativo else 'ativar' }}"><button class="secondary">{{ 'Bloquear acesso' if access.ativo else 'Ativar acesso' }}</button></form>
-<a class="button secondary" href="{{ url_for('portal_proprietario_entrar') }}" target="_blank">Abrir tela de login</a>
+<a class="button secondary" href="{{ url_for('portal_proprietario_entrar',tenant=current_user.tenant_id) }}" target="_blank">Abrir tela de login</a>
 </div>
 {% endif %}
 </section>

@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
+{% if tenant and tenant.favicon_key %}<link rel="icon" href="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon')}}">{% endif %}
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Histórico do veículo · Portal do Proprietário</title>
 <style>
@@ -17,7 +18,10 @@ h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}
 </head>
 <body>
 <header>
+<div style="display:flex;align-items:center;gap:10px">
+{% if tenant.logo_key %}<img src="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='logo')}}" alt="Logo" style="width:44px;height:44px;object-fit:contain">{% endif %}
 <div><strong>{{ tenant.nome_fantasia or tenant.nome }}</strong><div class="brand">Portal do Proprietário · Tecnologia Frota Fácil</div></div>
+</div>
 <a href="{{url_for('portal_proprietario_sair')}}" style="color:#475569;text-decoration:none;font-weight:700">Sair</a>
 </header>
 <main>

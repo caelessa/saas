@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
+{% if tenant and tenant.favicon_key %}<link rel="icon" href="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon')}}">{% endif %}
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Portal do Proprietário · Frota Fácil</title>
 <style>
@@ -23,7 +24,10 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 </head>
 <body>
 <header>
-<div class="brand"><strong>{{ tenant.nome_fantasia or tenant.nome }}</strong><span>Portal do Proprietário · Tecnologia Frota Fácil</span></div>
+<div class="brand" style="display:flex;align-items:center;gap:10px">
+{% if tenant.logo_key %}<img src="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='logo')}}" alt="Logo" style="width:46px;height:46px;object-fit:contain;border-radius:8px">{% endif %}
+<div><strong>{{ tenant.nome_fantasia or tenant.nome }}</strong><span>Portal do Proprietário · Tecnologia Frota Fácil</span></div>
+</div>
 <a class="logout" href="{{ url_for('portal_proprietario_sair') }}">Sair</a>
 </header>
 <main>

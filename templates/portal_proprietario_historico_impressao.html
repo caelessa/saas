@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
+{% if tenant and tenant.favicon_key %}<link rel="icon" href="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon')}}">{% endif %}
 <meta charset="utf-8"><title>Histórico {{vehicle.placa}}</title>
 <style>
 body{font-family:Arial,sans-serif;color:#111827;margin:28px;font-size:12px}
@@ -15,6 +16,7 @@ table{width:100%;border-collapse:collapse;margin-top:14px}th,td{border-bottom:1p
 <body>
 <div class="actions"><button onclick="window.print()">Imprimir / Salvar em PDF</button></div>
 <div class="header">
+{% if tenant.logo_key %}<img src="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='logo',_external=True)}}" alt="Logo" style="max-width:140px;max-height:55px;object-fit:contain;margin-bottom:10px">{% endif %}
 <h1>Histórico do veículo {{vehicle.placa}}</h1>
 <div>{{vehicle.marca_modelo or ''}} · Proprietário: {{investor.nome}}</div>
 <div>{{tenant.nome_fantasia or tenant.nome}}</div>
