@@ -1335,6 +1335,8 @@ def acesso_proprietario(id):
 def portal_proprietario_entrar():
  if session.get('owner_access_id'):
   return redirect(url_for('portal_proprietario'))
+ tenant_ref=request.args.get('tenant',type=int) or request.form.get('tenant',type=int)
+ tenant_login=Tenant.query.get(tenant_ref) if tenant_ref else None
  if request.method=='POST':
   email=(request.form.get('email') or '').strip().lower()
   access=InvestorAccess.query.filter_by(email=email,ativo=True).first()
@@ -1347,12 +1349,13 @@ def portal_proprietario_entrar():
     access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
     return redirect(url_for('portal_proprietario'))
   flash('E-mail ou senha inválidos.','danger')
- return render_template('portal_proprietario_login.html')
+ return render_template('portal_proprietario_login.html',tenant_login=tenant_login)
 
 @app.route('/portal-proprietario/sair')
 def portal_proprietario_sair():
+ tenant_ref=session.get('owner_tenant_id')
  session.pop('owner_access_id',None); session.pop('owner_investor_id',None); session.pop('owner_tenant_id',None)
- return redirect(url_for('portal_proprietario_entrar'))
+ return redirect(url_for('portal_proprietario_entrar',tenant=tenant_ref)) if tenant_ref else redirect(url_for('portal_proprietario_entrar'))
 
 @app.route('/portal-proprietario')
 @owner_portal_required
@@ -1367,6 +1370,115 @@ def portal_proprietario():
  data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim)
  tenant=Tenant.query.get(tenant_id)
  return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),**data)
+
+
+def _veiculo_portal_proprietario(vehicle_id):
+ tenant_id=int(session['owner_tenant_id'])
+ investor_id=int(session['owner_investor_id'])
+ return Vehicle.query.options(
+  joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)
+ ).filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
+
+def _dados_historico_portal_proprietario(vehicle):
+ """Histórico visível ao proprietário, sempre restrito ao tenant e ao veículo dele."""
+ tenant_id=int(session['owner_tenant_id'])
+ eventos=VehicleEvent.query.options(
+  joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)
+ ).filter_by(tenant_id=tenant_id,vehicle_id=vehicle.id).order_by(VehicleEvent.criado_em.desc()).all()
+ contratos=Contract.query.options(joinedload(Contract.driver)).filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Contract.id.desc()).all()
+ odometros=Odometer.query.filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Odometer.data.desc(),Odometer.id.desc()).all()
+ manutencoes=Maintenance.query.filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Maintenance.id.desc()).all()
+ vistorias=Inspection.query.options(joinedload(Inspection.driver),joinedload(Inspection.contract)).filter_by(
+  tenant_id=tenant_id,vehicle_id=vehicle.id
+ ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).all()
+ documentos=Document.query.filter_by(
+  tenant_id=tenant_id,entidade='Veículo',entidade_id=vehicle.id,status='Ativo'
+ ).order_by(Document.criado_em.desc(),Document.id.desc()).all()
+
+ # Linha do tempo unificada, contendo apenas informações adequadas ao proprietário.
+ timeline=[]
+ for x in eventos:
+  timeline.append({
+   'data':x.criado_em,'tipo':'Ocorrência','titulo':x.evento or 'Evento do veículo',
+   'descricao':x.descricao or '', 'km':None
+  })
+ for x in odometros:
+  timeline.append({
+   'data':x.data,'tipo':'Quilometragem','titulo':f'{x.km:,} km'.replace(',','.'),
+   'descricao':x.origem or 'Leitura registrada','km':x.km
+  })
+ for x in manutencoes:
+  try: dt=datetime.strptime(x.data,'%Y-%m-%d') if x.data else None
+  except Exception: dt=None
+  timeline.append({
+   'data':dt,'tipo':'Manutenção','titulo':x.tipo or 'Manutenção',
+   'descricao':(' · '.join([p for p in [
+    f'KM: {x.km:,}'.replace(',','.') if x.km is not None else None,
+    f'Oficina: {x.oficina}' if x.oficina else None,
+    f'Custo: R$ {brl(x.custo)}' if x.custo is not None else None,
+    x.observacoes or None
+   ] if p])), 'km':x.km
+  })
+ for x in contratos:
+  try: dt=datetime.strptime(x.data_inicio,'%Y-%m-%d') if x.data_inicio else x.criado_em
+  except Exception: dt=x.criado_em
+  timeline.append({
+   'data':dt,'tipo':'Contrato','titulo':x.numero_contrato or f'Contrato #{x.id}',
+   'descricao':f"Motorista: {x.driver.nome if x.driver else '-'} · Status: {x.status or '-'}",
+   'km':None
+  })
+ for x in vistorias:
+  timeline.append({
+   'data':x.submitted_at or x.requested_at,'tipo':'Vistoria','titulo':'Vistoria do veículo',
+   'descricao':f"Status: {x.status or '-'}" + (f" · Motorista: {x.driver.nome}" if x.driver else ''),
+   'km':None
+  })
+ for x in documentos:
+  timeline.append({
+   'data':x.criado_em,'tipo':'Documento','titulo':x.tipo or 'Documento',
+   'descricao':x.nome_original or x.identificador or '', 'km':None
+  })
+ timeline.sort(key=lambda item:item['data'] or datetime.min,reverse=True)
+ return {
+  'eventos':eventos,'contratos':contratos,'odometros':odometros,'manutencoes':manutencoes,
+  'vistorias':vistorias,'documentos':documentos,'timeline':timeline
+ }
+
+@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico')
+@owner_portal_required
+def portal_proprietario_historico_veiculo(vehicle_id):
+ vehicle=_veiculo_portal_proprietario(vehicle_id)
+ tenant=Tenant.query.get(int(session['owner_tenant_id']))
+ investor=Investor.query.filter_by(
+  id=int(session['owner_investor_id']),tenant_id=int(session['owner_tenant_id'])
+ ).first_or_404()
+ data=_dados_historico_portal_proprietario(vehicle)
+ return render_template(
+  'portal_proprietario_historico.html',
+  tenant=tenant,investor=investor,vehicle=vehicle,**data
+ )
+
+@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico/imprimir')
+@owner_portal_required
+def portal_proprietario_imprimir_historico_veiculo(vehicle_id):
+ vehicle=_veiculo_portal_proprietario(vehicle_id)
+ tenant=Tenant.query.get(int(session['owner_tenant_id']))
+ investor=Investor.query.filter_by(
+  id=int(session['owner_investor_id']),tenant_id=int(session['owner_tenant_id'])
+ ).first_or_404()
+ data=_dados_historico_portal_proprietario(vehicle)
+ return render_template(
+  'portal_proprietario_historico_impressao.html',
+  tenant=tenant,investor=investor,vehicle=vehicle,
+  gerado_em=agora_sao_paulo_naive(),**data
+ )
+
 
 @app.route('/health')
 def health():
@@ -1731,6 +1843,37 @@ def arquivo_identidade_locadora(tipo):
  data=storage.download(key); ext=Path(key).suffix.lower(); mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
  return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
 
+
+@app.route('/identidade/<int:tenant_id>/<tipo>')
+def identidade_publica_tenant(tenant_id,tipo):
+ tenant=Tenant.query.get_or_404(tenant_id)
+ key=tenant.logo_key if tipo=='logo' else tenant.favicon_key if tipo=='favicon' else None
+ if not key:
+  abort(404)
+ try:
+  data=storage.download(key)
+ except StorageNotFoundError:
+  abort(404)
+ except Exception:
+  abort(503)
+ ext=Path(key).suffix.lower()
+ mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
+ return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
+
+@app.context_processor
+def identidade_visual_contexto():
+ """Disponibiliza a identidade visual correta sem misturar tenants."""
+ tenant_visual=None
+ if current_user.is_authenticated:
+  tenant_visual=current_user.tenant
+ elif session.get('owner_tenant_id'):
+  try:
+   tenant_visual=Tenant.query.get(int(session.get('owner_tenant_id')))
+  except Exception:
+   tenant_visual=None
+ return {'tenant_visual':tenant_visual}
+
+
 @app.route('/configuracoes/automacoes',methods=['GET','POST'])
 @login_required
 def configuracoes_automacoes():
@@ -2001,11 +2144,10 @@ def cobranca_whatsapp(id):
 
 
 def enviar_contrato_whatsapp_automatico(c, user_id=None):
- """Envia o contrato pela WhatsApp Business Platform sem comprometer a geração do contrato."""
+ """Envia o contrato automaticamente após a geração sem comprometer a criação do contrato."""
  if not c or not c.driver or not c.vehicle or not c.arquivo_pdf:
   return False,'Contrato sem dados suficientes para envio automático.'
 
- # Evita segundo envio automático do mesmo contrato.
  ja_enviado=MessageQueue.query.filter(
   MessageQueue.tenant_id==c.tenant_id,
   MessageQueue.related_entity=='Contrato',
@@ -2079,7 +2221,6 @@ def enviar_contrato_whatsapp_automatico(c, user_id=None):
       contract=c,new_status='Enviado',user_id=user_id,now=agora_sao_paulo_naive()
      )
     except (ContractStateError,VehicleStateError):
-     # O envio já ocorreu; não desfazemos a mensagem por falha de transição de estado.
      app.logger.exception('Contrato %s enviado, mas falhou a transição para Enviado.',c.id)
    registrar_evento_contrato(
     db.session,ContractEvent,tenant_id=c.tenant_id,contract_id=c.id,user_id=user_id,
