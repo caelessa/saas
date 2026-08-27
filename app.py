@@ -1335,6 +1335,8 @@ def acesso_proprietario(id):
 def portal_proprietario_entrar():
  if session.get('owner_access_id'):
   return redirect(url_for('portal_proprietario'))
+ tenant_ref=request.args.get('tenant',type=int) or request.form.get('tenant',type=int)
+ tenant_login=Tenant.query.get(tenant_ref) if tenant_ref else None
  if request.method=='POST':
   email=(request.form.get('email') or '').strip().lower()
   access=InvestorAccess.query.filter_by(email=email,ativo=True).first()
@@ -1347,12 +1349,13 @@ def portal_proprietario_entrar():
     access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
     return redirect(url_for('portal_proprietario'))
   flash('E-mail ou senha inválidos.','danger')
- return render_template('portal_proprietario_login.html')
+ return render_template('portal_proprietario_login.html',tenant_login=tenant_login)
 
 @app.route('/portal-proprietario/sair')
 def portal_proprietario_sair():
+ tenant_ref=session.get('owner_tenant_id')
  session.pop('owner_access_id',None); session.pop('owner_investor_id',None); session.pop('owner_tenant_id',None)
- return redirect(url_for('portal_proprietario_entrar'))
+ return redirect(url_for('portal_proprietario_entrar',tenant=tenant_ref)) if tenant_ref else redirect(url_for('portal_proprietario_entrar'))
 
 @app.route('/portal-proprietario')
 @owner_portal_required
@@ -1839,6 +1842,37 @@ def arquivo_identidade_locadora(tipo):
  if not key: abort(404)
  data=storage.download(key); ext=Path(key).suffix.lower(); mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
  return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
+
+
+@app.route('/identidade/<int:tenant_id>/<tipo>')
+def identidade_publica_tenant(tenant_id,tipo):
+ tenant=Tenant.query.get_or_404(tenant_id)
+ key=tenant.logo_key if tipo=='logo' else tenant.favicon_key if tipo=='favicon' else None
+ if not key:
+  abort(404)
+ try:
+  data=storage.download(key)
+ except StorageNotFoundError:
+  abort(404)
+ except Exception:
+  abort(503)
+ ext=Path(key).suffix.lower()
+ mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
+ return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
+
+@app.context_processor
+def identidade_visual_contexto():
+ """Disponibiliza a identidade visual correta sem misturar tenants."""
+ tenant_visual=None
+ if current_user.is_authenticated:
+  tenant_visual=current_user.tenant
+ elif session.get('owner_tenant_id'):
+  try:
+   tenant_visual=Tenant.query.get(int(session.get('owner_tenant_id')))
+  except Exception:
+   tenant_visual=None
+ return {'tenant_visual':tenant_visual}
+
 
 @app.route('/configuracoes/automacoes',methods=['GET','POST'])
 @login_required
