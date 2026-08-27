@@ -2064,18 +2064,19 @@ def url_comprovante_cobranca(audit):
 def enviar_comprovante_pagamento(token):
  audit=BillingAudit.query.filter_by(receipt_token=token).first_or_404()
  contrato=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=audit.contract_id,tenant_id=audit.tenant_id).first()
+ tenant=Tenant.query.get(audit.tenant_id)
  if request.method=='POST':
-  if (audit.payment_status or 'PENDENTE')=='PAGO': return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=True)
+  if (audit.payment_status or 'PENDENTE')=='PAGO': return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant,concluido=True)
   arquivo=request.files.get('comprovante')
   if not arquivo or not arquivo.filename:
-   flash('Selecione o comprovante.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+   flash('Selecione o comprovante.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
   nome=secure_filename(arquivo.filename); ext=Path(nome).suffix.lower()
   permitidos={'.pdf':'application/pdf','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp'}
   if ext not in permitidos:
-   flash('Envie PDF, JPG, PNG ou WEBP.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+   flash('Envie PDF, JPG, PNG ou WEBP.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
   data=arquivo.read()
   if not data or len(data)>15*1024*1024:
-   flash('O comprovante deve ter até 15 MB.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+   flash('O comprovante deve ter até 15 MB.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
   chave=f'{audit.tenant_id}/documentos/comprovantes/{audit.id}/{uuid.uuid4().hex}_{nome}'
   try:
    storage.upload(BytesIO(data),chave,permitidos[ext])
@@ -2087,9 +2088,9 @@ def enviar_comprovante_pagamento(token):
    db.session.commit()
   except Exception:
    db.session.rollback(); app.logger.exception('Falha ao armazenar comprovante da cobrança %s',audit.id)
-   flash('Não foi possível armazenar o comprovante. Tente novamente.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
-  return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=True)
- return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=False)
+   flash('Não foi possível armazenar o comprovante. Tente novamente.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
+  return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant,concluido=True)
+ return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant,concluido=False)
 
 @app.route('/cobrancas/auditoria/<int:id>/comprovante')
 @login_required
