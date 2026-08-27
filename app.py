@@ -3186,6 +3186,74 @@ def concluir_manutencao(id):
  flash('Manutenção concluída e registrada no histórico do veículo.','success')
  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
 
+def enviar_vistoria_whatsapp_automatico(item):
+ """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
+
+ Parâmetros do template:
+ 1 motorista, 2 veículo, 3 placa, 4 link da vistoria.
+ A criação/regravação da vistoria nunca é desfeita se o WhatsApp falhar.
+ """
+ if not item or not item.driver or not item.vehicle:
+  return False,'Vistoria criada, mas faltam dados do motorista ou veículo para o envio.'
+ telefone=normalize_phone(item.driver.telefone)
+ if not telefone:
+  return False,'Vistoria criada, mas o motorista não possui telefone/WhatsApp válido.'
+ integration=Integration.query.filter_by(tenant_id=item.tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ if (cfg.get('provider') or 'web').lower()!='business':
+  return False,'Vistoria criada. O envio automático requer WhatsApp Business conectado.'
+ template_name=(cfg.get('inspection_template_name') or '').strip() or None
+ if not template_name:
+  return False,'Vistoria criada, mas o template de vistoria do WhatsApp não está configurado.'
+ link=url_for('vistoria_publica',token=item.token,_external=True)
+ template_parameters=[
+  item.driver.nome or '',
+  item.vehicle.marca_modelo or '',
+  item.vehicle.placa or '',
+  link,
+ ]
+ mensagem=(f'Olá, {item.driver.nome}. A locadora solicita uma vistoria do veículo '
+           f'{item.vehicle.marca_modelo}, placa {item.vehicle.placa}. '
+           f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela.')
+ fila=MessageQueue(
+  tenant_id=item.tenant_id,channel='whatsapp',provider='whatsapp_business',recipient=telefone,
+  recipient_name=item.driver.nome,message_type='vistoria',body=mensagem,template_name=template_name,
+  template_parameters=json.dumps(template_parameters,ensure_ascii=False),
+  related_entity='Vistoria',related_entity_id=item.id,status='PENDENTE',
+  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila); db.session.flush()
+ try:
+  result=CommunicationService().send_whatsapp(
+   phone=telefone,message=mensagem,integration=integration,
+   template_name=template_name,
+   template_language=cfg.get('template_language') or 'pt_BR',
+   template_parameters=template_parameters,
+  )
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
+  fila.attempts=(fila.attempts or 0)+1
+  fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  fila.updated_at=agora_sao_paulo_naive()
+  db.session.add(MessageEvent(
+   tenant_id=item.tenant_id,message_id=fila.id,event=result.status,
+   description='Link da vistoria enviado automaticamente pelo WhatsApp.',
+   created_at=agora_sao_paulo_naive()
+  ))
+  db.session.commit()
+  if result.status=='ENVIADA':
+   return True,'Vistoria criada e link enviado automaticamente pelo WhatsApp.'
+  return False,f'Vistoria criada, mas o WhatsApp retornou status {result.status}.'
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1; fila.updated_at=agora_sao_paulo_naive()
+  db.session.add(MessageEvent(tenant_id=item.tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  db.session.commit()
+  return False,f'Vistoria criada, mas o envio automático falhou: {exc}'
+ except Exception:
+  db.session.rollback()
+  app.logger.exception('Falha inesperada no envio automático da vistoria %s',item.id)
+  return False,'Vistoria criada, mas ocorreu uma falha inesperada no envio automático.'
+
+
 @app.route('/vistorias',methods=['GET','POST'])
 @login_required
 def vistorias():
@@ -3200,8 +3268,8 @@ def vistorias():
   expira_horas=int(request.form.get('expira_horas') or 48)
   item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
   db.session.add(item); db.session.commit()
-  link=url_for('vistoria_publica',token=item.token,_external=True)
-  flash('Solicitação de vistoria criada. Link: '+link,'success')
+  ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
+  flash(msg_envio,'success' if ok_envio else 'warning')
   return redirect(url_for('vistorias'))
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
  veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
@@ -3237,7 +3305,12 @@ def rejeitar_vistoria(id):
  item.token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
  item.expires_at=datetime.utcnow()+timedelta(hours=48)
  db.session.commit()
- flash('Vistoria rejeitada. Um novo link foi gerado para regravação.','warning'); return redirect(url_for('vistorias'))
+ ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
+ if ok_envio:
+  flash('Vistoria rejeitada. Novo link gerado e enviado automaticamente pelo WhatsApp.','success')
+ else:
+  flash('Vistoria rejeitada e novo link gerado. '+msg_envio,'warning')
+ return redirect(url_for('vistorias'))
 
 @app.route('/vistorias/<int:id>/video')
 @login_required

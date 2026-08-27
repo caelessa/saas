@@ -1,19 +1,23 @@
-HOTFIX — LINK PÚBLICO DE PAGAMENTO / COMPROVANTE
+FROTA FÁCIL - RC ENVIO AUTOMÁTICO DE VISTORIA POR WHATSAPP
 
-Objetivo:
-Corrigir Internal Server Error ao abrir /pagamento/<token> sem login.
+Base: FROTA_FACIL_HOTFIX_LINK_PAGAMENTO_PUBLICO.zip (base mais recente).
 
-Alterações:
-- A página pública não depende mais do base.html administrativo.
-- A rota passa explicitamente a locadora (tenant) ao template.
-- A tela mostra identidade visual da locadora.
-- Mantém upload PDF/JPG/JPEG/PNG/WEBP até 15 MB.
-- Mantém o vínculo do comprovante com a cobrança.
-- Não altera contratos, KM, portal do proprietário ou WhatsApp.
+ALTERAÇÕES
+- Ao criar uma vistoria, o link é enviado automaticamente pela WhatsApp Business Platform.
+- Usa o template de vistoria configurado em Configurações > Integrações > WhatsApp.
+- Parâmetros enviados exatamente na ordem do template aprovado:
+  {{1}} nome do motorista
+  {{2}} veículo (marca/modelo)
+  {{3}} placa
+  {{4}} link público da vistoria
+- O envio é registrado em MessageQueue/MessageEvent.
+- Se o WhatsApp falhar, a vistoria continua criada e é mostrado um aviso.
+- Ao rejeitar uma vistoria e gerar novo link de regravação, o novo link também é enviado automaticamente.
+- O botão/manual via WhatsApp Web pode continuar como fallback.
 
-Instalação:
-1. Substituir app.py.
-2. Adicionar/substituir templates/enviar_comprovante.html.
-3. Manter todos os demais templates e services atuais.
-4. Deploy/restart.
-5. Abrir novamente um link de pagamento existente.
+INSTALAÇÃO
+1. Substitua apenas app.py pelo arquivo desta RC.
+2. Mantenha todos os templates e services atuais.
+3. Faça deploy/restart no Render.
+4. Confirme que o provedor está como WhatsApp Business e que inspection_template_name aponta para o template aprovado.
+5. Crie uma nova vistoria para testar.
