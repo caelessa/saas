@@ -1339,7 +1339,7 @@ def resumo_financeiro_locadora(tenant_id, inicio, fim):
  totals={k:Decimal('0') for k in ['receita_teorica','repasse_teorico','locadora_teorica','receita_paga','repasse_pago','locadora_real','custos','resultado_teorico','resultado_real']}
  vehicle_rows=[]
  for v in vehicles:
-  r=rows[v.id]; r['resultado_teorico']=r['locadora_teorica']-r['custos']; r['resultado_real']=r['locadora_real']-r['custos']
+  r=rows[v.id]; r['resultado_teorico']=r['locadora_teorica']; r['resultado_real']=r['locadora_real']
   for k in totals: totals[k]+=r[k]
   r['driver']=Driver.query.filter_by(id=v.current_driver_id,tenant_id=tenant_id).first() if v.current_driver_id else None
   vehicle_rows.append(r)
@@ -1347,7 +1347,7 @@ def resumo_financeiro_locadora(tenant_id, inicio, fim):
  months=[]; cursor=date(inicio.year,inicio.month,1); limit=date(fim.year,fim.month,1)
  while cursor<=limit:
   item=monthly.get(cursor.strftime('%Y-%m'),{k:Decimal('0') for k in ['receita_teorica','repasse_teorico','locadora_teorica','receita_paga','repasse_pago','locadora_real','custos']})
-  months.append({'label':cursor.strftime('%m/%Y'),'receita_teorica':float(item['receita_teorica']),'repasse_teorico':float(item['repasse_teorico']),'locadora_teorica':float(item['locadora_teorica']),'receita_paga':float(item['receita_paga']),'repasse_pago':float(item['repasse_pago']),'locadora_real':float(item['locadora_real']),'custos':float(item['custos']),'resultado_teorico':float(item['locadora_teorica']-item['custos']),'resultado_real':float(item['locadora_real']-item['custos'])})
+  months.append({'label':cursor.strftime('%m/%Y'),'receita_teorica':float(item['receita_teorica']),'repasse_teorico':float(item['repasse_teorico']),'locadora_teorica':float(item['locadora_teorica']),'receita_paga':float(item['receita_paga']),'repasse_pago':float(item['repasse_pago']),'locadora_real':float(item['locadora_real']),'custos':float(item['custos']),'resultado_teorico':float(item['locadora_teorica']),'resultado_real':float(item['locadora_real'])})
   cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
  return {'vehicles':vehicle_rows,'months':months,'totals':totals,'sem_regra':len(sem_regra)}
 

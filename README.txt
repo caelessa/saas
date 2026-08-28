@@ -52,3 +52,10 @@ ARQUIVOS DESTA RC
 
 INSTALAÇÃO
 Substitua o app.py e os templates incluídos nesta RC, preservando os demais arquivos do projeto.
+
+
+CORREÇÃO FINANCEIRA:
+- Manutenções e demais despesas dos veículos são de responsabilidade dos proprietários.
+- Essas despesas permanecem visíveis no dashboard da locadora apenas como informação.
+- Não são descontadas do resultado teórico ou real da locadora.
+- O dashboard do proprietário continua descontando os custos do resultado do proprietário.
