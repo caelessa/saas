@@ -1,4 +1,3 @@
-import mimetypes
 import os, uuid, re, json, hashlib, unicodedata, base64, binascii, html
 import requests
 from datetime import datetime, date, timedelta, timezone
@@ -1109,106 +1108,53 @@ def regra_proprietario_veiculo_portal(tenant_id, investor_id, vehicle_id, data_r
  ).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).first()
 
 def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
- """Resumo do portal com visão teórica (contratual) e realizado pago separados.
-
- O previsto considera o valor-base da locação e a regra de repasse vigente na
- data de cada competência. Excesso de KM não entra na previsão, pois só existe
- depois da leitura real. Valores pagos continuam disponíveis para comparação.
- """
  investor=Investor.query.filter_by(id=investor_id,tenant_id=tenant_id).first_or_404()
  vehicles=Vehicle.query.filter_by(tenant_id=tenant_id,investor_id=investor_id).order_by(Vehicle.placa).all()
  ids=[v.id for v in vehicles]
- rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'pago':Decimal('0'),'repasse_pago':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'aberto':Decimal('0')} for v in vehicles}
+ rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'aberto':Decimal('0')} for v in vehicles}
  contracts=Contract.query.filter(Contract.tenant_id==tenant_id,Contract.vehicle_id.in_(ids or [-1])).all()
  contract_map={c.id:c for c in contracts}
  monthly={}
 
- def month_bucket(d):
-  key=d.strftime('%Y-%m')
-  return monthly.setdefault(key,{'repasse':Decimal('0'),'pago':Decimal('0'),'custos':Decimal('0')})
-
- def parse_contract_date(value, fallback):
-  try: return datetime.strptime(value or '','%Y-%m-%d').date()
-  except Exception: return fallback
-
- def periodicidade_dias(c):
-  txt=unicodedata.normalize('NFKD',str(c.periodicidade or 'Semanal')).encode('ascii','ignore').decode('ascii').lower()
-  if 'diar' in txt: return 1
-  if 'mens' in txt: return None
-  return 7
-
- # 1) PREVISÃO TEÓRICA: nasce do contrato, não do status de pagamento.
- # Contratos cancelados/rascunhos não geram expectativa financeira.
- status_validos={'Gerado','Enviado','Visualizado','Assinado','Ativo','Encerrado','Finalizado'}
- for c in contracts:
-  if c.vehicle_id not in rows or (c.status and c.status not in status_validos):
-   continue
-  c_ini=parse_contract_date(c.data_inicio,inicio)
-  c_fim=parse_contract_date(c.data_fim,fim)
-  periodo_ini=max(inicio,c_ini); periodo_fim=min(fim,c_fim)
-  if periodo_ini>periodo_fim: continue
-  base=Decimal(str(c.valor_locacao or 0))
-  if base<=0: continue
-  intervalo=periodicidade_dias(c)
-  competencias=[]
-  if intervalo is None:  # mensal: uma competência por mês enquanto o contrato estiver vigente
-   cursor=date(periodo_ini.year,periodo_ini.month,1)
-   limite=date(periodo_fim.year,periodo_fim.month,1)
-   while cursor<=limite:
-    ref=max(cursor,periodo_ini)
-    competencias.append(ref)
-    cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
-  else:
-   # ancora a recorrência na data inicial do contrato e avança até entrar no filtro
-   ref=c_ini
-   if ref<periodo_ini:
-    saltos=max(0,(periodo_ini-ref).days//intervalo)
-    ref=ref+timedelta(days=saltos*intervalo)
-    while ref<periodo_ini: ref+=timedelta(days=intervalo)
-   while ref<=periodo_fim:
-    competencias.append(ref); ref+=timedelta(days=intervalo)
-  for ref in competencias:
-   rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,c.vehicle_id,ref)
-   pct=Decimal(str(rule.percentual_proprietario or 0)) if rule else Decimal('100')
-   share=base*pct/Decimal('100')
-   rows[c.vehicle_id]['receita']+=base
-   rows[c.vehicle_id]['repasse']+=share
-   month_bucket(ref)['repasse']+=share
-
- # 2) REALIZADO: mantém os pagamentos efetivamente baixados para comparação.
  audits=BillingAudit.query.filter(
   BillingAudit.tenant_id==tenant_id,
   BillingAudit.contract_id.in_(list(contract_map.keys()) or [-1]),
   BillingAudit.billing_date>=inicio,
   BillingAudit.billing_date<=fim
  ).order_by(BillingAudit.billing_date).all()
+
  for audit in audits:
   contract=contract_map.get(audit.contract_id)
-  if not contract or contract.vehicle_id not in rows: continue
+  if not contract or contract.vehicle_id not in rows:
+   continue
   total=Decimal(str(audit.total_amount or 0))
   row=rows[contract.vehicle_id]
+  key=audit.billing_date.strftime('%Y-%m')
+  monthly.setdefault(key,{'repasse':Decimal('0'),'custos':Decimal('0')})
   if (audit.payment_status or '').upper()=='PAGO':
    rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,contract.vehicle_id,audit.billing_date)
    pct=Decimal(str(rule.percentual_proprietario or 0)) if rule else Decimal('100')
    share=total*pct/Decimal('100')
-   row['pago']+=total; row['repasse_pago']+=share; month_bucket(audit.billing_date)['pago']+=share
+   row['receita']+=total; row['repasse']+=share; monthly[key]['repasse']+=share
   else:
    row['aberto']+=total
 
- # 3) Custos reais registrados no período.
  for m in Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(ids or [-1])).all():
   try: d=datetime.strptime(m.data,'%Y-%m-%d').date()
   except Exception: continue
   if d<inicio or d>fim or m.vehicle_id not in rows: continue
   cost=Decimal(str(m.custo or 0))
-  rows[m.vehicle_id]['custos']+=cost; month_bucket(d)['custos']+=cost
+  rows[m.vehicle_id]['custos']+=cost
+  key=d.strftime('%Y-%m')
+  monthly.setdefault(key,{'repasse':Decimal('0'),'custos':Decimal('0')})
+  monthly[key]['custos']+=cost
 
- total_receita=total_repasse=total_pago=total_repasse_pago=total_custos=total_aberto=Decimal('0')
+ total_receita=total_repasse=total_custos=total_aberto=Decimal('0')
  vehicle_rows=[]
  for v in vehicles:
   row=rows[v.id]
   row['resultado']=row['repasse']-row['custos']
-  total_receita+=row['receita']; total_repasse+=row['repasse']; total_pago+=row['pago']; total_repasse_pago+=row['repasse_pago']; total_custos+=row['custos']; total_aberto+=row['aberto']
+  total_receita+=row['receita']; total_repasse+=row['repasse']; total_custos+=row['custos']; total_aberto+=row['aberto']
   row['driver']=Driver.query.filter_by(id=v.current_driver_id,tenant_id=tenant_id).first() if v.current_driver_id else None
   row['contract']=Contract.query.filter(
    Contract.tenant_id==tenant_id,Contract.vehicle_id==v.id,
@@ -1223,146 +1169,15 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
  months=[]
  cursor=date(inicio.year,inicio.month,1); limit=date(fim.year,fim.month,1)
  while cursor<=limit:
-  key=cursor.strftime('%Y-%m'); item=monthly.get(key,{'repasse':Decimal('0'),'pago':Decimal('0'),'custos':Decimal('0')})
+  key=cursor.strftime('%Y-%m'); item=monthly.get(key,{'repasse':Decimal('0'),'custos':Decimal('0')})
   result=item['repasse']-item['custos']
-  months.append({'label':cursor.strftime('%m/%Y'),'repasse':float(item['repasse']),'pago':float(item['pago']),'custos':float(item['custos']),'resultado':float(result)})
+  months.append({'label':cursor.strftime('%m/%Y'),'repasse':float(item['repasse']),'custos':float(item['custos']),'resultado':float(result)})
   cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
 
  return {
   'investor':investor,'vehicles':vehicle_rows,'months':months,
-  'totals':{'receita':total_receita,'repasse':total_repasse,'pago':total_pago,'repasse_pago':total_repasse_pago,'custos':total_custos,'resultado':total_repasse-total_custos,'aberto':total_aberto}
+  'totals':{'receita':total_receita,'repasse':total_repasse,'custos':total_custos,'resultado':total_repasse-total_custos,'aberto':total_aberto}
  }
-
-
-def regra_repasse_locadora_portal(tenant_id, vehicle, data_ref):
- """Retorna os percentuais vigentes para a locadora e o proprietário.
-
- Veículos sem proprietário vinculado pertencem integralmente à locadora. Para
- veículos de proprietário, usa a regra comercial vigente na competência.
- """
- if not vehicle.investor_id:
-  return Decimal('100'),Decimal('0')
- rule=InvestorVehicleRule.query.filter(
-  InvestorVehicleRule.tenant_id==tenant_id,
-  InvestorVehicleRule.investor_id==vehicle.investor_id,
-  InvestorVehicleRule.vehicle_id==vehicle.id,
-  InvestorVehicleRule.vigencia_inicio<=data_ref,
-  or_(InvestorVehicleRule.vigencia_fim.is_(None),InvestorVehicleRule.vigencia_fim>=data_ref)
- ).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).first()
- if not rule:
-  # Conservador: se há proprietário mas a regra ainda não foi cadastrada,
-  # não atribui receita líquida à locadora até a condição comercial ser definida.
-  return Decimal('0'),Decimal('100')
- pct_prop=Decimal(str(rule.percentual_proprietario or 0))
- pct_loc=Decimal(str(rule.percentual_locadora if rule.percentual_locadora is not None else (Decimal('100')-pct_prop)))
- return pct_loc,pct_prop
-
-
-def resumo_financeiro_locadora(tenant_id, inicio, fim):
- """Dashboard financeiro da locadora com visão teórica e realizada separadas."""
- vehicles=Vehicle.query.filter_by(tenant_id=tenant_id).order_by(Vehicle.placa).all()
- vehicle_map={v.id:v for v in vehicles}
- ids=list(vehicle_map.keys())
- rows={v.id:{'vehicle':v,'receita_teorica':Decimal('0'),'repasse_teorico':Decimal('0'),'locadora_teorica':Decimal('0'),'receita_paga':Decimal('0'),'repasse_pago':Decimal('0'),'locadora_real':Decimal('0'),'custos':Decimal('0'),'resultado_teorico':Decimal('0'),'resultado_real':Decimal('0')} for v in vehicles}
- monthly={}
- sem_regra=set()
-
- def bucket(d):
-  key=d.strftime('%Y-%m')
-  return monthly.setdefault(key,{'receita_teorica':Decimal('0'),'repasse_teorico':Decimal('0'),'locadora_teorica':Decimal('0'),'receita_paga':Decimal('0'),'repasse_pago':Decimal('0'),'locadora_real':Decimal('0'),'custos':Decimal('0')})
-
- def parse_date(value, fallback):
-  try: return datetime.strptime(value or '','%Y-%m-%d').date()
-  except Exception: return fallback
-
- def periodicidade_dias(c):
-  txt=unicodedata.normalize('NFKD',str(c.periodicidade or 'Semanal')).encode('ascii','ignore').decode('ascii').lower()
-  if 'diar' in txt: return 1
-  if 'mens' in txt: return None
-  if 'quinz' in txt: return 15
-  return 7
-
- contracts=Contract.query.filter(Contract.tenant_id==tenant_id,Contract.vehicle_id.in_(ids or [-1])).all()
- contract_map={c.id:c for c in contracts}
- status_validos={'Gerado','Enviado','Visualizado','Assinado','Ativo','Encerrado','Finalizado'}
-
- # 1) TEÓRICO: competências previstas pelos contratos no intervalo selecionado.
- for c in contracts:
-  v=vehicle_map.get(c.vehicle_id)
-  if not v or (c.status and c.status not in status_validos): continue
-  c_ini=parse_date(c.data_inicio,inicio)
-  c_fim=parse_date(c.data_fim,fim)
-  periodo_ini=max(inicio,c_ini); periodo_fim=min(fim,c_fim)
-  if periodo_ini>periodo_fim: continue
-  base=Decimal(str(c.valor_locacao or 0))
-  if base<=0: continue
-  intervalo=periodicidade_dias(c)
-  competencias=[]
-  if intervalo is None:
-   cursor=date(periodo_ini.year,periodo_ini.month,1); limite=date(periodo_fim.year,periodo_fim.month,1)
-   while cursor<=limite:
-    competencias.append(max(cursor,periodo_ini))
-    cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
-  else:
-   ref=c_ini
-   if ref<periodo_ini:
-    saltos=max(0,(periodo_ini-ref).days//intervalo); ref=ref+timedelta(days=saltos*intervalo)
-    while ref<periodo_ini: ref+=timedelta(days=intervalo)
-   while ref<=periodo_fim:
-    competencias.append(ref); ref+=timedelta(days=intervalo)
-  for ref in competencias:
-   pct_loc,pct_prop=regra_repasse_locadora_portal(tenant_id,v,ref)
-   if v.investor_id and pct_loc==0 and pct_prop==100:
-    has_rule=InvestorVehicleRule.query.filter(InvestorVehicleRule.tenant_id==tenant_id,InvestorVehicleRule.investor_id==v.investor_id,InvestorVehicleRule.vehicle_id==v.id,InvestorVehicleRule.vigencia_inicio<=ref,or_(InvestorVehicleRule.vigencia_fim.is_(None),InvestorVehicleRule.vigencia_fim>=ref)).first()
-    if not has_rule: sem_regra.add(v.id)
-   rep=base*pct_prop/Decimal('100'); loc=base*pct_loc/Decimal('100')
-   r=rows[v.id]; r['receita_teorica']+=base; r['repasse_teorico']+=rep; r['locadora_teorica']+=loc
-   b=bucket(ref); b['receita_teorica']+=base; b['repasse_teorico']+=rep; b['locadora_teorica']+=loc
-
- # 2) REAL: cobranças efetivamente pagas. Excesso de KM entra aqui pelo total cobrado.
- audits=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(list(contract_map.keys()) or [-1]),BillingAudit.billing_date>=inicio,BillingAudit.billing_date<=fim).order_by(BillingAudit.billing_date).all()
- for a in audits:
-  c=contract_map.get(a.contract_id); v=vehicle_map.get(c.vehicle_id) if c else None
-  if not v or (a.payment_status or '').upper()!='PAGO': continue
-  total=Decimal(str(a.total_amount or 0)); pct_loc,pct_prop=regra_repasse_locadora_portal(tenant_id,v,a.billing_date)
-  rep=total*pct_prop/Decimal('100'); loc=total*pct_loc/Decimal('100')
-  r=rows[v.id]; r['receita_paga']+=total; r['repasse_pago']+=rep; r['locadora_real']+=loc
-  b=bucket(a.billing_date); b['receita_paga']+=total; b['repasse_pago']+=rep; b['locadora_real']+=loc
-
- # 3) Custos reais registrados no período.
- for m in Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(ids or [-1])).all():
-  try: d=datetime.strptime(m.data or '','%Y-%m-%d').date()
-  except Exception: continue
-  if d<inicio or d>fim or m.vehicle_id not in rows: continue
-  custo=Decimal(str(m.custo or 0)); rows[m.vehicle_id]['custos']+=custo; bucket(d)['custos']+=custo
-
- totals={k:Decimal('0') for k in ['receita_teorica','repasse_teorico','locadora_teorica','receita_paga','repasse_pago','locadora_real','custos','resultado_teorico','resultado_real']}
- vehicle_rows=[]
- for v in vehicles:
-  r=rows[v.id]; r['resultado_teorico']=r['locadora_teorica']; r['resultado_real']=r['locadora_real']
-  for k in totals: totals[k]+=r[k]
-  r['driver']=Driver.query.filter_by(id=v.current_driver_id,tenant_id=tenant_id).first() if v.current_driver_id else None
-  vehicle_rows.append(r)
-
- months=[]; cursor=date(inicio.year,inicio.month,1); limit=date(fim.year,fim.month,1)
- while cursor<=limit:
-  item=monthly.get(cursor.strftime('%Y-%m'),{k:Decimal('0') for k in ['receita_teorica','repasse_teorico','locadora_teorica','receita_paga','repasse_pago','locadora_real','custos']})
-  months.append({'label':cursor.strftime('%m/%Y'),'receita_teorica':float(item['receita_teorica']),'repasse_teorico':float(item['repasse_teorico']),'locadora_teorica':float(item['locadora_teorica']),'receita_paga':float(item['receita_paga']),'repasse_pago':float(item['repasse_pago']),'locadora_real':float(item['locadora_real']),'custos':float(item['custos']),'resultado_teorico':float(item['locadora_teorica']),'resultado_real':float(item['locadora_real'])})
-  cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
- return {'vehicles':vehicle_rows,'months':months,'totals':totals,'sem_regra':len(sem_regra)}
-
-
-@app.route('/financeiro-locadora')
-@login_required
-def financeiro_locadora():
- today=date.today()
- try: inicio=datetime.strptime(request.args.get('inicio') or f'{today.year}-01-01','%Y-%m-%d').date()
- except Exception: inicio=date(today.year,1,1)
- try: fim=datetime.strptime(request.args.get('fim') or today.isoformat(),'%Y-%m-%d').date()
- except Exception: fim=today
- if inicio>fim: inicio,fim=fim,inicio
- data=resumo_financeiro_locadora(tid(),inicio,fim)
- return render_template('financeiro_locadora.html',inicio=inicio.isoformat(),fim=fim.isoformat(),**data)
 
 
 @app.route('/investidores',methods=['GET','POST'])
@@ -1520,8 +1335,6 @@ def acesso_proprietario(id):
 def portal_proprietario_entrar():
  if session.get('owner_access_id'):
   return redirect(url_for('portal_proprietario'))
- tenant_ref=request.args.get('tenant',type=int) or request.form.get('tenant',type=int)
- tenant_login=Tenant.query.get(tenant_ref) if tenant_ref else None
  if request.method=='POST':
   email=(request.form.get('email') or '').strip().lower()
   access=InvestorAccess.query.filter_by(email=email,ativo=True).first()
@@ -1534,13 +1347,12 @@ def portal_proprietario_entrar():
     access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
     return redirect(url_for('portal_proprietario'))
   flash('E-mail ou senha inválidos.','danger')
- return render_template('portal_proprietario_login.html',tenant_login=tenant_login)
+ return render_template('portal_proprietario_login.html')
 
 @app.route('/portal-proprietario/sair')
 def portal_proprietario_sair():
- tenant_ref=session.get('owner_tenant_id')
  session.pop('owner_access_id',None); session.pop('owner_investor_id',None); session.pop('owner_tenant_id',None)
- return redirect(url_for('portal_proprietario_entrar',tenant=tenant_ref)) if tenant_ref else redirect(url_for('portal_proprietario_entrar'))
+ return redirect(url_for('portal_proprietario_entrar'))
 
 @app.route('/portal-proprietario')
 @owner_portal_required
@@ -1555,135 +1367,6 @@ def portal_proprietario():
  data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim)
  tenant=Tenant.query.get(tenant_id)
  return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),**data)
-
-
-def _veiculo_portal_proprietario(vehicle_id):
- tenant_id=int(session['owner_tenant_id'])
- investor_id=int(session['owner_investor_id'])
- return Vehicle.query.options(
-  joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)
- ).filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
-
-def _dados_historico_portal_proprietario(vehicle):
- """Histórico visível ao proprietário, sempre restrito ao tenant e ao veículo dele."""
- tenant_id=int(session['owner_tenant_id'])
- eventos=VehicleEvent.query.options(
-  joinedload(VehicleEvent.contract),joinedload(VehicleEvent.driver)
- ).filter_by(tenant_id=tenant_id,vehicle_id=vehicle.id).order_by(VehicleEvent.criado_em.desc()).all()
- contratos=Contract.query.options(joinedload(Contract.driver)).filter_by(
-  tenant_id=tenant_id,vehicle_id=vehicle.id
- ).order_by(Contract.id.desc()).all()
- odometros=Odometer.query.filter_by(
-  tenant_id=tenant_id,vehicle_id=vehicle.id
- ).order_by(Odometer.data.desc(),Odometer.id.desc()).all()
- manutencoes=Maintenance.query.filter_by(
-  tenant_id=tenant_id,vehicle_id=vehicle.id
- ).order_by(Maintenance.id.desc()).all()
- vistorias=Inspection.query.options(joinedload(Inspection.driver),joinedload(Inspection.contract)).filter_by(
-  tenant_id=tenant_id,vehicle_id=vehicle.id
- ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).all()
- documentos=Document.query.filter_by(
-  tenant_id=tenant_id,entidade='Veículo',entidade_id=vehicle.id,status='Ativo'
- ).order_by(Document.criado_em.desc(),Document.id.desc()).all()
-
- # Linha do tempo unificada, contendo apenas informações adequadas ao proprietário.
- timeline=[]
- for x in eventos:
-  timeline.append({
-   'data':x.criado_em,'tipo':'Ocorrência','titulo':x.evento or 'Evento do veículo',
-   'descricao':x.descricao or '', 'km':None
-  })
- for x in odometros:
-  timeline.append({
-   'data':x.data,'tipo':'Quilometragem','titulo':f'{x.km:,} km'.replace(',','.'),
-   'descricao':x.origem or 'Leitura registrada','km':x.km
-  })
- maintenance_ids=[x.id for x in manutencoes]
- documentos_manutencao={}
- if maintenance_ids:
-  docs_manut=Document.query.filter(Document.tenant_id==tenant_id,Document.entidade=='Manutenção',Document.entidade_id.in_(maintenance_ids),Document.status=='Ativo').order_by(Document.criado_em.desc(),Document.id.desc()).all()
-  for doc in docs_manut: documentos_manutencao.setdefault(doc.entidade_id,[]).append(doc)
- for x in manutencoes:
-  try: dt=datetime.strptime(x.data,'%Y-%m-%d') if x.data else None
-  except Exception: dt=None
-  timeline.append({
-   'data':dt,'tipo':'Manutenção','titulo':x.tipo or 'Manutenção',
-   'descricao':(' · '.join([p for p in [
-    f'KM: {x.km:,}'.replace(',','.') if x.km is not None else None,
-    f'Oficina: {x.oficina}' if x.oficina else None,
-    f'Custo: R$ {brl(x.custo)}' if x.custo is not None else None,
-    x.observacoes or None
-   ] if p])), 'km':x.km,'maintenance_id':x.id
-  })
- for x in contratos:
-  try: dt=datetime.strptime(x.data_inicio,'%Y-%m-%d') if x.data_inicio else x.criado_em
-  except Exception: dt=x.criado_em
-  timeline.append({
-   'data':dt,'tipo':'Contrato','titulo':x.numero_contrato or f'Contrato #{x.id}',
-   'descricao':f"Motorista: {x.driver.nome if x.driver else '-'} · Status: {x.status or '-'}",
-   'km':None
-  })
- for x in vistorias:
-  timeline.append({
-   'data':x.submitted_at or x.requested_at,'tipo':'Vistoria','titulo':'Vistoria do veículo',
-   'descricao':f"Status: {x.status or '-'}" + (f" · Motorista: {x.driver.nome}" if x.driver else ''),
-   'km':None
-  })
- for x in documentos:
-  timeline.append({
-   'data':x.criado_em,'tipo':'Documento','titulo':x.tipo or 'Documento',
-   'descricao':x.nome_original or x.identificador or '', 'km':None
-  })
- timeline.sort(key=lambda item:item['data'] or datetime.min,reverse=True)
- return {
-  'eventos':eventos,'contratos':contratos,'odometros':odometros,'manutencoes':manutencoes,
-  'vistorias':vistorias,'documentos':documentos,'timeline':timeline,
-  'documentos_manutencao':documentos_manutencao
- }
-
-@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico')
-@owner_portal_required
-def portal_proprietario_historico_veiculo(vehicle_id):
- vehicle=_veiculo_portal_proprietario(vehicle_id)
- tenant=Tenant.query.get(int(session['owner_tenant_id']))
- investor=Investor.query.filter_by(
-  id=int(session['owner_investor_id']),tenant_id=int(session['owner_tenant_id'])
- ).first_or_404()
- data=_dados_historico_portal_proprietario(vehicle)
- return render_template(
-  'portal_proprietario_historico.html',
-  tenant=tenant,investor=investor,vehicle=vehicle,**data
- )
-
-@app.route('/portal-proprietario/manutencoes/<int:maintenance_id>/documentos/<int:document_id>')
-@owner_portal_required
-def portal_proprietario_documento_manutencao(maintenance_id,document_id):
- tenant_id=int(session['owner_tenant_id']); investor_id=int(session['owner_investor_id'])
- m=Maintenance.query.filter_by(id=maintenance_id,tenant_id=tenant_id).first_or_404()
- Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
- doc=Document.query.filter_by(id=document_id,tenant_id=tenant_id,entidade='Manutenção',entidade_id=m.id,status='Ativo').first_or_404()
- try: conteudo=storage.download(doc.arquivo)
- except StorageNotFoundError: abort(404)
- except Exception:
-  app.logger.exception('Falha ao abrir comprovante de manutenção no portal %s',doc.id); abort(503)
- return send_file(BytesIO(conteudo),as_attachment=False,download_name=doc.nome_original,mimetype=_mimetype_documento(doc.nome_original))
-
-
-@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico/imprimir')
-@owner_portal_required
-def portal_proprietario_imprimir_historico_veiculo(vehicle_id):
- vehicle=_veiculo_portal_proprietario(vehicle_id)
- tenant=Tenant.query.get(int(session['owner_tenant_id']))
- investor=Investor.query.filter_by(
-  id=int(session['owner_investor_id']),tenant_id=int(session['owner_tenant_id'])
- ).first_or_404()
- data=_dados_historico_portal_proprietario(vehicle)
- return render_template(
-  'portal_proprietario_historico_impressao.html',
-  tenant=tenant,investor=investor,vehicle=vehicle,
-  gerado_em=agora_sao_paulo_naive(),**data
- )
-
 
 @app.route('/health')
 def health():
@@ -2048,37 +1731,6 @@ def arquivo_identidade_locadora(tipo):
  data=storage.download(key); ext=Path(key).suffix.lower(); mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
  return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
 
-
-@app.route('/identidade/<int:tenant_id>/<tipo>')
-def identidade_publica_tenant(tenant_id,tipo):
- tenant=Tenant.query.get_or_404(tenant_id)
- key=tenant.logo_key if tipo=='logo' else tenant.favicon_key if tipo=='favicon' else None
- if not key:
-  abort(404)
- try:
-  data=storage.download(key)
- except StorageNotFoundError:
-  abort(404)
- except Exception:
-  abort(503)
- ext=Path(key).suffix.lower()
- mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.ico':'image/x-icon'}.get(ext,'application/octet-stream')
- return send_file(BytesIO(data),mimetype=mime,download_name=Path(key).name,as_attachment=False)
-
-@app.context_processor
-def identidade_visual_contexto():
- """Disponibiliza a identidade visual correta sem misturar tenants."""
- tenant_visual=None
- if current_user.is_authenticated:
-  tenant_visual=current_user.tenant
- elif session.get('owner_tenant_id'):
-  try:
-   tenant_visual=Tenant.query.get(int(session.get('owner_tenant_id')))
-  except Exception:
-   tenant_visual=None
- return {'tenant_visual':tenant_visual}
-
-
 @app.route('/configuracoes/automacoes',methods=['GET','POST'])
 @login_required
 def configuracoes_automacoes():
@@ -2088,23 +1740,12 @@ def configuracoes_automacoes():
   if not item:
    item=Integration(tenant_id=tid(),tipo='whatsapp',ativo=False,configuracao='{}'); db.session.add(item)
   cfg=CommunicationService.parse_config(item)
-  try: weekday=max(0,min(6,int(request.form.get('automation_weekday') or 0)))
-  except Exception: weekday=0
-  try: start_hour=max(0,min(23,int(request.form.get('automation_start_hour') or 7)))
-  except Exception: start_hour=7
-  try: end_hour=max(0,min(23,int(request.form.get('automation_end_hour') or 20)))
-  except Exception: end_hour=20
-  try: interval=max(1,min(12,int(request.form.get('reminder_interval_hours') or 1)))
-  except Exception: interval=1
-  if end_hour < start_hour:
-   flash('O horário final não pode ser anterior ao horário inicial.','danger')
-   return redirect(url_for('configuracoes_automacoes'))
   cfg.update({
    'automation_enabled':request.form.get('automation_enabled')=='1',
-   'automation_weekday':weekday,
-   'automation_start_hour':start_hour,
-   'automation_end_hour':end_hour,
-   'reminder_interval_hours':interval,
+   'automation_weekday':int(request.form.get('automation_weekday') or 0),
+   'automation_start_hour':int(request.form.get('automation_start_hour') or 7),
+   'automation_end_hour':int(request.form.get('automation_end_hour') or 20),
+   'reminder_interval_hours':int(request.form.get('reminder_interval_hours') or 1),
    'automatic_billing_enabled':request.form.get('automatic_billing_enabled')=='1',
    'automatic_km_enabled':request.form.get('automatic_km_enabled')=='1',
    'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
@@ -2280,19 +1921,18 @@ def url_comprovante_cobranca(audit):
 def enviar_comprovante_pagamento(token):
  audit=BillingAudit.query.filter_by(receipt_token=token).first_or_404()
  contrato=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=audit.contract_id,tenant_id=audit.tenant_id).first()
- tenant=Tenant.query.get(audit.tenant_id)
  if request.method=='POST':
-  if (audit.payment_status or 'PENDENTE')=='PAGO': return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant,concluido=True)
+  if (audit.payment_status or 'PENDENTE')=='PAGO': return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=True)
   arquivo=request.files.get('comprovante')
   if not arquivo or not arquivo.filename:
-   flash('Selecione o comprovante.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
+   flash('Selecione o comprovante.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
   nome=secure_filename(arquivo.filename); ext=Path(nome).suffix.lower()
   permitidos={'.pdf':'application/pdf','.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp'}
   if ext not in permitidos:
-   flash('Envie PDF, JPG, PNG ou WEBP.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
+   flash('Envie PDF, JPG, PNG ou WEBP.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
   data=arquivo.read()
   if not data or len(data)>15*1024*1024:
-   flash('O comprovante deve ter até 15 MB.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
+   flash('O comprovante deve ter até 15 MB.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
   chave=f'{audit.tenant_id}/documentos/comprovantes/{audit.id}/{uuid.uuid4().hex}_{nome}'
   try:
    storage.upload(BytesIO(data),chave,permitidos[ext])
@@ -2304,9 +1944,9 @@ def enviar_comprovante_pagamento(token):
    db.session.commit()
   except Exception:
    db.session.rollback(); app.logger.exception('Falha ao armazenar comprovante da cobrança %s',audit.id)
-   flash('Não foi possível armazenar o comprovante. Tente novamente.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant)
-  return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant,concluido=True)
- return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,tenant=tenant,concluido=False)
+   flash('Não foi possível armazenar o comprovante. Tente novamente.','danger'); return render_template('enviar_comprovante.html',audit=audit,contrato=contrato)
+  return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=True)
+ return render_template('enviar_comprovante.html',audit=audit,contrato=contrato,concluido=False)
 
 @app.route('/cobrancas/auditoria/<int:id>/comprovante')
 @login_required
@@ -2358,113 +1998,6 @@ def cobranca_whatsapp(id):
  elif redirect_url: return redirect(redirect_url)
  else: flash('Lembrete de cobrança enviado pelo provedor configurado.','success')
  return redirect(url_for('cobrancas'))
-
-
-def enviar_contrato_whatsapp_automatico(c, user_id=None):
- """Envia o contrato automaticamente após a geração sem comprometer a criação do contrato."""
- if not c or not c.driver or not c.vehicle or not c.arquivo_pdf:
-  return False,'Contrato sem dados suficientes para envio automático.'
-
- ja_enviado=MessageQueue.query.filter(
-  MessageQueue.tenant_id==c.tenant_id,
-  MessageQueue.related_entity=='Contrato',
-  MessageQueue.related_entity_id==c.id,
-  MessageQueue.message_type=='contrato',
-  MessageQueue.status.in_(['ENVIADA','PENDENTE','AGENDADA'])
- ).order_by(MessageQueue.id.desc()).first()
- if ja_enviado:
-  return True,'Contrato já possui envio de WhatsApp registrado.'
-
- telefone=telefone_whatsapp(c.driver.telefone)
- if not telefone:
-  return False,'Contrato gerado, mas o motorista não possui telefone válido para envio automático.'
-
- integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first()
- cfg=CommunicationService.parse_config(integration)
- provider_cfg=(cfg.get('provider') or 'web').lower()
- if provider_cfg!='business':
-  return False,'Contrato gerado. O envio automático requer WhatsApp Business conectado.'
-
- template_name=(cfg.get('contract_template_name') or '').strip() or None
- if not template_name:
-  return False,'Contrato gerado, mas o template de contrato do WhatsApp não está configurado.'
-
- codigo_publico=garantir_codigo_publico_contrato(c)
- link=url_for('contrato_publico',codigo=codigo_publico,_external=True)
- mensagem=(f'Olá, {c.driver.nome}! Segue o contrato {c.numero_contrato} referente ao veículo '
-           f'{c.vehicle.marca_modelo} - placa {c.vehicle.placa}. Clique no link para visualizar o documento oficial: {link}')
- template_parameters=[
-  c.driver.nome or '',
-  c.numero_contrato or '',
-  c.vehicle.marca_modelo or '',
-  c.vehicle.placa or '',
-  link,
- ]
-
- fila=MessageQueue(
-  tenant_id=c.tenant_id,channel='whatsapp',provider='whatsapp_business',recipient=telefone,
-  recipient_name=c.driver.nome,message_type='contrato',body=mensagem,template_name=template_name,
-  template_parameters=json.dumps(template_parameters,ensure_ascii=False),
-  related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
-  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
- )
- db.session.add(fila)
- db.session.flush()
-
- try:
-  result=CommunicationService().send_whatsapp(
-   phone=telefone,message=mensagem,integration=integration,
-   template_name=template_name,
-   template_language=cfg.get('template_language') or 'pt_BR',
-   template_parameters=template_parameters,
-  )
-  fila.provider=result.provider
-  fila.status=result.status
-  fila.external_id=result.external_id
-  fila.attempts=(fila.attempts or 0)+1
-  fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
-  fila.updated_at=agora_sao_paulo_naive()
-  db.session.add(MessageEvent(
-   tenant_id=c.tenant_id,message_id=fila.id,event=result.status,
-   description='Contrato enviado automaticamente após a geração.',
-   created_at=agora_sao_paulo_naive()
-  ))
-
-  if result.status=='ENVIADA':
-   c.enviado_whatsapp_em=agora_sao_paulo_naive()
-   if c.status in ('Gerado','Rascunho'):
-    try:
-     ContractStateService(db.session,ContractEvent,VehicleEvent).transition(
-      contract=c,new_status='Enviado',user_id=user_id,now=agora_sao_paulo_naive()
-     )
-    except (ContractStateError,VehicleStateError):
-     app.logger.exception('Contrato %s enviado, mas falhou a transição para Enviado.',c.id)
-   registrar_evento_contrato(
-    db.session,ContractEvent,tenant_id=c.tenant_id,contract_id=c.id,user_id=user_id,
-    evento='WHATSAPP_ENVIADO_AUTOMATICO',
-    descricao=f'Contrato {c.numero_contrato} enviado automaticamente para {c.driver.nome}.',
-    status_novo=c.status
-   )
-  db.session.commit()
-  if result.status=='ENVIADA':
-   return True,'Contrato gerado e enviado automaticamente pelo WhatsApp.'
-  return False,f'Contrato gerado, mas o WhatsApp retornou status {result.status}.'
- except CommunicationError as exc:
-  fila.status='FALHA'
-  fila.error_message=str(exc)
-  fila.attempts=(fila.attempts or 0)+1
-  fila.updated_at=agora_sao_paulo_naive()
-  db.session.add(MessageEvent(
-   tenant_id=c.tenant_id,message_id=fila.id,event='FALHA',
-   description=str(exc),created_at=agora_sao_paulo_naive()
-  ))
-  db.session.commit()
-  return False,f'Contrato gerado, mas o envio automático falhou: {exc}'
- except Exception:
-  db.session.rollback()
-  app.logger.exception('Falha inesperada no envio automático do contrato %s',c.id)
-  return False,'Contrato gerado, mas ocorreu uma falha inesperada no envio automático.'
-
 
 @app.route('/contratos',methods=['GET','POST'])
 @login_required
@@ -2551,12 +2084,7 @@ def contratos():
    db.session.rollback()
    flash(str(exc),'danger')
    return redirect(url_for('contratos'))
-  enviado_auto,mensagem_auto=enviar_contrato_whatsapp_automatico(c,user_id=current_user.id)
-  if enviado_auto:
-   flash(f'Contrato {c.numero_contrato} gerado; veículo {v.placa} reservado e contrato enviado automaticamente pelo WhatsApp.','success')
-  else:
-   flash(f'Contrato {c.numero_contrato} gerado; veículo {v.placa} reservado.','success')
-   flash(mensagem_auto,'warning')
+  flash(f'Contrato {c.numero_contrato} gerado; veículo {v.placa} reservado.','success')
   return redirect(url_for('contrato_detalhe',id=c.id))
  hoje=date.today(); fim=hoje+timedelta(days=90)
  q=(request.args.get('q') or '').strip()
@@ -2752,30 +2280,15 @@ def contrato_whatsapp(id):
  cfg=CommunicationService.parse_config(integration)
  provider_cfg=(cfg.get('provider') or 'web').lower()
  template_name=(cfg.get('contract_template_name') or '').strip() or None
- template_parameters=[
-  c.driver.nome or '',
-  c.numero_contrato or '',
-  c.vehicle.marca_modelo or '',
-  c.vehicle.placa or '',
-  link,
- ]
  fila=MessageQueue(
   tenant_id=tid(),channel='whatsapp',provider='whatsapp_business' if provider_cfg=='business' else 'whatsapp_web',recipient=telefone,
   recipient_name=c.driver.nome,message_type='contrato',body=mensagem,template_name=template_name,
-  template_parameters=json.dumps(template_parameters,ensure_ascii=False),
   related_entity='Contrato',related_entity_id=c.id,status='PENDENTE',
   created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
  )
  db.session.add(fila); db.session.flush()
  try:
-  result=CommunicationService().send_whatsapp(
-   phone=telefone,
-   message=mensagem,
-   integration=integration,
-   template_name=template_name,
-   template_language=cfg.get('template_language') or 'pt_BR',
-   template_parameters=template_parameters,
-  )
+  result=CommunicationService().send_whatsapp(phone=telefone,message=mensagem,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR')
   fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
   fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
   db.session.add(MessageEvent(tenant_id=tid(),message_id=fila.id,event=result.status,description='Mensagem de contrato processada pelo provedor configurado.',created_at=agora_sao_paulo_naive()))
@@ -3262,89 +2775,6 @@ def excluir_documento(id):
   flash('Não foi possível excluir o documento.','danger')
  return redirect(url_for('documentos'))
 
-
-
-def _documentos_manutencao_query(tenant_id, maintenance_id):
- return Document.query.filter_by(tenant_id=tenant_id,entidade='Manutenção',entidade_id=maintenance_id,status='Ativo').order_by(Document.criado_em.desc(),Document.id.desc())
-
-def _mimetype_documento(nome):
- tipo,_=mimetypes.guess_type(nome or '')
- return tipo or 'application/octet-stream'
-
-@app.route('/manutencoes/comprovantes',methods=['GET','POST'])
-@login_required
-def comprovantes_manutencao():
- if request.method=='POST':
-  maintenance_id=request.form.get('maintenance_id',type=int)
-  m=Maintenance.query.filter_by(id=maintenance_id,tenant_id=tid()).first_or_404()
-  tipo=(request.form.get('tipo') or 'Comprovante de manutenção').strip()[:40]
-  arquivos=[f for f in request.files.getlist('arquivos') if f and f.filename]
-  if not arquivos:
-   flash('Selecione pelo menos um comprovante.','danger')
-   return redirect(url_for('comprovantes_manutencao',maintenance_id=m.id))
-  permitidas={'.pdf','.jpg','.jpeg','.png','.webp'}
-  salvos=[]; enviados=[]
-  try:
-   for f in arquivos:
-    nome_original=secure_filename(f.filename)
-    ext=Path(nome_original).suffix.lower()
-    if not nome_original or ext not in permitidas:
-     raise ValueError('Envie somente arquivos PDF, JPG, JPEG, PNG ou WEBP.')
-    conteudo=f.read()
-    if not conteudo:
-     raise ValueError(f'O arquivo {nome_original} está vazio.')
-    if len(conteudo)>15*1024*1024:
-     raise ValueError(f'O arquivo {nome_original} excede o limite de 15 MB.')
-    chave=f'{tid()}/manutencoes/{m.id}/documentos/{uuid.uuid4().hex}_{nome_original}'
-    storage.upload(BytesIO(conteudo),chave,f.mimetype or _mimetype_documento(nome_original))
-    enviados.append(chave)
-    doc=Document(tenant_id=tid(),tipo=tipo,entidade='Manutenção',entidade_id=m.id,identificador=identificador_documento(tipo,m.id,nome_original),nome_original=nome_original,arquivo=chave,hash_sha256=hashlib.sha256(conteudo).hexdigest(),status='Ativo')
-    db.session.add(doc); salvos.append(doc)
-   db.session.commit()
-   flash(f'{len(salvos)} comprovante(s) anexado(s) à manutenção.','success')
-  except ValueError as exc:
-   db.session.rollback()
-   for chave in enviados:
-    try: storage.delete(chave)
-    except Exception: pass
-   flash(str(exc),'danger')
-  except Exception:
-   db.session.rollback()
-   for chave in enviados:
-    try: storage.delete(chave)
-    except Exception: pass
-   app.logger.exception('Falha ao anexar comprovantes à manutenção %s',m.id)
-   flash('Não foi possível armazenar os comprovantes.','danger')
-  return redirect(url_for('comprovantes_manutencao',maintenance_id=m.id))
- items=Maintenance.query.options(joinedload(Maintenance.vehicle)).filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()).all()
- ids=[m.id for m in items]
- docs=Document.query.filter(Document.tenant_id==tid(),Document.entidade=='Manutenção',Document.entidade_id.in_(ids or [-1]),Document.status=='Ativo').order_by(Document.criado_em.desc(),Document.id.desc()).all()
- docs_por_manutencao={}
- for doc in docs: docs_por_manutencao.setdefault(doc.entidade_id,[]).append(doc)
- return render_template('comprovantes_manutencao.html',items=items,docs_por_manutencao=docs_por_manutencao,selecionada=request.args.get('maintenance_id',type=int))
-
-@app.route('/manutencoes/<int:maintenance_id>/documentos/<int:document_id>')
-@login_required
-def visualizar_documento_manutencao(maintenance_id,document_id):
- Maintenance.query.filter_by(id=maintenance_id,tenant_id=tid()).first_or_404()
- doc=Document.query.filter_by(id=document_id,tenant_id=tid(),entidade='Manutenção',entidade_id=maintenance_id,status='Ativo').first_or_404()
- try: conteudo=storage.download(doc.arquivo)
- except StorageNotFoundError: abort(404)
- except Exception:
-  app.logger.exception('Falha ao abrir comprovante de manutenção %s',doc.id); abort(503)
- return send_file(BytesIO(conteudo),as_attachment=False,download_name=doc.nome_original,mimetype=_mimetype_documento(doc.nome_original))
-
-@app.route('/manutencoes/<int:maintenance_id>/documentos/<int:document_id>/excluir',methods=['POST'])
-@login_required
-def excluir_documento_manutencao(maintenance_id,document_id):
- Maintenance.query.filter_by(id=maintenance_id,tenant_id=tid()).first_or_404()
- doc=Document.query.filter_by(id=document_id,tenant_id=tid(),entidade='Manutenção',entidade_id=maintenance_id,status='Ativo').first_or_404()
- try:
-  storage.delete(doc.arquivo); db.session.delete(doc); db.session.commit(); flash('Comprovante excluído.','success')
- except Exception:
-  db.session.rollback(); app.logger.exception('Falha ao excluir comprovante de manutenção %s',doc.id); flash('Não foi possível excluir o comprovante.','danger')
- return redirect(url_for('comprovantes_manutencao',maintenance_id=maintenance_id))
-
 @app.route('/manutencoes',methods=['GET','POST'])
 @login_required
 def manutencoes():
@@ -3485,74 +2915,6 @@ def concluir_manutencao(id):
  flash('Manutenção concluída e registrada no histórico do veículo.','success')
  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
 
-def enviar_vistoria_whatsapp_automatico(item):
- """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
-
- Parâmetros do template:
- 1 motorista, 2 veículo, 3 placa, 4 link da vistoria.
- A criação/regravação da vistoria nunca é desfeita se o WhatsApp falhar.
- """
- if not item or not item.driver or not item.vehicle:
-  return False,'Vistoria criada, mas faltam dados do motorista ou veículo para o envio.'
- telefone=normalize_phone(item.driver.telefone)
- if not telefone:
-  return False,'Vistoria criada, mas o motorista não possui telefone/WhatsApp válido.'
- integration=Integration.query.filter_by(tenant_id=item.tenant_id,tipo='whatsapp').first()
- cfg=CommunicationService.parse_config(integration)
- if (cfg.get('provider') or 'web').lower()!='business':
-  return False,'Vistoria criada. O envio automático requer WhatsApp Business conectado.'
- template_name=(cfg.get('inspection_template_name') or '').strip() or None
- if not template_name:
-  return False,'Vistoria criada, mas o template de vistoria do WhatsApp não está configurado.'
- link=url_for('vistoria_publica',token=item.token,_external=True)
- template_parameters=[
-  item.driver.nome or '',
-  item.vehicle.marca_modelo or '',
-  item.vehicle.placa or '',
-  link,
- ]
- mensagem=(f'Olá, {item.driver.nome}. A locadora solicita uma vistoria do veículo '
-           f'{item.vehicle.marca_modelo}, placa {item.vehicle.placa}. '
-           f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela.')
- fila=MessageQueue(
-  tenant_id=item.tenant_id,channel='whatsapp',provider='whatsapp_business',recipient=telefone,
-  recipient_name=item.driver.nome,message_type='vistoria',body=mensagem,template_name=template_name,
-  template_parameters=json.dumps(template_parameters,ensure_ascii=False),
-  related_entity='Vistoria',related_entity_id=item.id,status='PENDENTE',
-  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
- )
- db.session.add(fila); db.session.flush()
- try:
-  result=CommunicationService().send_whatsapp(
-   phone=telefone,message=mensagem,integration=integration,
-   template_name=template_name,
-   template_language=cfg.get('template_language') or 'pt_BR',
-   template_parameters=template_parameters,
-  )
-  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
-  fila.attempts=(fila.attempts or 0)+1
-  fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
-  fila.updated_at=agora_sao_paulo_naive()
-  db.session.add(MessageEvent(
-   tenant_id=item.tenant_id,message_id=fila.id,event=result.status,
-   description='Link da vistoria enviado automaticamente pelo WhatsApp.',
-   created_at=agora_sao_paulo_naive()
-  ))
-  db.session.commit()
-  if result.status=='ENVIADA':
-   return True,'Vistoria criada e link enviado automaticamente pelo WhatsApp.'
-  return False,f'Vistoria criada, mas o WhatsApp retornou status {result.status}.'
- except CommunicationError as exc:
-  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1; fila.updated_at=agora_sao_paulo_naive()
-  db.session.add(MessageEvent(tenant_id=item.tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
-  db.session.commit()
-  return False,f'Vistoria criada, mas o envio automático falhou: {exc}'
- except Exception:
-  db.session.rollback()
-  app.logger.exception('Falha inesperada no envio automático da vistoria %s',item.id)
-  return False,'Vistoria criada, mas ocorreu uma falha inesperada no envio automático.'
-
-
 @app.route('/vistorias',methods=['GET','POST'])
 @login_required
 def vistorias():
@@ -3567,8 +2929,8 @@ def vistorias():
   expira_horas=int(request.form.get('expira_horas') or 48)
   item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
   db.session.add(item); db.session.commit()
-  ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
-  flash(msg_envio,'success' if ok_envio else 'warning')
+  link=url_for('vistoria_publica',token=item.token,_external=True)
+  flash('Solicitação de vistoria criada. Link: '+link,'success')
   return redirect(url_for('vistorias'))
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
  veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
@@ -3604,12 +2966,7 @@ def rejeitar_vistoria(id):
  item.token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
  item.expires_at=datetime.utcnow()+timedelta(hours=48)
  db.session.commit()
- ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
- if ok_envio:
-  flash('Vistoria rejeitada. Novo link gerado e enviado automaticamente pelo WhatsApp.','success')
- else:
-  flash('Vistoria rejeitada e novo link gerado. '+msg_envio,'warning')
- return redirect(url_for('vistorias'))
+ flash('Vistoria rejeitada. Um novo link foi gerado para regravação.','warning'); return redirect(url_for('vistorias'))
 
 @app.route('/vistorias/<int:id>/video')
 @login_required
