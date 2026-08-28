@@ -11,7 +11,7 @@ header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display
 .brand strong{display:block;font-size:1.1rem}.brand span{color:#64748b;font-size:.85rem}.logout{color:#475569;text-decoration:none;font-weight:600}
 main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-content:space-between;gap:16px;align-items:end;flex-wrap:wrap}
 .filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;padding:14px;border-radius:14px}
-.filters label{font-size:.85rem;color:#64748b}.filters input{display:block;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px}.filters button{padding:9px 14px;border:0;border-radius:8px;background:var(--primary);color:white}
+.filters label{font-size:.85rem;color:#64748b}.filters input,.filters select{display:block;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px;background:#fff}.filters button{padding:9px 14px;border:0;border-radius:8px;background:var(--primary);color:white}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:14px;margin:18px 0}.kpi,.panel,.car{background:white;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
 .kpi small{display:block;color:#64748b;margin-bottom:6px}.kpi strong{font-size:1.35rem}.kpi em{display:block;color:#94a3b8;font-size:.78rem;margin-top:6px;font-style:normal}
 .charts{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(360px,1.65fr);gap:18px}.chart{height:290px}
@@ -33,7 +33,7 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 <main>
 <div class="hero">
 <div><h1>Olá, {{ investor.nome }}</h1><p class="muted">Visão teórica dos seus veículos no período, com comparação entre o previsto pelo contrato e o efetivamente pago.</p></div>
-<form method="get" class="filters"><label>De<input type="date" name="inicio" value="{{inicio}}"></label><label>Até<input type="date" name="fim" value="{{fim}}"></label><button>Aplicar período</button></form>
+<form method="get" class="filters"><label>Veículo<select name="vehicle_id"><option value="">Todos os veículos</option>{% for v in available_vehicles %}<option value="{{v.id}}" {% if vehicle_id==v.id %}selected{% endif %}>{{v.placa}} — {{v.marca_modelo or 'Veículo'}}</option>{% endfor %}</select></label><label>Pesquisar placa<input type="search" name="placa" value="{{placa or ''}}" placeholder="Ex.: ABC1D23" maxlength="10" autocomplete="off"></label><label>De<input type="date" name="inicio" value="{{inicio}}"></label><label>Até<input type="date" name="fim" value="{{fim}}"></label><button>Aplicar filtros</button>{% if vehicle_id or placa %}<a href="{{url_for('portal_proprietario',inicio=inicio,fim=fim)}}" style="padding:9px 14px;border-radius:8px;background:#e2e8f0;color:#334155;text-decoration:none;font-weight:700">Limpar veículo/placa</a>{% endif %}</form>
 </div>
 <div class="kpis">
 <div class="kpi"><small>Receita teórica</small><strong>R$ {{ totals.receita|brl }}</strong><em>Locações previstas pelos contratos no período</em></div>
