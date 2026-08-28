@@ -1,28 +1,54 @@
-FROTA FÁCIL — RC DASHBOARD PROPRIETÁRIO: TEÓRICO + REAL
-Data: 27/08/2026
+FROTA FÁCIL — RC CUMULATIVA
+Comprovantes de Manutenção + Dashboard Financeiro da Locadora
 
-Base usada: app.py atual enviado pelo usuário (app (6).py).
+BASE
+- Esta RC parte da RC de comprovantes de manutenção, que por sua vez preserva o Dashboard do Proprietário com visões Teórica + Real.
+- Não há migração de banco nesta RC.
 
-ALTERAÇÕES
-- Dashboard do proprietário passa a usar valores teóricos/previstos como visão principal.
-- Previsão calculada a partir do valor da locação dos contratos no período.
-- Aplica a regra de percentual do proprietário vigente em cada competência.
-- Mantém valores efetivamente pagos separados para comparação.
-- Gráfico mensal mostra Repasse teórico x Repasse pago x Custos x Resultado teórico.
-- Cards por veículo mostram Receita teórica, Repasse teórico, Custos e Resultado.
-- Excesso de KM NÃO é projetado, pois depende da quilometragem real; entra apenas no realizado quando pago.
-- Não altera banco de dados nem exige migração.
+NOVIDADE 1 — COMPROVANTES DE MANUTENÇÃO
+- Mantém anexos de NF, recibos, orçamento, comprovante de pagamento e outros documentos vinculados à manutenção.
+- Proprietário pode visualizar os comprovantes das manutenções dos próprios veículos.
 
-ARQUIVOS PARA SUBSTITUIR
-1. app.py
-2. templates/portal_proprietario.html
+NOVIDADE 2 — DASHBOARD FINANCEIRO DA LOCADORA
+Novo menu: "Financeiro da locadora"
+Nova rota: /financeiro-locadora
 
-IMPORTANTE
-Esta RC foi construída sobre o app.py atual fornecido em 27/08/2026, preservando as demais funcionalidades existentes.
+Visão TEÓRICA
+- Receita teórica da frota com base nos contratos e periodicidade.
+- Repasse teórico aos proprietários conforme regra vigente por veículo/competência.
+- Receita teórica da locadora.
+- Custos de manutenção registrados.
+- Resultado teórico da locadora.
+- Excesso de KM não é projetado.
 
-ATUALIZAÇÃO
-- Mantidos os gráficos teóricos.
-- Restaurada uma visão gráfica REAL separada, baseada somente em repasses efetivamente pagos.
-- Gráfico real mensal: Repasse pago x Custos x Resultado real.
-- Composição real: Custos x Resultado real.
-- Nenhuma alteração de banco de dados.
+Visão REAL
+- Receita efetivamente paga.
+- Repasse aos proprietários sobre valores pagos.
+- Receita real da locadora.
+- Custos registrados.
+- Resultado real.
+- Cobranças pagas incluem excesso de KM quando existente.
+
+GRÁFICOS
+- Composição teórica.
+- Evolução mensal teórica.
+- Composição real.
+- Evolução mensal realizada.
+- Resultado teórico x real por veículo.
+- Tabela detalhada por veículo.
+
+SEGURANÇA DO CÁLCULO
+- Veículo sem proprietário: 100% da participação é da locadora.
+- Veículo com proprietário utiliza a regra vigente no período.
+- Se houver proprietário sem regra de repasse, a competência não é atribuída à locadora e o dashboard mostra um aviso.
+
+ARQUIVOS DESTA RC
+- app.py
+- templates/base.html
+- templates/financeiro_locadora.html
+- templates/portal_proprietario.html
+- templates/portal_proprietario_historico.html
+- templates/comprovantes_manutencao.html
+
+INSTALAÇÃO
+Substitua o app.py e os templates incluídos nesta RC, preservando os demais arquivos do projeto.

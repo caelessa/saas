@@ -1,3 +1,4 @@
+import mimetypes
 import os, uuid, re, json, hashlib, unicodedata, base64, binascii, html
 import requests
 from datetime import datetime, date, timedelta, timezone
@@ -1233,6 +1234,137 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
  }
 
 
+def regra_repasse_locadora_portal(tenant_id, vehicle, data_ref):
+ """Retorna os percentuais vigentes para a locadora e o proprietário.
+
+ Veículos sem proprietário vinculado pertencem integralmente à locadora. Para
+ veículos de proprietário, usa a regra comercial vigente na competência.
+ """
+ if not vehicle.investor_id:
+  return Decimal('100'),Decimal('0')
+ rule=InvestorVehicleRule.query.filter(
+  InvestorVehicleRule.tenant_id==tenant_id,
+  InvestorVehicleRule.investor_id==vehicle.investor_id,
+  InvestorVehicleRule.vehicle_id==vehicle.id,
+  InvestorVehicleRule.vigencia_inicio<=data_ref,
+  or_(InvestorVehicleRule.vigencia_fim.is_(None),InvestorVehicleRule.vigencia_fim>=data_ref)
+ ).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).first()
+ if not rule:
+  # Conservador: se há proprietário mas a regra ainda não foi cadastrada,
+  # não atribui receita líquida à locadora até a condição comercial ser definida.
+  return Decimal('0'),Decimal('100')
+ pct_prop=Decimal(str(rule.percentual_proprietario or 0))
+ pct_loc=Decimal(str(rule.percentual_locadora if rule.percentual_locadora is not None else (Decimal('100')-pct_prop)))
+ return pct_loc,pct_prop
+
+
+def resumo_financeiro_locadora(tenant_id, inicio, fim):
+ """Dashboard financeiro da locadora com visão teórica e realizada separadas."""
+ vehicles=Vehicle.query.filter_by(tenant_id=tenant_id).order_by(Vehicle.placa).all()
+ vehicle_map={v.id:v for v in vehicles}
+ ids=list(vehicle_map.keys())
+ rows={v.id:{'vehicle':v,'receita_teorica':Decimal('0'),'repasse_teorico':Decimal('0'),'locadora_teorica':Decimal('0'),'receita_paga':Decimal('0'),'repasse_pago':Decimal('0'),'locadora_real':Decimal('0'),'custos':Decimal('0'),'resultado_teorico':Decimal('0'),'resultado_real':Decimal('0')} for v in vehicles}
+ monthly={}
+ sem_regra=set()
+
+ def bucket(d):
+  key=d.strftime('%Y-%m')
+  return monthly.setdefault(key,{'receita_teorica':Decimal('0'),'repasse_teorico':Decimal('0'),'locadora_teorica':Decimal('0'),'receita_paga':Decimal('0'),'repasse_pago':Decimal('0'),'locadora_real':Decimal('0'),'custos':Decimal('0')})
+
+ def parse_date(value, fallback):
+  try: return datetime.strptime(value or '','%Y-%m-%d').date()
+  except Exception: return fallback
+
+ def periodicidade_dias(c):
+  txt=unicodedata.normalize('NFKD',str(c.periodicidade or 'Semanal')).encode('ascii','ignore').decode('ascii').lower()
+  if 'diar' in txt: return 1
+  if 'mens' in txt: return None
+  if 'quinz' in txt: return 15
+  return 7
+
+ contracts=Contract.query.filter(Contract.tenant_id==tenant_id,Contract.vehicle_id.in_(ids or [-1])).all()
+ contract_map={c.id:c for c in contracts}
+ status_validos={'Gerado','Enviado','Visualizado','Assinado','Ativo','Encerrado','Finalizado'}
+
+ # 1) TEÓRICO: competências previstas pelos contratos no intervalo selecionado.
+ for c in contracts:
+  v=vehicle_map.get(c.vehicle_id)
+  if not v or (c.status and c.status not in status_validos): continue
+  c_ini=parse_date(c.data_inicio,inicio)
+  c_fim=parse_date(c.data_fim,fim)
+  periodo_ini=max(inicio,c_ini); periodo_fim=min(fim,c_fim)
+  if periodo_ini>periodo_fim: continue
+  base=Decimal(str(c.valor_locacao or 0))
+  if base<=0: continue
+  intervalo=periodicidade_dias(c)
+  competencias=[]
+  if intervalo is None:
+   cursor=date(periodo_ini.year,periodo_ini.month,1); limite=date(periodo_fim.year,periodo_fim.month,1)
+   while cursor<=limite:
+    competencias.append(max(cursor,periodo_ini))
+    cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
+  else:
+   ref=c_ini
+   if ref<periodo_ini:
+    saltos=max(0,(periodo_ini-ref).days//intervalo); ref=ref+timedelta(days=saltos*intervalo)
+    while ref<periodo_ini: ref+=timedelta(days=intervalo)
+   while ref<=periodo_fim:
+    competencias.append(ref); ref+=timedelta(days=intervalo)
+  for ref in competencias:
+   pct_loc,pct_prop=regra_repasse_locadora_portal(tenant_id,v,ref)
+   if v.investor_id and pct_loc==0 and pct_prop==100:
+    has_rule=InvestorVehicleRule.query.filter(InvestorVehicleRule.tenant_id==tenant_id,InvestorVehicleRule.investor_id==v.investor_id,InvestorVehicleRule.vehicle_id==v.id,InvestorVehicleRule.vigencia_inicio<=ref,or_(InvestorVehicleRule.vigencia_fim.is_(None),InvestorVehicleRule.vigencia_fim>=ref)).first()
+    if not has_rule: sem_regra.add(v.id)
+   rep=base*pct_prop/Decimal('100'); loc=base*pct_loc/Decimal('100')
+   r=rows[v.id]; r['receita_teorica']+=base; r['repasse_teorico']+=rep; r['locadora_teorica']+=loc
+   b=bucket(ref); b['receita_teorica']+=base; b['repasse_teorico']+=rep; b['locadora_teorica']+=loc
+
+ # 2) REAL: cobranças efetivamente pagas. Excesso de KM entra aqui pelo total cobrado.
+ audits=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(list(contract_map.keys()) or [-1]),BillingAudit.billing_date>=inicio,BillingAudit.billing_date<=fim).order_by(BillingAudit.billing_date).all()
+ for a in audits:
+  c=contract_map.get(a.contract_id); v=vehicle_map.get(c.vehicle_id) if c else None
+  if not v or (a.payment_status or '').upper()!='PAGO': continue
+  total=Decimal(str(a.total_amount or 0)); pct_loc,pct_prop=regra_repasse_locadora_portal(tenant_id,v,a.billing_date)
+  rep=total*pct_prop/Decimal('100'); loc=total*pct_loc/Decimal('100')
+  r=rows[v.id]; r['receita_paga']+=total; r['repasse_pago']+=rep; r['locadora_real']+=loc
+  b=bucket(a.billing_date); b['receita_paga']+=total; b['repasse_pago']+=rep; b['locadora_real']+=loc
+
+ # 3) Custos reais registrados no período.
+ for m in Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(ids or [-1])).all():
+  try: d=datetime.strptime(m.data or '','%Y-%m-%d').date()
+  except Exception: continue
+  if d<inicio or d>fim or m.vehicle_id not in rows: continue
+  custo=Decimal(str(m.custo or 0)); rows[m.vehicle_id]['custos']+=custo; bucket(d)['custos']+=custo
+
+ totals={k:Decimal('0') for k in ['receita_teorica','repasse_teorico','locadora_teorica','receita_paga','repasse_pago','locadora_real','custos','resultado_teorico','resultado_real']}
+ vehicle_rows=[]
+ for v in vehicles:
+  r=rows[v.id]; r['resultado_teorico']=r['locadora_teorica']-r['custos']; r['resultado_real']=r['locadora_real']-r['custos']
+  for k in totals: totals[k]+=r[k]
+  r['driver']=Driver.query.filter_by(id=v.current_driver_id,tenant_id=tenant_id).first() if v.current_driver_id else None
+  vehicle_rows.append(r)
+
+ months=[]; cursor=date(inicio.year,inicio.month,1); limit=date(fim.year,fim.month,1)
+ while cursor<=limit:
+  item=monthly.get(cursor.strftime('%Y-%m'),{k:Decimal('0') for k in ['receita_teorica','repasse_teorico','locadora_teorica','receita_paga','repasse_pago','locadora_real','custos']})
+  months.append({'label':cursor.strftime('%m/%Y'),'receita_teorica':float(item['receita_teorica']),'repasse_teorico':float(item['repasse_teorico']),'locadora_teorica':float(item['locadora_teorica']),'receita_paga':float(item['receita_paga']),'repasse_pago':float(item['repasse_pago']),'locadora_real':float(item['locadora_real']),'custos':float(item['custos']),'resultado_teorico':float(item['locadora_teorica']-item['custos']),'resultado_real':float(item['locadora_real']-item['custos'])})
+  cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
+ return {'vehicles':vehicle_rows,'months':months,'totals':totals,'sem_regra':len(sem_regra)}
+
+
+@app.route('/financeiro-locadora')
+@login_required
+def financeiro_locadora():
+ today=date.today()
+ try: inicio=datetime.strptime(request.args.get('inicio') or f'{today.year}-01-01','%Y-%m-%d').date()
+ except Exception: inicio=date(today.year,1,1)
+ try: fim=datetime.strptime(request.args.get('fim') or today.isoformat(),'%Y-%m-%d').date()
+ except Exception: fim=today
+ if inicio>fim: inicio,fim=fim,inicio
+ data=resumo_financeiro_locadora(tid(),inicio,fim)
+ return render_template('financeiro_locadora.html',inicio=inicio.isoformat(),fim=fim.isoformat(),**data)
+
+
 @app.route('/investidores',methods=['GET','POST'])
 @login_required
 def investidores():
@@ -1466,6 +1598,11 @@ def _dados_historico_portal_proprietario(vehicle):
    'data':x.data,'tipo':'Quilometragem','titulo':f'{x.km:,} km'.replace(',','.'),
    'descricao':x.origem or 'Leitura registrada','km':x.km
   })
+ maintenance_ids=[x.id for x in manutencoes]
+ documentos_manutencao={}
+ if maintenance_ids:
+  docs_manut=Document.query.filter(Document.tenant_id==tenant_id,Document.entidade=='Manutenção',Document.entidade_id.in_(maintenance_ids),Document.status=='Ativo').order_by(Document.criado_em.desc(),Document.id.desc()).all()
+  for doc in docs_manut: documentos_manutencao.setdefault(doc.entidade_id,[]).append(doc)
  for x in manutencoes:
   try: dt=datetime.strptime(x.data,'%Y-%m-%d') if x.data else None
   except Exception: dt=None
@@ -1476,7 +1613,7 @@ def _dados_historico_portal_proprietario(vehicle):
     f'Oficina: {x.oficina}' if x.oficina else None,
     f'Custo: R$ {brl(x.custo)}' if x.custo is not None else None,
     x.observacoes or None
-   ] if p])), 'km':x.km
+   ] if p])), 'km':x.km,'maintenance_id':x.id
   })
  for x in contratos:
   try: dt=datetime.strptime(x.data_inicio,'%Y-%m-%d') if x.data_inicio else x.criado_em
@@ -1500,7 +1637,8 @@ def _dados_historico_portal_proprietario(vehicle):
  timeline.sort(key=lambda item:item['data'] or datetime.min,reverse=True)
  return {
   'eventos':eventos,'contratos':contratos,'odometros':odometros,'manutencoes':manutencoes,
-  'vistorias':vistorias,'documentos':documentos,'timeline':timeline
+  'vistorias':vistorias,'documentos':documentos,'timeline':timeline,
+  'documentos_manutencao':documentos_manutencao
  }
 
 @app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico')
@@ -1516,6 +1654,20 @@ def portal_proprietario_historico_veiculo(vehicle_id):
   'portal_proprietario_historico.html',
   tenant=tenant,investor=investor,vehicle=vehicle,**data
  )
+
+@app.route('/portal-proprietario/manutencoes/<int:maintenance_id>/documentos/<int:document_id>')
+@owner_portal_required
+def portal_proprietario_documento_manutencao(maintenance_id,document_id):
+ tenant_id=int(session['owner_tenant_id']); investor_id=int(session['owner_investor_id'])
+ m=Maintenance.query.filter_by(id=maintenance_id,tenant_id=tenant_id).first_or_404()
+ Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
+ doc=Document.query.filter_by(id=document_id,tenant_id=tenant_id,entidade='Manutenção',entidade_id=m.id,status='Ativo').first_or_404()
+ try: conteudo=storage.download(doc.arquivo)
+ except StorageNotFoundError: abort(404)
+ except Exception:
+  app.logger.exception('Falha ao abrir comprovante de manutenção no portal %s',doc.id); abort(503)
+ return send_file(BytesIO(conteudo),as_attachment=False,download_name=doc.nome_original,mimetype=_mimetype_documento(doc.nome_original))
+
 
 @app.route('/portal-proprietario/veiculos/<int:vehicle_id>/historico/imprimir')
 @owner_portal_required
@@ -3098,6 +3250,89 @@ def excluir_documento(id):
   app.logger.exception('Falha ao excluir documento %s',d.id)
   flash('Não foi possível excluir o documento.','danger')
  return redirect(url_for('documentos'))
+
+
+
+def _documentos_manutencao_query(tenant_id, maintenance_id):
+ return Document.query.filter_by(tenant_id=tenant_id,entidade='Manutenção',entidade_id=maintenance_id,status='Ativo').order_by(Document.criado_em.desc(),Document.id.desc())
+
+def _mimetype_documento(nome):
+ tipo,_=mimetypes.guess_type(nome or '')
+ return tipo or 'application/octet-stream'
+
+@app.route('/manutencoes/comprovantes',methods=['GET','POST'])
+@login_required
+def comprovantes_manutencao():
+ if request.method=='POST':
+  maintenance_id=request.form.get('maintenance_id',type=int)
+  m=Maintenance.query.filter_by(id=maintenance_id,tenant_id=tid()).first_or_404()
+  tipo=(request.form.get('tipo') or 'Comprovante de manutenção').strip()[:40]
+  arquivos=[f for f in request.files.getlist('arquivos') if f and f.filename]
+  if not arquivos:
+   flash('Selecione pelo menos um comprovante.','danger')
+   return redirect(url_for('comprovantes_manutencao',maintenance_id=m.id))
+  permitidas={'.pdf','.jpg','.jpeg','.png','.webp'}
+  salvos=[]; enviados=[]
+  try:
+   for f in arquivos:
+    nome_original=secure_filename(f.filename)
+    ext=Path(nome_original).suffix.lower()
+    if not nome_original or ext not in permitidas:
+     raise ValueError('Envie somente arquivos PDF, JPG, JPEG, PNG ou WEBP.')
+    conteudo=f.read()
+    if not conteudo:
+     raise ValueError(f'O arquivo {nome_original} está vazio.')
+    if len(conteudo)>15*1024*1024:
+     raise ValueError(f'O arquivo {nome_original} excede o limite de 15 MB.')
+    chave=f'{tid()}/manutencoes/{m.id}/documentos/{uuid.uuid4().hex}_{nome_original}'
+    storage.upload(BytesIO(conteudo),chave,f.mimetype or _mimetype_documento(nome_original))
+    enviados.append(chave)
+    doc=Document(tenant_id=tid(),tipo=tipo,entidade='Manutenção',entidade_id=m.id,identificador=identificador_documento(tipo,m.id,nome_original),nome_original=nome_original,arquivo=chave,hash_sha256=hashlib.sha256(conteudo).hexdigest(),status='Ativo')
+    db.session.add(doc); salvos.append(doc)
+   db.session.commit()
+   flash(f'{len(salvos)} comprovante(s) anexado(s) à manutenção.','success')
+  except ValueError as exc:
+   db.session.rollback()
+   for chave in enviados:
+    try: storage.delete(chave)
+    except Exception: pass
+   flash(str(exc),'danger')
+  except Exception:
+   db.session.rollback()
+   for chave in enviados:
+    try: storage.delete(chave)
+    except Exception: pass
+   app.logger.exception('Falha ao anexar comprovantes à manutenção %s',m.id)
+   flash('Não foi possível armazenar os comprovantes.','danger')
+  return redirect(url_for('comprovantes_manutencao',maintenance_id=m.id))
+ items=Maintenance.query.options(joinedload(Maintenance.vehicle)).filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()).all()
+ ids=[m.id for m in items]
+ docs=Document.query.filter(Document.tenant_id==tid(),Document.entidade=='Manutenção',Document.entidade_id.in_(ids or [-1]),Document.status=='Ativo').order_by(Document.criado_em.desc(),Document.id.desc()).all()
+ docs_por_manutencao={}
+ for doc in docs: docs_por_manutencao.setdefault(doc.entidade_id,[]).append(doc)
+ return render_template('comprovantes_manutencao.html',items=items,docs_por_manutencao=docs_por_manutencao,selecionada=request.args.get('maintenance_id',type=int))
+
+@app.route('/manutencoes/<int:maintenance_id>/documentos/<int:document_id>')
+@login_required
+def visualizar_documento_manutencao(maintenance_id,document_id):
+ Maintenance.query.filter_by(id=maintenance_id,tenant_id=tid()).first_or_404()
+ doc=Document.query.filter_by(id=document_id,tenant_id=tid(),entidade='Manutenção',entidade_id=maintenance_id,status='Ativo').first_or_404()
+ try: conteudo=storage.download(doc.arquivo)
+ except StorageNotFoundError: abort(404)
+ except Exception:
+  app.logger.exception('Falha ao abrir comprovante de manutenção %s',doc.id); abort(503)
+ return send_file(BytesIO(conteudo),as_attachment=False,download_name=doc.nome_original,mimetype=_mimetype_documento(doc.nome_original))
+
+@app.route('/manutencoes/<int:maintenance_id>/documentos/<int:document_id>/excluir',methods=['POST'])
+@login_required
+def excluir_documento_manutencao(maintenance_id,document_id):
+ Maintenance.query.filter_by(id=maintenance_id,tenant_id=tid()).first_or_404()
+ doc=Document.query.filter_by(id=document_id,tenant_id=tid(),entidade='Manutenção',entidade_id=maintenance_id,status='Ativo').first_or_404()
+ try:
+  storage.delete(doc.arquivo); db.session.delete(doc); db.session.commit(); flash('Comprovante excluído.','success')
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha ao excluir comprovante de manutenção %s',doc.id); flash('Não foi possível excluir o comprovante.','danger')
+ return redirect(url_for('comprovantes_manutencao',maintenance_id=maintenance_id))
 
 @app.route('/manutencoes',methods=['GET','POST'])
 @login_required
