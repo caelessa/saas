@@ -1490,11 +1490,10 @@ def gerar_token_convite_proprietario(access):
  }
  return _serializer_convite_proprietario().dumps(payload)
 
-def validar_token_convite_proprietario(token,max_age=7*24*60*60):
+def validar_token_convite_proprietario(token):
  try:
-  data=_serializer_convite_proprietario().loads(token,max_age=max_age)
- except SignatureExpired:
-  return None,'Este link de convite expirou. Solicite um novo link à locadora.'
+  # Convite sem prazo de expiração. Continua protegido por assinatura e uso único.
+  data=_serializer_convite_proprietario().loads(token)
  except BadSignature:
   return None,'Este link de convite é inválido.'
  try:
@@ -1550,7 +1549,46 @@ def acesso_proprietario(id):
    link_convite=url_for('ativar_convite_proprietario',token=token,_external=True)
    if request.host and 'onrender.com' in request.host:
     link_convite=link_convite.replace('http://','https://',1)
-   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=link_convite,convite_expira_dias=7)
+
+   # Sempre gera o link. Se o tenant usa WhatsApp Business, tenta enviar
+   # automaticamente pela API, sem abrir WhatsApp Web.
+   envio_whatsapp=None
+   telefone=normalize_phone(investor.telefone)
+   integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+   cfg=CommunicationService.parse_config(integration)
+   provider=(cfg.get('provider') or 'web').lower()
+   if telefone and integration and provider=='business' and integration.ativo:
+    tenant=Tenant.query.get(tid())
+    nome_locadora=(tenant.nome_fantasia or tenant.nome or 'Frota Fácil') if tenant else 'Frota Fácil'
+    template_name=(cfg.get('owner_invite_template_name') or 'convite_portal_proprietario').strip()
+    mensagem=f'Olá, {investor.nome}! {nome_locadora} disponibilizou seu acesso ao Portal do Proprietário: {link_convite}'
+    fila,redirect_url,erro_envio=criar_mensagem_whatsapp(
+     tenant_id=tid(),driver=investor,body=mensagem,message_type='CONVITE_PORTAL_PROPRIETARIO',
+     related_entity='Proprietario',related_entity_id=investor.id,template_name=template_name,
+     template_parameters=[investor.nome,nome_locadora,link_convite]
+    )
+    try:
+     db.session.commit()
+    except Exception:
+     db.session.rollback()
+     app.logger.exception('Falha ao registrar envio do convite do proprietário %s',investor.id)
+    if erro_envio:
+     envio_whatsapp='falha'
+     flash(f'Link gerado, mas o envio automático pelo WhatsApp falhou: {erro_envio}','warning')
+    elif fila and (fila.status or '').upper() in ('ENVIADA','ACEITA_META','ENTREGUE','LIDA'):
+     envio_whatsapp='enviado'
+     flash('Link de acesso gerado e enviado automaticamente pelo WhatsApp Business.','success')
+    else:
+     envio_whatsapp='processado'
+     flash('Link gerado e encaminhado para processamento pelo WhatsApp Business.','success')
+   elif not telefone:
+    envio_whatsapp='sem_telefone'
+    flash('Link gerado. Cadastre um telefone válido do proprietário para envio automático pelo WhatsApp.','warning')
+   else:
+    envio_whatsapp='sem_business'
+    flash('Link gerado. Para envio automático, conecte o WhatsApp Business da locadora.','warning')
+
+   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=link_convite,envio_whatsapp=envio_whatsapp)
   email=(request.form.get('email') or investor.email or '').strip().lower()
   if not email:
    flash('Informe um e-mail para o acesso do proprietário.','danger')
@@ -1575,10 +1613,10 @@ def acesso_proprietario(id):
   investor.email=investor.email or email
   db.session.commit()
   if senha_temporaria:
-   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria,link_convite=None,convite_expira_dias=7)
+   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria,link_convite=None)
   flash('Acesso do proprietário atualizado.','success')
   return redirect(url_for('acesso_proprietario',id=id))
- return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=None,convite_expira_dias=7)
+ return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=None)
 
 @app.route('/portal-proprietario/ativar/<token>',methods=['GET','POST'])
 def ativar_convite_proprietario(token):

@@ -35,3 +35,15 @@ ARQUIVOS CUMULATIVOS DA RC ANTERIOR TAMBÉM INCLUÍDOS
 VALIDAÇÃO
 - app.py validado com python -m py_compile.
 - templates validados pelo parser Jinja2.
+
+
+RC AJUSTE CONVITE AUTOMATICO / SEM EXPIRACAO
+- Convite do Portal do Proprietario nao expira por tempo.
+- Continua sendo de uso unico: apos definir senha, o token deixa de ser valido.
+- Gerar novo convite invalida o anterior quando o acesso ainda nao foi ativado.
+- Ao gerar o link, se WhatsApp Business estiver conectado e o proprietario tiver telefone valido, o sistema tenta enviar automaticamente pela Cloud API.
+- Nao abre WhatsApp Web.
+- Template esperado por padrao: convite_portal_proprietario (pt_BR).
+- Parametros do BODY: 1 nome do proprietario, 2 nome da locadora, 3 link de ativacao.
+- Se o template ainda nao estiver aprovado/configurado na Meta, o link e gerado normalmente e o sistema informa a falha do envio.
+- Sem migracao de banco.
