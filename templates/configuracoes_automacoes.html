@@ -1,31 +1,52 @@
 {% extends 'base.html' %}
 {% block title %}Automações · Frota Fácil{% endblock %}
 {% block heading %}Automações e mensagens{% endblock %}
-{% block subheading %}Controle quando o Frota Fácil deve reenviar mensagens automáticas pendentes.{% endblock %}
+{% block subheading %}Configure KM e cobranças de forma independente.{% endblock %}
 {% block content %}
 <style>
-.auto-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px;margin-bottom:16px}.auto-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.auto-card label{display:block;font-weight:600;margin-bottom:6px}.auto-card input[type=number],.auto-card select{width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:8px}.switch-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0}.switch-row input{margin-top:4px}.muted2{color:#64748b;font-size:14px}.status-pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#f1f5f9;font-size:13px;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.actions button,.actions a{padding:10px 14px;border-radius:8px;text-decoration:none}
+.auto-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px;margin-bottom:16px}.auto-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}.auto-card label{display:block;font-weight:600;margin-bottom:6px}.auto-card input[type=number]{width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:8px}.switch-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0}.switch-row input{margin-top:4px}.muted2{color:#64748b;font-size:14px}.status-pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#f1f5f9;font-size:13px;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.actions button,.actions a{padding:10px 14px;border-radius:8px;text-decoration:none}.days{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 16px}.day{display:flex!important;align-items:center;gap:6px;border:1px solid #cbd5e1;border-radius:999px;padding:7px 10px;font-weight:500!important;margin:0!important}.day input{margin:0}.auto-card h2{margin-bottom:4px}.auto-card h3{margin:18px 0 8px}.master{border-left:4px solid #2563eb}
 </style>
+{% set old_day = cfg.get('automation_weekday',0)|int %}
+{% set km_days = cfg.get('km_automation_weekdays') or [old_day] %}
+{% set billing_days = cfg.get('billing_automation_weekdays') or [old_day] %}
 <form method="post">
+ <section class="auto-card master">
+  <h2>🤖 Controle geral</h2>
+  <div class="switch-row"><input type="checkbox" id="automation_enabled" name="automation_enabled" value="1" {% if cfg.get('automation_enabled') %}checked{% endif %}><div><label for="automation_enabled">Ativar processamento automático de mensagens</label><div class="muted2">É a chave geral. As regras de KM e cobrança abaixo continuam independentes.</div></div></div>
+  <p class="muted2">WhatsApp atual: <span class="status-pill">{{ 'Business conectado/configurado' if provider=='business' else 'verificar em Integrações' }}</span></p>
+ </section>
+
  <section class="auto-card">
-  <h2>⏱️ Frequência das mensagens</h2>
-  <p class="muted2">Esta janela vale para as automações abaixo. Uma pendência deixa de ser reenviada quando o próprio fluxo é concluído, como a baixa da cobrança ou o recebimento da KM.</p>
-  <div class="switch-row"><input type="checkbox" id="automation_enabled" name="automation_enabled" value="1" {% if cfg.get('automation_enabled') %}checked{% endif %}><label for="automation_enabled">Ativar automações de mensagens</label></div>
+  <h2>📸 Solicitação de KM / foto do painel</h2>
+  <p class="muted2">Reenvia somente enquanto a KM estiver pendente. Assim que uma leitura válida for recebida, os reenvios desse veículo param.</p>
+  <div class="switch-row"><input type="checkbox" id="km_automation_enabled" name="km_automation_enabled" value="1" {% if cfg.get('km_automation_enabled',cfg.get('automatic_km_enabled',False)) %}checked{% endif %}><label for="km_automation_enabled">Ativar solicitação automática de KM/foto</label></div>
+  <h3>Dias de envio</h3>
+  <div class="days">{% for n,nome in [(0,'Seg'),(1,'Ter'),(2,'Qua'),(3,'Qui'),(4,'Sex'),(5,'Sáb'),(6,'Dom')] %}<label class="day"><input type="checkbox" name="km_automation_weekdays" value="{{n}}" {% if n in km_days %}checked{% endif %}>{{nome}}</label>{% endfor %}</div>
   <div class="auto-grid">
-   <div><label for="automation_weekday">Dia da semana</label><select id="automation_weekday" name="automation_weekday">{% for n,nome in [(0,'Segunda-feira'),(1,'Terça-feira'),(2,'Quarta-feira'),(3,'Quinta-feira'),(4,'Sexta-feira'),(5,'Sábado'),(6,'Domingo')] %}<option value="{{n}}" {% if cfg.get('automation_weekday',0)|int==n %}selected{% endif %}>{{nome}}</option>{% endfor %}</select></div>
-   <div><label for="automation_start_hour">Início (hora)</label><input id="automation_start_hour" type="number" min="0" max="23" name="automation_start_hour" value="{{cfg.get('automation_start_hour',7)}}"></div>
-   <div><label for="automation_end_hour">Fim (hora)</label><input id="automation_end_hour" type="number" min="0" max="23" name="automation_end_hour" value="{{cfg.get('automation_end_hour',20)}}"></div>
-   <div><label for="reminder_interval_hours">Repetir a cada (horas)</label><input id="reminder_interval_hours" type="number" min="1" max="12" name="reminder_interval_hours" value="{{cfg.get('reminder_interval_hours',1)}}"></div>
+   <div><label for="km_start_hour">Início (hora)</label><input id="km_start_hour" type="number" min="0" max="23" name="km_start_hour" value="{{cfg.get('km_start_hour',cfg.get('automation_start_hour',7))}}"></div>
+   <div><label for="km_end_hour">Fim (hora)</label><input id="km_end_hour" type="number" min="0" max="23" name="km_end_hour" value="{{cfg.get('km_end_hour',cfg.get('automation_end_hour',20))}}"></div>
+   <div><label for="km_reminder_interval_hours">Repetir a cada (horas)</label><input id="km_reminder_interval_hours" type="number" min="1" max="12" name="km_reminder_interval_hours" value="{{cfg.get('km_reminder_interval_hours',cfg.get('reminder_interval_hours',1))}}"></div>
   </div>
  </section>
+
  <section class="auto-card">
-  <h2>🤖 Automações ativas</h2>
-  <div class="switch-row"><input type="checkbox" id="automatic_km_enabled" name="automatic_km_enabled" value="1" {% if cfg.get('automatic_km_enabled') %}checked{% endif %}><div><label for="automatic_km_enabled">Solicitação de KM/foto</label><div class="muted2">Reenvia enquanto a solicitação estiver pendente.</div></div></div>
-  <div class="switch-row"><input type="checkbox" id="automatic_billing_enabled" name="automatic_billing_enabled" value="1" {% if cfg.get('automatic_billing_enabled') %}checked{% endif %}><div><label for="automatic_billing_enabled">Cobrança automática</label><div class="muted2">Reenvia cobranças pendentes enquanto não houver baixa.</div></div></div>
-  <div class="switch-row"><input type="checkbox" id="automatic_alerts_enabled" name="automatic_alerts_enabled" value="1" {% if cfg.get('automatic_alerts_enabled') %}checked{% endif %}><div><label for="automatic_alerts_enabled">Alertas operacionais</label><div class="muted2">Permite o processamento automático dos alertas configurados.</div></div></div>
-  <p class="muted2">WhatsApp atual: <span class="status-pill">{{ 'Business conectado/configurado' if provider=='business' else 'verificar em Integrações' }}</span></p>
+  <h2>💰 Cobranças</h2>
+  <p class="muted2">Possui agenda própria. A cobrança deixa de ser reenviada quando recebe a baixa de pagamento.</p>
+  <div class="switch-row"><input type="checkbox" id="billing_automation_enabled" name="billing_automation_enabled" value="1" {% if cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) %}checked{% endif %}><label for="billing_automation_enabled">Ativar cobrança automática</label></div>
+  <h3>Dias de envio</h3>
+  <div class="days">{% for n,nome in [(0,'Seg'),(1,'Ter'),(2,'Qua'),(3,'Qui'),(4,'Sex'),(5,'Sáb'),(6,'Dom')] %}<label class="day"><input type="checkbox" name="billing_automation_weekdays" value="{{n}}" {% if n in billing_days %}checked{% endif %}>{{nome}}</label>{% endfor %}</div>
+  <div class="auto-grid">
+   <div><label for="billing_start_hour">Início (hora)</label><input id="billing_start_hour" type="number" min="0" max="23" name="billing_start_hour" value="{{cfg.get('billing_start_hour',cfg.get('automation_start_hour',7))}}"></div>
+   <div><label for="billing_end_hour">Fim (hora)</label><input id="billing_end_hour" type="number" min="0" max="23" name="billing_end_hour" value="{{cfg.get('billing_end_hour',cfg.get('automation_end_hour',20))}}"></div>
+   <div><label for="billing_reminder_interval_hours">Repetir a cada (horas)</label><input id="billing_reminder_interval_hours" type="number" min="1" max="12" name="billing_reminder_interval_hours" value="{{cfg.get('billing_reminder_interval_hours',cfg.get('reminder_interval_hours',1))}}"></div>
+  </div>
+ </section>
+
+ <section class="auto-card">
+  <h2>🚨 Alertas operacionais</h2>
+  <div class="switch-row"><input type="checkbox" id="automatic_alerts_enabled" name="automatic_alerts_enabled" value="1" {% if cfg.get('automatic_alerts_enabled') %}checked{% endif %}><div><label for="automatic_alerts_enabled">Ativar alertas automáticos</label><div class="muted2">Mantém o comportamento atual dos alertas. A separação desta RC afeta KM e cobranças.</div></div></div>
   <div class="actions"><button type="submit">Salvar automações</button><a class="button secondary" href="{{url_for('configuracoes')}}">Voltar às configurações</a></div>
  </section>
 </form>
-<section class="auto-card"><h2>🧪 Teste manual</h2><p class="muted2">Executa agora o processamento das automações deste tenant, sem alterar a programação salva.</p><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button type="submit">Processar agora</button></form></section>
+<section class="auto-card"><h2>🧪 Teste manual</h2><p class="muted2">Executa agora o processamento deste tenant respeitando as regras salvas.</p><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button type="submit">Processar agora</button></form></section>
 {% endblock %}
