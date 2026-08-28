@@ -1,1 +1,15 @@
-{% extends 'base.html' %}{% block heading %}Configurações{% endblock %}{% block subheading %}Central de configurações da locadora.{% endblock %}{% block content %}<div class="integration-grid"><section class="card integration-card"><h2>Dados da locadora</h2><p class="muted">Cadastro empresarial, logo, cores e identidade visual.</p><a class="btn" href="{{url_for('configuracoes_locadora')}}">Abrir dados da locadora</a></section><section class="card integration-card"><h2>Automações</h2><p class="muted">KM, cobranças, alertas, horários e repetição.</p><a class="btn" href="{{url_for('configuracoes_automacoes')}}">Abrir automações</a></section><section class="card integration-card"><h2>WhatsApp / Meta</h2><p class="muted">Conexão Business, templates, webhook e credenciais.</p><a class="btn" href="{{url_for('integracoes')}}">Abrir WhatsApp / Meta</a></section><section class="card integration-card"><h2>Quilometragem</h2><p class="muted">Regras e conferência de leituras.</p><a class="btn" href="{{url_for('configuracoes_quilometragem')}}">Abrir quilometragem</a></section><section class="card integration-card"><h2>Cobranças</h2><p class="muted">Cobranças, comprovantes e baixas.</p><a class="btn" href="{{url_for('cobrancas')}}">Abrir cobranças</a></section><section class="card integration-card"><h2>Contratos</h2><p class="muted">Modelos e emissão de contratos.</p><a class="btn" href="{{url_for('contratos')}}">Abrir contratos</a></section><section class="card integration-card"><h2>Administração</h2><p class="muted">Armazenamento e backup.</p><a class="btn" href="{{url_for('administracao_armazenamento')}}">Abrir administração</a></section></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Configurações · Frota Fácil{% endblock %}
+{% block heading %}Configurações{% endblock %}
+{% block subheading %}Centralize aqui as preferências da sua locadora.{% endblock %}
+{% block content %}
+<style>
+.cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.cfg-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,.05)}.cfg-card h2{margin:0 0 8px;font-size:18px}.cfg-card p{color:#64748b;min-height:48px}.cfg-card a{display:inline-block;text-decoration:none;font-weight:700;color:var(--tenant-primary)}
+</style>
+<div class="cfg-grid">
+ <section class="cfg-card"><h2>🏢 Dados da locadora</h2><p>Dados cadastrais, responsável e identidade visual da locadora.</p><a href="{{url_for('configuracoes_locadora')}}">Abrir dados da locadora →</a></section>
+ <section class="cfg-card"><h2>⏱️ Automações e mensagens</h2><p>Defina dia, faixa de horário, frequência dos lembretes e quais automações ficam ativas.</p><a href="{{url_for('configuracoes_automacoes')}}">Configurar automações →</a></section>
+ <section class="cfg-card"><h2>📷 Quilometragem</h2><p>Preferências do fluxo de leitura e conferência de KM.</p><a href="{{url_for('configuracoes_quilometragem')}}">Configurar quilometragem →</a></section>
+ <section class="cfg-card"><h2>🔌 Integrações</h2><p>Conexão do WhatsApp/Meta, templates, testes e assinatura eletrônica.</p><a href="{{url_for('integracoes')}}">Abrir integrações →</a></section>
+</div>
+{% endblock %}
