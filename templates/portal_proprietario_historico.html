@@ -13,7 +13,7 @@ main{max-width:1100px;margin:auto;padding:24px}.top{display:flex;justify-content
 .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0}.card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:15px}
 .card small{display:block;color:#64748b;margin-bottom:5px}.timeline{position:relative;margin-top:18px}.item{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:15px 16px;margin-bottom:12px;border-left:4px solid var(--primary)}
 .item-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.badge{font-size:.78rem;padding:4px 8px;border-radius:999px;background:#eef2ff}.date{color:#64748b;font-size:.84rem}.desc{margin-top:7px;color:#475569}.empty{background:#fff;padding:20px;border-radius:12px;color:#64748b}
-h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}
+h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}.docs{margin-top:10px;padding-top:10px;border-top:1px dashed #dbe2ea}.docs-title{font-size:.82rem;font-weight:700;color:#475569;margin-bottom:7px}.doc-link{display:inline-block;margin:3px 6px 3px 0;padding:7px 10px;border-radius:8px;background:#f1f5f9;color:#172033;text-decoration:none;font-size:.84rem;font-weight:700}.doc-link:hover{background:#e2e8f0}
 </style>
 </head>
 <body>
@@ -53,6 +53,14 @@ h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}
 <div class="date">{{item.data|sp_datetime if item.data else '-'}}</div>
 </div>
 {% if item.descricao %}<div class="desc">{{item.descricao}}</div>{% endif %}
+{% if item.tipo == 'Manutenção' and item.maintenance_id and documentos_manutencao.get(item.maintenance_id) %}
+<div class="docs">
+<div class="docs-title">Comprovantes desta manutenção</div>
+{% for doc in documentos_manutencao.get(item.maintenance_id) %}
+<a class="doc-link" target="_blank" href="{{url_for('portal_proprietario_documento_manutencao',maintenance_id=item.maintenance_id,document_id=doc.id)}}">🧾 {{doc.tipo or 'Comprovante'}}{% if doc.nome_original %} · {{doc.nome_original}}{% endif %}</a>
+{% endfor %}
+</div>
+{% endif %}
 </div>
 {% else %}
 <div class="empty">Ainda não há registros históricos para este veículo.</div>

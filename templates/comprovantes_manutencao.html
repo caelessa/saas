@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% block title %}Comprovantes de manutenção · Frota Fácil{% endblock %}
+{% block heading %}Comprovantes de manutenção{% endblock %}
+{% block subheading %}Anexe notas fiscais, recibos, orçamentos e comprovantes vinculados a cada manutenção.{% endblock %}
+{% block content %}
+<style>
+.docs-grid{display:grid;grid-template-columns:minmax(280px,360px) 1fr;gap:18px;align-items:start}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px}.panel h2{margin-top:0}.field{margin-bottom:13px}.field label{display:block;font-weight:700;margin-bottom:6px}.field select,.field input{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}.hint{color:#64748b;font-size:.87rem}.maint{border:1px solid #e5e7eb;border-radius:12px;padding:14px;margin-bottom:12px}.maint.selected{border:2px solid var(--tenant-primary)}.maint-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.muted{color:#64748b}.docs-list{margin-top:10px;display:grid;gap:8px}.doc{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;background:#f8fafc;border-radius:9px}.doc-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.mini{padding:7px 10px;border-radius:8px;text-decoration:none;font-size:.84rem;font-weight:700}.mini.secondary{background:#e2e8f0;color:#172033}.mini.danger{background:#fff1f2;color:#be123c;border:1px solid #fecdd3}.empty{padding:18px;background:#f8fafc;border-radius:10px;color:#64748b}@media(max-width:850px){.docs-grid{grid-template-columns:1fr}}
+</style>
+<div class="docs-grid">
+ <section class="panel">
+  <h2>Anexar comprovante</h2>
+  <form method="post" enctype="multipart/form-data">
+   <div class="field"><label>Manutenção</label><select name="maintenance_id" required>
+    <option value="">Selecione...</option>
+    {% for m in items %}<option value="{{m.id}}" {% if selecionada==m.id %}selected{% endif %}>#{{m.id}} · {{m.vehicle.placa if m.vehicle else '-'}} · {{m.tipo or 'Manutenção'}}{% if m.data %} · {{m.data}}{% endif %}</option>{% endfor %}
+   </select></div>
+   <div class="field"><label>Tipo do documento</label><select name="tipo">
+    <option>Nota fiscal de peças</option><option>Nota da oficina</option><option>Recibo</option><option>Orçamento</option><option>Comprovante de pagamento</option><option>Outro comprovante</option>
+   </select></div>
+   <div class="field"><label>Arquivos</label><input type="file" name="arquivos" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" required><div class="hint">PDF ou imagem. Até 15 MB por arquivo. Você pode selecionar vários de uma vez.</div></div>
+   <button type="submit">Anexar comprovante(s)</button>
+  </form>
+ </section>
+ <section class="panel">
+  <h2>Manutenções e documentos</h2>
+  {% for m in items %}
+   <div class="maint {% if selecionada==m.id %}selected{% endif %}" id="manutencao-{{m.id}}">
+    <div class="maint-head"><div><strong>#{{m.id}} · {{m.vehicle.placa if m.vehicle else '-'}}</strong><div>{{m.tipo or 'Manutenção'}}{% if m.oficina %} · {{m.oficina}}{% endif %}</div></div><div class="muted">{% if m.custo is not none %}R$ {{m.custo|brl}}{% else %}Sem custo informado{% endif %}</div></div>
+    {% set docs=docs_por_manutencao.get(m.id,[]) %}
+    {% if docs %}<div class="docs-list">
+     {% for doc in docs %}<div class="doc"><div><strong>{{doc.tipo or 'Comprovante'}}</strong><div class="muted">{{doc.nome_original or doc.identificador}}</div></div><div class="doc-actions"><a class="mini secondary" target="_blank" href="{{url_for('visualizar_documento_manutencao',maintenance_id=m.id,document_id=doc.id)}}">Visualizar</a><form method="post" action="{{url_for('excluir_documento_manutencao',maintenance_id=m.id,document_id=doc.id)}}" onsubmit="return confirm('Excluir este comprovante?')"><button class="mini danger" type="submit">Excluir</button></form></div></div>{% endfor %}
+    </div>{% else %}<div class="empty" style="margin-top:10px">Nenhum comprovante anexado.</div>{% endif %}
+   </div>
+  {% else %}<div class="empty">Ainda não há manutenções cadastradas.</div>{% endfor %}
+ </section>
+</div>
+{% endblock %}
