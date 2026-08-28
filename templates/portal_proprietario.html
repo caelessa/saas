@@ -18,7 +18,7 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 .cars{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.car-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status{padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:.82rem}
 .info,.finance{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:14px}.info strong,.finance small{display:block;color:#64748b;margin-bottom:3px}.finance{border-top:1px solid #eef2f7;padding-top:14px}.finance div{background:#f8fafc;padding:10px;border-radius:10px}
 .car-actions{margin-top:14px}.history-btn{display:inline-block;padding:9px 12px;border-radius:9px;background:var(--primary);color:#fff;text-decoration:none;font-weight:700;font-size:.9rem}
-section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85rem}
+.table-wrap{overflow-x:auto}.summary-table{width:100%;border-collapse:collapse}.summary-table th,.summary-table td{padding:11px 10px;border-bottom:1px solid #e5e7eb;text-align:left}.summary-table th{color:#64748b;font-size:.82rem;text-transform:uppercase;letter-spacing:.03em}.summary-table td.money,.summary-table th.money{text-align:right;white-space:nowrap}.summary-table tfoot td{font-weight:800;border-top:2px solid #cbd5e1;border-bottom:0;background:#f8fafc}section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85rem}
 @media(max-width:850px){.charts{grid-template-columns:1fr}.info{grid-template-columns:1fr}}
 </style>
 </head>
@@ -44,6 +44,7 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 <div class="kpi"><small>Veículos</small><strong>{{ vehicles|length }}</strong><em>Vinculados a você</em></div>
 </div>
 <p class="muted"><strong>Como é calculado:</strong> a previsão usa o valor-base dos contratos e a regra de repasse vigente em cada competência. Excesso de KM não é projetado; ele só entra quando existir cobrança real.</p>
+<section class="panel"><h2>Valor líquido das locações por veículo</h2><p class="muted">Resultado líquido de cada veículo no período selecionado, considerando o repasse do proprietário menos os custos registrados.</p><div class="table-wrap"><table class="summary-table"><thead><tr><th>Veículo</th><th>Placa</th><th class="money">Valor líquido</th></tr></thead><tbody>{% for row in vehicles %}<tr><td>{{row.vehicle.marca_modelo or 'Veículo'}}</td><td><strong>{{row.vehicle.placa}}</strong></td><td class="money">R$ {{row.resultado|brl}}</td></tr>{% else %}<tr><td colspan="3">Nenhum veículo vinculado no período.</td></tr>{% endfor %}</tbody><tfoot><tr><td colspan="2">Total líquido</td><td class="money">R$ {{totals.resultado|brl}}</td></tr></tfoot></table></div></section>
 <div class="charts">
 <section class="panel"><h2>Composição do resultado teórico</h2><div class="chart"><canvas id="donutTeorico"></canvas></div></section>
 <section class="panel"><h2>Evolução mensal · previsto x pago</h2><div class="chart"><canvas id="lineTeorico"></canvas></div></section>
