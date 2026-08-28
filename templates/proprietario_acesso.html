@@ -7,24 +7,22 @@
 <p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por locadora + proprietário.</p>
 
 <h3 style="margin-top:20px">Convite por link</h3>
-<p>Gere um link seguro para o proprietário criar a própria senha. O link expira em {{ convite_expira_dias or 7 }} dias e deixa de funcionar depois da ativação.</p>
+<p>Gere um link seguro para o proprietário criar a própria senha. O link não expira e deixa de funcionar somente depois da ativação ou quando um novo convite é gerado.</p>
 <form method="post" class="form-grid">
 <input type="hidden" name="acao" value="gerar_convite">
 <label>E-mail do proprietário<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
-<button type="submit">Gerar link de acesso</button>
+<button type="submit">Gerar e enviar acesso</button>
 </form>
 
 {% if link_convite %}
 <div class="flash success" style="margin-top:16px">
 <strong>Link de convite gerado.</strong><br>
-Envie este endereço somente ao proprietário. Ele poderá criar a senha e entrar diretamente no portal.
+O proprietário poderá criar a senha e entrar diretamente no portal. O link não possui prazo de expiração.
+{% if envio_whatsapp == 'enviado' %}<br><strong>WhatsApp:</strong> enviado automaticamente pela conta Business conectada.{% elif envio_whatsapp == 'falha' %}<br><strong>WhatsApp:</strong> o envio automático falhou; o link continua disponível para cópia.{% endif %}
 </div>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 18px">
 <input id="linkConviteProprietario" type="text" value="{{ link_convite }}" readonly style="min-width:min(100%,620px);flex:1">
 <button type="button" class="secondary" onclick="copiarConvite()">Copiar link</button>
-{% if investor.telefone %}
-<a class="button secondary" target="_blank" href="https://wa.me/{{ investor.telefone|replace('+','')|replace(' ','')|replace('-','')|replace('(','')|replace(')','') }}?text={{ ('Olá, ' ~ investor.nome ~ '! Acesse o Portal do Proprietário pelo link: ' ~ link_convite)|urlencode }}">Enviar por WhatsApp</a>
-{% endif %}
 </div>
 <script>
 function copiarConvite(){
