@@ -665,7 +665,16 @@ def recalcular_alertas(tenant_id):
     Alert.tenant_id==tenant_id,Alert.entidade=='Manutenção',
     Alert.entidade_id.in_(canceladas),Alert.resolvido_em.is_(None)
    ).update({'resolvido_em':agora},synchronize_session=False)
-   db.session.commit()
+  # Persiste os alertas recém-criados antes de tentar o envio imediato.
+  db.session.commit()
+  # Quando Alertas operacionais estiver ativado, tenta enviar imediatamente
+  # os novos alertas ao motorista, sem aguardar o próximo ciclo do cron job.
+  # O processador mantém a proteção contra duplicidade e ignora alertas cancelados/resolvidos.
+  try:
+   processar_alertas_automaticos(tenant_id)
+  except Exception:
+   db.session.rollback()
+   app.logger.exception('Falha no envio imediato de alertas do tenant %s',tenant_id)
   return result
  except Exception:
   db.session.rollback()
