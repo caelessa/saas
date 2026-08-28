@@ -45,8 +45,12 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 </div>
 <p class="muted"><strong>Como é calculado:</strong> a previsão usa o valor-base dos contratos e a regra de repasse vigente em cada competência. Excesso de KM não é projetado; ele só entra quando existir cobrança real.</p>
 <div class="charts">
-<section class="panel"><h2>Composição do resultado teórico</h2><div class="chart"><canvas id="donut"></canvas></div></section>
-<section class="panel"><h2>Evolução mensal · previsto x pago</h2><div class="chart"><canvas id="line"></canvas></div></section>
+<section class="panel"><h2>Composição do resultado teórico</h2><div class="chart"><canvas id="donutTeorico"></canvas></div></section>
+<section class="panel"><h2>Evolução mensal · previsto x pago</h2><div class="chart"><canvas id="lineTeorico"></canvas></div></section>
+</div>
+<div class="charts">
+<section class="panel"><h2>Composição do resultado real</h2><p class="muted">Considera somente os repasses efetivamente pagos e os custos registrados no período.</p><div class="chart"><canvas id="donutReal"></canvas></div></section>
+<section class="panel"><h2>Evolução mensal · realizado</h2><p class="muted">Repasse efetivamente pago, custos e resultado real mês a mês.</p><div class="chart"><canvas id="lineReal"></canvas></div></section>
 </div>
 <section class="panel"><h2>Resultado teórico por veículo</h2><div class="chart"><canvas id="bar"></canvas></div></section>
 <section>
@@ -81,8 +85,11 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 const meses={{months|tojson}};
 const placas={{vehicles|map(attribute='vehicle.placa')|list|tojson}};
 const resultados=[{% for row in vehicles %}{{row.resultado|float}}{% if not loop.last %},{% endif %}{% endfor %}];
-new Chart(document.getElementById('donut'),{type:'doughnut',data:{labels:['Custos','Resultado líquido'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max({{totals.resultado|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
-new Chart(document.getElementById('line'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse teórico',data:meses.map(x=>x.repasse),tension:.25},{label:'Repasse pago',data:meses.map(x=>x.pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado teórico',data:meses.map(x=>x.resultado),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+const resultadoRealTotal={{ (totals.repasse_pago - totals.custos)|float }};
+new Chart(document.getElementById('donutTeorico'),{type:'doughnut',data:{labels:['Custos','Resultado teórico'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max({{totals.resultado|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
+new Chart(document.getElementById('lineTeorico'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse teórico',data:meses.map(x=>x.repasse),tension:.25},{label:'Repasse pago',data:meses.map(x=>x.pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado teórico',data:meses.map(x=>x.resultado),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+new Chart(document.getElementById('donutReal'),{type:'doughnut',data:{labels:['Custos','Resultado real'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max(resultadoRealTotal,0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
+new Chart(document.getElementById('lineReal'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse pago',data:meses.map(x=>x.pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado real',data:meses.map(x=>x.pago-x.custos),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
 new Chart(document.getElementById('bar'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado teórico (R$)',data:resultados}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
 </script>
 </body></html>
