@@ -5,44 +5,58 @@
   {% if expired %}<h1>Link expirado</h1><p>Esta solicitação de vistoria expirou. Entre em contato com a locadora para receber um novo link.</p>
   {% elif done %}<h1>Vistoria recebida ✓</h1><p>O vídeo deste veículo já foi enviado para a locadora.</p>
   {% else %}
-    <h1>Vistoria guiada</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
-    <div class="inspection-warning">O vídeo deve ser <b>gravado agora</b>. Não é possível escolher um arquivo da galeria. Grave em local bem iluminado.</div>
-    <div class="inspection-progress"><span id="stepCount">Preparação</span><div class="progress-track"><div id="progressBar"></div></div></div>
-    <div id="instruction" class="inspection-instruction">Toque em “Ativar câmera” e permita acesso à câmera e ao microfone.</div>
-    <video id="preview" autoplay muted playsinline></video><canvas id="lightCanvas" width="160" height="90" hidden></canvas>
-    <div class="inspection-controls">
-      <button id="cameraBtn" type="button">Ativar câmera</button>
-      <button id="startBtn" type="button" disabled>Iniciar vistoria</button>
-      <button id="nextBtn" type="button" disabled>Próxima etapa</button>
-      <button id="finishBtn" type="button" disabled>Finalizar e enviar</button>
-    </div>
-    <div id="timer" class="muted"></div><div id="status" class="inspection-status"></div>
+    {% set modo=(item.tipo_vistoria or 'guiada') %}
+    {% if modo == 'simples' %}
+      <h1>Vistoria em vídeo</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
+      <div class="inspection-warning">Grave um vídeo contínuo do veículo agora. Mostre frente, laterais, traseira, rodas/pneus, interior e, ao final, o painel com a quilometragem.</div>
+      <div id="instruction" class="inspection-instruction">Toque em “Ativar câmera”, permita acesso à câmera e ao microfone e depois toque em “Iniciar gravação”.</div>
+      <video id="preview" autoplay muted playsinline></video>
+      <div class="inspection-controls">
+        <button id="cameraBtn" type="button">Ativar câmera</button>
+        <button id="startBtn" type="button" disabled>Iniciar gravação</button>
+        <button id="finishBtn" type="button" disabled>Finalizar e enviar</button>
+      </div>
+      <div id="timer" class="muted"></div><div id="status" class="inspection-status"></div>
+    {% else %}
+      <h1>Vistoria guiada</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
+      <div class="inspection-warning">O vídeo deve ser <b>gravado agora</b>. Não é possível escolher um arquivo da galeria.</div>
+      <div class="inspection-progress"><span id="stepCount">Preparação</span><div class="progress-track"><div id="progressBar"></div></div></div>
+      <div id="instruction" class="inspection-instruction">Toque em “Ativar câmera” e permita acesso à câmera e ao microfone.</div>
+      <video id="preview" autoplay muted playsinline></video>
+      <div class="inspection-controls">
+        <button id="cameraBtn" type="button">Ativar câmera</button>
+        <button id="startBtn" type="button" disabled>Iniciar vistoria</button>
+        <button id="nextBtn" type="button" disabled>Próxima etapa</button>
+        <button id="finishBtn" type="button" disabled>Finalizar e enviar</button>
+      </div>
+      <div id="timer" class="muted"></div><div id="status" class="inspection-status"></div>
+    {% endif %}
   {% endif %}
   </section>
 </main>
 {% if not expired and not done %}
 <script>
+const inspectionMode={{ (item.tipo_vistoria or 'guiada')|tojson }};
 const steps=[
-'Comece mostrando toda a frente do veículo. Aproxime-se devagar e registre para-choque, faróis e para-brisa.',
-'Agora caminhe pela lateral direita. Mostre portas, retrovisor, rodas e pneus.',
-'Mostre toda a traseira do veículo. Registre para-choque, lanternas, tampa e vidro traseiro.',
-'Continue pela lateral esquerda. Mostre portas, retrovisor, rodas e pneus.',
-'Aproxime a câmera dos pneus e rodas. Registre rapidamente o estado de cada um.',
-'Abra o veículo e mostre o interior: bancos, painel, console e estado geral.',
-'Para finalizar, ligue o painel e mantenha a câmera parada por alguns segundos mostrando a quilometragem.'
+ 'Comece mostrando toda a frente do veículo. Aproxime-se devagar e registre para-choque, faróis e para-brisa.',
+ 'Agora caminhe pela lateral direita. Mostre portas, retrovisor, rodas e pneus.',
+ 'Mostre toda a traseira do veículo. Registre para-choque, lanternas, tampa e vidro traseiro.',
+ 'Continue pela lateral esquerda. Mostre portas, retrovisor, rodas e pneus.',
+ 'Aproxime a câmera dos pneus e rodas. Registre rapidamente o estado de cada um.',
+ 'Abra o veículo e mostre o interior: bancos, painel, console e estado geral.',
+ 'Para finalizar, ligue o painel e mantenha a câmera parada por alguns segundos mostrando a quilometragem.'
 ];
-let stream,recorder,chunks=[],step=-1,startedAt=0,timerId,lightId,lightSamples=[];
-const preview=document.getElementById('preview'),cameraBtn=document.getElementById('cameraBtn'),startBtn=document.getElementById('startBtn'),nextBtn=document.getElementById('nextBtn'),finishBtn=document.getElementById('finishBtn'),instruction=document.getElementById('instruction'),statusBox=document.getElementById('status');
-function speak(text){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='pt-BR';u.rate=.95;speechSynthesis.speak(u);}catch(e){}}
-function showStep(){instruction.textContent=steps[step];document.getElementById('stepCount').textContent=`Etapa ${step+1} de ${steps.length}`;document.getElementById('progressBar').style.width=`${((step+1)/steps.length)*100}%`;speak(steps[step]);nextBtn.disabled=step>=steps.length-1;finishBtn.disabled=step<steps.length-1;}
-async function enableCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:true});preview.srcObject=stream;cameraBtn.disabled=true;startBtn.disabled=false;instruction.textContent='Câmera pronta. Posicione o celular na horizontal, em local bem iluminado, e toque em Iniciar vistoria.';}catch(e){statusBox.textContent='Não foi possível acessar câmera/microfone. Verifique as permissões do navegador.';statusBox.className='inspection-status danger';}}
+let stream,recorder,chunks=[],step=-1,startedAt=0,timerId;
+const preview=document.getElementById('preview'),cameraBtn=document.getElementById('cameraBtn'),startBtn=document.getElementById('startBtn'),finishBtn=document.getElementById('finishBtn'),instruction=document.getElementById('instruction'),statusBox=document.getElementById('status'),nextBtn=document.getElementById('nextBtn');
+function speak(text){if(inspectionMode!=='guiada')return;try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='pt-BR';u.rate=.95;speechSynthesis.speak(u);}catch(e){}}
+function showStep(){if(inspectionMode!=='guiada')return;instruction.textContent=steps[step];document.getElementById('stepCount').textContent=`Etapa ${step+1} de ${steps.length}`;document.getElementById('progressBar').style.width=`${((step+1)/steps.length)*100}%`;speak(steps[step]);nextBtn.disabled=step>=steps.length-1;finishBtn.disabled=step<steps.length-1;}
+async function enableCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:true});preview.srcObject=stream;cameraBtn.disabled=true;startBtn.disabled=false;instruction.textContent=inspectionMode==='simples'?'Câmera pronta. Toque em Iniciar gravação e mostre todo o veículo em um único vídeo.':'Câmera pronta. Toque em Iniciar vistoria para começar as etapas.';}catch(e){statusBox.textContent='Não foi possível acessar câmera/microfone. Verifique as permissões do navegador.';statusBox.className='inspection-status danger';}}
 cameraBtn.onclick=enableCamera;
-startBtn.onclick=()=>{chunks=[];let opts={};if(MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus'))opts={mimeType:'video/webm;codecs=vp8,opus'};recorder=new MediaRecorder(stream,opts);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.start(1000);startedAt=Date.now();step=0;showStep();startBtn.disabled=true;nextBtn.disabled=false;timerId=setInterval(()=>{document.getElementById('timer').textContent=`Gravando: ${Math.floor((Date.now()-startedAt)/1000)} s`},1000);lightId=setInterval(sampleLight,1200);};
-nextBtn.onclick=()=>{if(step<steps.length-1){step++;showStep();}};
-function sampleLight(){try{const c=document.getElementById('lightCanvas'),ctx=c.getContext('2d');ctx.drawImage(preview,0,0,c.width,c.height);const d=ctx.getImageData(0,0,c.width,c.height).data;let sum=0,n=0;for(let i=0;i<d.length;i+=40){sum+=(d[i]+d[i+1]+d[i+2])/3;n++;}lightSamples.push(sum/n);}catch(e){}}
-finishBtn.onclick=()=>{finishBtn.disabled=true;nextBtn.disabled=true;clearInterval(timerId);clearInterval(lightId);recorder.onstop=uploadVideo;recorder.stop();};
-async function uploadVideo(){const duration=Math.floor((Date.now()-startedAt)/1000);const bright=lightSamples.length?lightSamples.reduce((a,b)=>a+b,0)/lightSamples.length:0;if(bright<38){statusBox.textContent='Iluminação insuficiente. Grave novamente em local mais claro.';statusBox.className='inspection-status danger';resetForRetry();return;}const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const fd=new FormData();fd.append('video',blob,'vistoria.webm');fd.append('duration_seconds',duration);fd.append('brightness_avg',bright.toFixed(2));statusBox.textContent='Enviando vídeo… mantenha esta tela aberta.';statusBox.className='inspection-status';try{const r=await fetch('{{url_for('vistoria_upload',token=item.token)}}',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw new Error(j.error||'Falha no envio');statusBox.textContent='Vistoria enviada com sucesso ✓';statusBox.className='inspection-status ok';stream.getTracks().forEach(t=>t.stop());setTimeout(()=>location.reload(),1200);}catch(e){statusBox.textContent=e.message;statusBox.className='inspection-status danger';resetForRetry();}}
-function resetForRetry(){step=-1;chunks=[];lightSamples=[];startBtn.disabled=false;nextBtn.disabled=true;finishBtn.disabled=true;document.getElementById('stepCount').textContent='Preparação';document.getElementById('progressBar').style.width='0';instruction.textContent='Posicione o veículo em local mais claro e toque em Iniciar vistoria para gravar novamente.';}
+startBtn.onclick=()=>{chunks=[];let opts={};if(MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus'))opts={mimeType:'video/webm;codecs=vp8,opus'};recorder=new MediaRecorder(stream,opts);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.start(1000);startedAt=Date.now();startBtn.disabled=true;finishBtn.disabled=inspectionMode==='guiada';if(inspectionMode==='guiada'){step=0;showStep();nextBtn.disabled=false;}else{finishBtn.disabled=false;instruction.textContent='Gravando. Mostre frente, laterais, traseira, rodas/pneus, interior e painel. O vídeo deve ter pelo menos 15 segundos.';}timerId=setInterval(()=>{document.getElementById('timer').textContent=`Gravando: ${Math.floor((Date.now()-startedAt)/1000)} s`},1000);};
+if(nextBtn)nextBtn.onclick=()=>{if(step<steps.length-1){step++;showStep();}};
+finishBtn.onclick=()=>{const duration=Math.floor((Date.now()-startedAt)/1000);if(duration<15){statusBox.textContent='Grave por pelo menos 15 segundos antes de finalizar.';statusBox.className='inspection-status danger';return;}finishBtn.disabled=true;if(nextBtn)nextBtn.disabled=true;clearInterval(timerId);recorder.onstop=uploadVideo;recorder.stop();};
+async function uploadVideo(){const duration=Math.floor((Date.now()-startedAt)/1000);const blob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});const fd=new FormData();fd.append('video',blob,'vistoria.webm');fd.append('duration_seconds',duration);statusBox.textContent='Enviando vídeo… mantenha esta tela aberta.';statusBox.className='inspection-status';try{const r=await fetch('{{url_for('vistoria_upload',token=item.token)}}',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw new Error(j.error||'Falha no envio');statusBox.textContent='Vistoria enviada com sucesso ✓';statusBox.className='inspection-status ok';stream.getTracks().forEach(t=>t.stop());setTimeout(()=>location.reload(),1200);}catch(e){statusBox.textContent=e.message;statusBox.className='inspection-status danger';resetForRetry();}}
+function resetForRetry(){step=-1;chunks=[];startBtn.disabled=false;if(nextBtn)nextBtn.disabled=true;finishBtn.disabled=true;if(inspectionMode==='guiada'){document.getElementById('stepCount').textContent='Preparação';document.getElementById('progressBar').style.width='0';instruction.textContent='Toque em Iniciar vistoria para gravar novamente.';}else{instruction.textContent='Toque em Iniciar gravação para tentar novamente.';}}
 </script>
 {% endif %}
 </body></html>
