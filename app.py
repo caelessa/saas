@@ -29,7 +29,6 @@ from decimal import Decimal
 from urllib.parse import quote
 from docx import Document as DocxDocument
 from functools import wraps
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
 storage=StorageService(UPLOAD)
@@ -1474,48 +1473,12 @@ def proprietario_financeiro(id):
  return render_template('proprietario_financeiro.html',x=x,resumo=resumo,regras=regras,veiculos_disponiveis=disponiveis,previsoes=previsoes)
 
 
-def _serializer_convite_proprietario():
- return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-invite-v1')
-
-def _versao_acesso_proprietario(access):
- return hashlib.sha256((access.senha or '').encode('utf-8')).hexdigest()[:20]
-
-def gerar_token_convite_proprietario(access):
- payload={
-  'tenant_id':int(access.tenant_id),
-  'investor_id':int(access.investor_id),
-  'access_id':int(access.id),
-  'version':_versao_acesso_proprietario(access),
-  'nonce':uuid.uuid4().hex,
- }
- return _serializer_convite_proprietario().dumps(payload)
-
-def validar_token_convite_proprietario(token):
- try:
-  # Convite sem prazo de expiração. Continua protegido por assinatura e uso único.
-  data=_serializer_convite_proprietario().loads(token)
- except BadSignature:
-  return None,'Este link de convite é inválido.'
- try:
-  access=InvestorAccess.query.filter_by(
-   id=int(data.get('access_id')),tenant_id=int(data.get('tenant_id')),investor_id=int(data.get('investor_id'))
-  ).first()
- except Exception:
-  access=None
- if not access or data.get('version')!=_versao_acesso_proprietario(access):
-  return None,'Este link já foi utilizado ou foi substituído por um convite mais recente.'
- investor=Investor.query.filter_by(id=access.investor_id,tenant_id=access.tenant_id).first()
- if not investor:
-  return None,'O proprietário vinculado a este convite não foi encontrado.'
- return (access,investor),None
-
 @app.route('/investidores/<int:id>/acesso',methods=['GET','POST'])
 @login_required
 def acesso_proprietario(id):
  investor=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id).first()
  senha_temporaria=None
- link_convite=None
  if request.method=='POST':
   action=(request.form.get('acao') or 'salvar').strip()
   if action=='bloquear' and access:
@@ -1524,71 +1487,6 @@ def acesso_proprietario(id):
   if action=='ativar' and access:
    access.ativo=True; db.session.commit(); flash('Acesso do proprietário ativado.','success')
    return redirect(url_for('acesso_proprietario',id=id))
-  if action=='gerar_convite':
-   email=(request.form.get('email') or (access.email if access else None) or investor.email or '').strip().lower()
-   if not email:
-    flash('Informe o e-mail do proprietário antes de gerar o convite.','danger')
-    return redirect(url_for('acesso_proprietario',id=id))
-   duplicate=InvestorAccess.query.filter(InvestorAccess.email==email)
-   if access: duplicate=duplicate.filter(InvestorAccess.id!=access.id)
-   if duplicate.first():
-    flash('Este e-mail já está vinculado a outro acesso de proprietário.','danger')
-    return redirect(url_for('acesso_proprietario',id=id))
-   if not access:
-    # O acesso nasce bloqueado para login por senha até o proprietário ativar o convite.
-    access=InvestorAccess(tenant_id=tid(),investor_id=investor.id,email=email,senha=generate_password_hash(uuid.uuid4().hex),ativo=False)
-    db.session.add(access); db.session.flush()
-   else:
-    access.email=email
-    # Se ainda não houve acesso, a emissão de um novo convite invalida links anteriores.
-    if not access.ultimo_acesso_em and not access.ativo:
-     access.senha=generate_password_hash(uuid.uuid4().hex)
-   investor.email=investor.email or email
-   db.session.commit()
-   token=gerar_token_convite_proprietario(access)
-   link_convite=url_for('ativar_convite_proprietario',token=token,_external=True)
-   if request.host and 'onrender.com' in request.host:
-    link_convite=link_convite.replace('http://','https://',1)
-
-   # Sempre gera o link. Se o tenant usa WhatsApp Business, tenta enviar
-   # automaticamente pela API, sem abrir WhatsApp Web.
-   envio_whatsapp=None
-   telefone=normalize_phone(investor.telefone)
-   integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
-   cfg=CommunicationService.parse_config(integration)
-   provider=(cfg.get('provider') or 'web').lower()
-   if telefone and integration and provider=='business' and integration.ativo:
-    tenant=Tenant.query.get(tid())
-    nome_locadora=(tenant.nome_fantasia or tenant.nome or 'Frota Fácil') if tenant else 'Frota Fácil'
-    template_name=(cfg.get('owner_invite_template_name') or 'convite_portal_proprietario').strip()
-    mensagem=f'Olá, {investor.nome}! {nome_locadora} disponibilizou seu acesso ao Portal do Proprietário: {link_convite}'
-    fila,redirect_url,erro_envio=criar_mensagem_whatsapp(
-     tenant_id=tid(),driver=investor,body=mensagem,message_type='CONVITE_PORTAL_PROPRIETARIO',
-     related_entity='Proprietario',related_entity_id=investor.id,template_name=template_name,
-     template_parameters=[investor.nome,nome_locadora,link_convite]
-    )
-    try:
-     db.session.commit()
-    except Exception:
-     db.session.rollback()
-     app.logger.exception('Falha ao registrar envio do convite do proprietário %s',investor.id)
-    if erro_envio:
-     envio_whatsapp='falha'
-     flash(f'Link gerado, mas o envio automático pelo WhatsApp falhou: {erro_envio}','warning')
-    elif fila and (fila.status or '').upper() in ('ENVIADA','ACEITA_META','ENTREGUE','LIDA'):
-     envio_whatsapp='enviado'
-     flash('Link de acesso gerado e enviado automaticamente pelo WhatsApp Business.','success')
-    else:
-     envio_whatsapp='processado'
-     flash('Link gerado e encaminhado para processamento pelo WhatsApp Business.','success')
-   elif not telefone:
-    envio_whatsapp='sem_telefone'
-    flash('Link gerado. Cadastre um telefone válido do proprietário para envio automático pelo WhatsApp.','warning')
-   else:
-    envio_whatsapp='sem_business'
-    flash('Link gerado. Para envio automático, conecte o WhatsApp Business da locadora.','warning')
-
-   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=link_convite,envio_whatsapp=envio_whatsapp)
   email=(request.form.get('email') or investor.email or '').strip().lower()
   if not email:
    flash('Informe um e-mail para o acesso do proprietário.','danger')
@@ -1613,37 +1511,10 @@ def acesso_proprietario(id):
   investor.email=investor.email or email
   db.session.commit()
   if senha_temporaria:
-   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria,link_convite=None)
+   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria)
   flash('Acesso do proprietário atualizado.','success')
   return redirect(url_for('acesso_proprietario',id=id))
- return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=None)
-
-@app.route('/portal-proprietario/ativar/<token>',methods=['GET','POST'])
-def ativar_convite_proprietario(token):
- validado,erro=validar_token_convite_proprietario(token)
- if erro:
-  return render_template('portal_proprietario_ativar.html',erro=erro,tenant_login=None,investor=None,token=None),400
- access,investor=validado
- tenant_login=Tenant.query.get(access.tenant_id)
- if request.method=='POST':
-  senha=request.form.get('senha') or ''
-  confirmar=request.form.get('confirmar_senha') or ''
-  if len(senha)<6:
-   flash('Crie uma senha com pelo menos 6 caracteres.','danger')
-  elif senha!=confirmar:
-   flash('As senhas não coincidem.','danger')
-  else:
-   # Alterar a senha muda a versão usada no token e torna este convite inutilizável imediatamente.
-   access.senha=generate_password_hash(senha)
-   access.ativo=True
-   db.session.commit()
-   session['owner_access_id']=access.id
-   session['owner_investor_id']=access.investor_id
-   session['owner_tenant_id']=access.tenant_id
-   access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
-   flash('Acesso ativado com sucesso. Bem-vindo ao Portal do Proprietário.','success')
-   return redirect(url_for('portal_proprietario'))
- return render_template('portal_proprietario_ativar.html',erro=None,tenant_login=tenant_login,investor=investor,token=token)
+ return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None)
 
 @app.route('/portal-proprietario/entrar',methods=['GET','POST'])
 def portal_proprietario_entrar():
@@ -2217,12 +2088,23 @@ def configuracoes_automacoes():
   if not item:
    item=Integration(tenant_id=tid(),tipo='whatsapp',ativo=False,configuracao='{}'); db.session.add(item)
   cfg=CommunicationService.parse_config(item)
+  try: weekday=max(0,min(6,int(request.form.get('automation_weekday') or 0)))
+  except Exception: weekday=0
+  try: start_hour=max(0,min(23,int(request.form.get('automation_start_hour') or 7)))
+  except Exception: start_hour=7
+  try: end_hour=max(0,min(23,int(request.form.get('automation_end_hour') or 20)))
+  except Exception: end_hour=20
+  try: interval=max(1,min(12,int(request.form.get('reminder_interval_hours') or 1)))
+  except Exception: interval=1
+  if end_hour < start_hour:
+   flash('O horário final não pode ser anterior ao horário inicial.','danger')
+   return redirect(url_for('configuracoes_automacoes'))
   cfg.update({
    'automation_enabled':request.form.get('automation_enabled')=='1',
-   'automation_weekday':int(request.form.get('automation_weekday') or 0),
-   'automation_start_hour':int(request.form.get('automation_start_hour') or 7),
-   'automation_end_hour':int(request.form.get('automation_end_hour') or 20),
-   'reminder_interval_hours':int(request.form.get('reminder_interval_hours') or 1),
+   'automation_weekday':weekday,
+   'automation_start_hour':start_hour,
+   'automation_end_hour':end_hour,
+   'reminder_interval_hours':interval,
    'automatic_billing_enabled':request.form.get('automatic_billing_enabled')=='1',
    'automatic_km_enabled':request.form.get('automatic_km_enabled')=='1',
    'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
