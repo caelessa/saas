@@ -238,6 +238,7 @@ class Inspection(db.Model):
  contract_id=db.Column(db.Integer,db.ForeignKey('contract.id'))
  token=db.Column(db.String(64),unique=True,nullable=False,index=True)
  status=db.Column(db.String(30),default='Pendente',index=True)
+ tipo_vistoria=db.Column(db.String(20),default='guiada',index=True)
  requested_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
  expires_at=db.Column(db.DateTime,index=True)
  started_at=db.Column(db.DateTime)
@@ -698,6 +699,7 @@ def migrate_schema():
   ],
   'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('proxima_hora','VARCHAR(5)'),('notificar_motorista','BOOLEAN DEFAULT FALSE'),('lembrete_um_dia','BOOLEAN DEFAULT TRUE'),('notificacao_agendamento_id','INTEGER'),('notificacao_lembrete_id','INTEGER'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
+  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'")],
   'message_queue':[('template_parameters','TEXT')],
   'billing_audit':[
    ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
@@ -3677,7 +3679,10 @@ def vistorias():
    return redirect(url_for('vistorias'))
   token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
   expira_horas=int(request.form.get('expira_horas') or 48)
-  item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
+  tipo_vistoria=(request.form.get('tipo_vistoria') or 'guiada').strip().lower()
+  if tipo_vistoria not in ('guiada','simples'):
+   tipo_vistoria='guiada'
+  item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',tipo_vistoria=tipo_vistoria,expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
   db.session.add(item); db.session.commit()
   ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
   flash(msg_envio,'success' if ok_envio else 'warning')
@@ -3772,7 +3777,8 @@ def vistoria_upload(token):
  try: duracao=max(0,int(float(request.form.get('duration_seconds') or 0)))
  except Exception: duracao=0
  if duracao < 15:
-  return {'ok':False,'error':'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'},400
+  msg_curta='A vistoria ficou muito curta. Grave pelo menos 15 segundos mostrando o veículo.' if (item.tipo_vistoria or 'guiada')=='simples' else 'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'
+  return {'ok':False,'error':msg_curta},400
  # Validação automática de luminosidade desativada.
  # Os valores eventualmente enviados pelo navegador são apenas informativos e não bloqueiam a vistoria.
  ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
