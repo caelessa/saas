@@ -1202,29 +1202,27 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
    month_bucket(ref)['repasse']+=share
 
  # 2) REALIZADO: pagamentos efetivamente baixados.
- # IMPORTANTE: BillingAudit guarda a placa como fotografia do momento da cobrança.
- # O filtro do portal deve usar essa placa histórica, e não depender apenas do
- # vehicle_id atual do contrato (que pode ter sido alterado/reutilizado depois).
- # Assim, ao selecionar um veículo, o KPI "Repasse efetivamente pago" considera
- # somente as cobranças que realmente pertencem àquela placa.
- def _placa_norm(value):
-  return re.sub(r'[^A-Z0-9]','',str(value or '').upper())
-
- vehicle_by_plate={_placa_norm(v.placa):v for v in vehicles if _placa_norm(v.placa)}
+ # O filtro por veículo precisa ser aplicado pela relação estrutural da cobrança:
+ # BillingAudit -> contract_id -> Contract.vehicle_id. A placa gravada na auditoria
+ # é apenas uma fotografia histórica e não deve decidir a qual veículo o pagamento
+ # pertence, pois registros antigos podem conter placa ausente/incorreta.
+ # Como `contracts` acima já contém SOMENTE contratos dos veículos filtrados,
+ # limitar a consulta aos IDs desses contratos garante que o KPI realizado respeite
+ # exatamente o filtro de veículo/placa do portal.
+ contract_ids=list(contract_map.keys())
  audits_raw=BillingAudit.query.filter(
   BillingAudit.tenant_id==tenant_id,
+  BillingAudit.contract_id.in_(contract_ids or [-1]),
   BillingAudit.billing_date>=inicio,
   BillingAudit.billing_date<=fim
  ).order_by(BillingAudit.billing_date,BillingAudit.id).all()
 
- # RC: um reenvio manual antigo podia criar mais de um BillingAudit para a
- # mesma cobrança semanal. Isso fazia o portal somar duas vezes um pagamento
- # que, operacionalmente, era a mesma competência. Agrupamos por contrato +
- # data de cobrança + placa e usamos um único registro, priorizando o PAGO mais
- # recente. Assim os históricos antigos também ficam corretos sem apagar dados.
+ # Compatibilidade com reenvios antigos que podiam gerar auditorias duplicadas no
+ # mesmo dia para o mesmo contrato. Mantém uma única ocorrência por competência,
+ # priorizando um registro PAGO e, em empate, o mais recente.
  audits_por_cobranca={}
  for audit in audits_raw:
-  chave=(audit.contract_id,audit.billing_date,_placa_norm(audit.plate))
+  chave=(audit.contract_id,audit.billing_date)
   atual=audits_por_cobranca.get(chave)
   audit_pago=(audit.payment_status or '').upper()=='PAGO'
   atual_pago=(atual.payment_status or '').upper()=='PAGO' if atual else False
@@ -1232,14 +1230,10 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
    audits_por_cobranca[chave]=audit
 
  for audit in audits_por_cobranca.values():
-  vehicle=vehicle_by_plate.get(_placa_norm(audit.plate))
-  # Compatibilidade com cobranças antigas que não tenham a placa gravada.
-  if not vehicle:
-   contract=Contract.query.filter_by(id=audit.contract_id,tenant_id=tenant_id).first()
-   if contract and contract.vehicle_id in rows:
-    vehicle=rows[contract.vehicle_id]['vehicle']
-  if not vehicle or vehicle.id not in rows:
+  contract=contract_map.get(audit.contract_id)
+  if not contract or contract.vehicle_id not in rows:
    continue
+  vehicle=rows[contract.vehicle_id]['vehicle']
   total=Decimal(str(audit.total_amount or 0))
   row=rows[vehicle.id]
   if (audit.payment_status or '').upper()=='PAGO':
