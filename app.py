@@ -246,6 +246,9 @@ class Inspection(db.Model):
  video_key=db.Column(db.String(255))
  video_mime=db.Column(db.String(80))
  duration_seconds=db.Column(db.Integer)
+ painel_photo_key=db.Column(db.String(255))
+ painel_photo_mime=db.Column(db.String(80))
+ km_informada=db.Column(db.Integer)
  brightness_avg=db.Column(db.Numeric(8,2))
  brightness_status=db.Column(db.String(30))
  notes=db.Column(db.Text)
@@ -260,6 +263,9 @@ class InspectionAttempt(db.Model):
  video_key=db.Column(db.String(255),nullable=False)
  video_mime=db.Column(db.String(80))
  duration_seconds=db.Column(db.Integer)
+ painel_photo_key=db.Column(db.String(255))
+ painel_photo_mime=db.Column(db.String(80))
+ km_informada=db.Column(db.Integer)
  brightness_avg=db.Column(db.Numeric(8,2))
  brightness_min=db.Column(db.Numeric(8,2))
  dark_ratio=db.Column(db.Numeric(8,4))
@@ -699,7 +705,8 @@ def migrate_schema():
   ],
   'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('proxima_hora','VARCHAR(5)'),('notificar_motorista','BOOLEAN DEFAULT FALSE'),('lembrete_um_dia','BOOLEAN DEFAULT TRUE'),('notificacao_agendamento_id','INTEGER'),('notificacao_lembrete_id','INTEGER'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
-  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'")],
+  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
+  'inspection_attempt':[('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
   'message_queue':[('template_parameters','TEXT')],
   'billing_audit':[
    ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
@@ -3746,7 +3753,7 @@ def aprovar_vistoria(id):
  item.status='Aprovada'
  tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
  if not tentativa and item.video_key:
-  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
+  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,painel_photo_key=item.painel_photo_key,painel_photo_mime=item.painel_photo_mime,km_informada=item.km_informada,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
   db.session.add(tentativa)
  if tentativa:
   tentativa.decision='Aprovada'; tentativa.decided_at=datetime.utcnow()
@@ -3760,7 +3767,7 @@ def rejeitar_vistoria(id):
  item.status='Regravar'; item.notes=(request.form.get('motivo') or 'Nova gravação solicitada pelo administrador.').strip()
  tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
  if not tentativa and item.video_key:
-  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
+  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,painel_photo_key=item.painel_photo_key,painel_photo_mime=item.painel_photo_mime,km_informada=item.km_informada,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
   db.session.add(tentativa)
  if tentativa:
   tentativa.decision='Regravar'; tentativa.decision_notes=item.notes; tentativa.decided_at=datetime.utcnow()
@@ -3782,6 +3789,15 @@ def vistoria_video(id):
  try: conteudo=storage.download(item.video_key)
  except StorageNotFoundError: abort(404)
  return send_file(BytesIO(conteudo),mimetype=item.video_mime or 'video/webm',download_name=f'vistoria-{item.id}.webm',conditional=True)
+
+@app.route('/vistorias/<int:id>/painel')
+@login_required
+def vistoria_painel(id):
+ item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if not item.painel_photo_key: abort(404)
+ try: conteudo=storage.download(item.painel_photo_key)
+ except StorageNotFoundError: abort(404)
+ return send_file(BytesIO(conteudo),mimetype=item.painel_photo_mime or 'image/jpeg',download_name=f'vistoria-{item.id}-painel.jpg',conditional=True)
 
 @app.route('/vistorias/<int:id>/tentativas/<int:attempt_id>/video')
 @login_required
@@ -3807,39 +3823,80 @@ def vistoria_upload(token):
  if item.expires_at and item.expires_at < datetime.utcnow():
   return {'ok':False,'error':'Link expirado.'},410
  video=request.files.get('video')
+ painel=request.files.get('painel_photo')
  if not video:
   return {'ok':False,'error':'Vídeo não recebido.'},400
+ if not painel:
+  return {'ok':False,'error':'Tire uma foto do painel antes de finalizar a vistoria.'},400
+ try: km=int(str(request.form.get('km') or '').replace('.','').replace(',','').strip())
+ except Exception:
+  return {'ok':False,'error':'Informe a quilometragem atual mostrada no painel.'},400
+ if km < 0:
+  return {'ok':False,'error':'Quilometragem inválida.'},400
+ veiculo=Vehicle.query.filter_by(id=item.vehicle_id,tenant_id=item.tenant_id).first()
+ if not veiculo:
+  return {'ok':False,'error':'Veículo da vistoria não encontrado.'},404
+ km_anterior=int(veiculo.km_atual or 0)
+ if km < km_anterior:
+  return {'ok':False,'error':f'A quilometragem informada ({km:,} km) é menor que a última registrada ({km_anterior:,} km). Confira o painel.'.replace(',','.')},400
  mime=(video.mimetype or '').lower()
  if not (mime.startswith('video/webm') or mime.startswith('video/mp4') or mime.startswith('video/quicktime')):
   return {'ok':False,'error':'Formato de vídeo não suportado.'},400
+ painel_mime=(painel.mimetype or '').lower()
+ if painel_mime not in ('image/jpeg','image/png','image/webp'):
+  return {'ok':False,'error':'Formato da foto do painel não suportado. Use JPG, PNG ou WEBP.'},400
  try: brilho=float(request.form.get('brightness_avg') or 0)
  except Exception: brilho=0
  try: brilho_min=float(request.form.get('brightness_min') or brilho)
  except Exception: brilho_min=brilho
  try: dark_ratio=float(request.form.get('dark_ratio') or 0)
  except Exception: dark_ratio=0
- try: sample_count=max(0,int(float(request.form.get('brightness_samples') or 0)))
- except Exception: sample_count=0
  try: duracao=max(0,int(float(request.form.get('duration_seconds') or 0)))
  except Exception: duracao=0
  if duracao < 15:
   msg_curta='A vistoria ficou muito curta. Grave pelo menos 15 segundos mostrando o veículo.' if (item.tipo_vistoria or 'guiada')=='simples' else 'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'
   return {'ok':False,'error':msg_curta},400
- # Validação automática de luminosidade desativada.
- # Os valores eventualmente enviados pelo navegador são apenas informativos e não bloqueiam a vistoria.
  ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
- chave=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}/{uuid.uuid4().hex}{ext}"
+ painel_ext='.png' if painel_mime=='image/png' else ('.webp' if painel_mime=='image/webp' else '.jpg')
+ pasta=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}"
+ chave=f"{pasta}/{uuid.uuid4().hex}{ext}"
+ painel_chave=f"{pasta}/{uuid.uuid4().hex}-painel{painel_ext}"
  try:
   storage.upload(video.stream,chave,mime)
+  storage.upload(painel.stream,painel_chave,painel_mime)
  except Exception:
-  app.logger.exception('Falha ao armazenar vídeo da vistoria %s',item.id)
-  return {'ok':False,'error':'Não foi possível armazenar o vídeo. Tente novamente.'},503
- item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao; item.brightness_avg=Decimal(str(round(brilho,2))); item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'; item.notes=None
- tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,brightness_avg=Decimal(str(round(brilho,2))),brightness_min=Decimal(str(round(brilho_min,2))),dark_ratio=Decimal(str(round(dark_ratio,4))),submitted_at=item.submitted_at,decision='Pendente')
+  app.logger.exception('Falha ao armazenar vídeo/foto da vistoria %s',item.id)
+  try: storage.delete(chave)
+  except Exception: pass
+  try: storage.delete(painel_chave)
+  except Exception: pass
+  return {'ok':False,'error':'Não foi possível armazenar o vídeo e a foto do painel. Tente novamente.'},503
+ km_anterior_vistoria=item.km_informada
+ item.video_key=chave
+ item.video_mime=mime
+ item.duration_seconds=duracao
+ item.painel_photo_key=painel_chave
+ item.painel_photo_mime=painel_mime
+ item.km_informada=km
+ item.brightness_avg=Decimal(str(round(brilho,2)))
+ item.brightness_status='Não avaliada'
+ item.submitted_at=datetime.utcnow()
+ item.status='Recebida'
+ item.notes=None
+ tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,painel_photo_key=painel_chave,painel_photo_mime=painel_mime,km_informada=km,brightness_avg=Decimal(str(round(brilho,2))),brightness_min=Decimal(str(round(brilho_min,2))),dark_ratio=Decimal(str(round(dark_ratio,4))),submitted_at=item.submitted_at,decision='Pendente')
  db.session.add(tentativa)
- db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=f'Vídeo gravado pelo link de vistoria #{item.id}; duração {duracao}s. Aguardando aprovação.'))
+ # A KM da vistoria alimenta o histórico do veículo. Em uma regravação com a mesma KM,
+ # não criamos um segundo registro idêntico.
+ if km_anterior_vistoria != km:
+  db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem='Vistoria em vídeo'))
+ if km >= km_anterior:
+  veiculo.km_atual=km
+ descricao=f'Vistoria em vídeo recebida; duração {duracao}s; foto do painel anexada; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
+ db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=descricao))
  db.session.commit()
- return {'ok':True,'message':'Vistoria enviada com sucesso.'}
+ try: recalcular_alertas(item.tenant_id)
+ except Exception: app.logger.exception('Falha ao recalcular alertas após KM da vistoria %s',item.id)
+ return {'ok':True,'message':'Vistoria, foto do painel e quilometragem enviadas com sucesso.'}
 
 @app.route('/alertas')
 @login_required
