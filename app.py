@@ -29,6 +29,7 @@ from decimal import Decimal
 from urllib.parse import quote
 from docx import Document as DocxDocument
 from functools import wraps
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
 storage=StorageService(UPLOAD)
@@ -1473,12 +1474,49 @@ def proprietario_financeiro(id):
  return render_template('proprietario_financeiro.html',x=x,resumo=resumo,regras=regras,veiculos_disponiveis=disponiveis,previsoes=previsoes)
 
 
+def _serializer_convite_proprietario():
+ return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-invite-v1')
+
+def _versao_acesso_proprietario(access):
+ return hashlib.sha256((access.senha or '').encode('utf-8')).hexdigest()[:20]
+
+def gerar_token_convite_proprietario(access):
+ payload={
+  'tenant_id':int(access.tenant_id),
+  'investor_id':int(access.investor_id),
+  'access_id':int(access.id),
+  'version':_versao_acesso_proprietario(access),
+  'nonce':uuid.uuid4().hex,
+ }
+ return _serializer_convite_proprietario().dumps(payload)
+
+def validar_token_convite_proprietario(token,max_age=7*24*60*60):
+ try:
+  data=_serializer_convite_proprietario().loads(token,max_age=max_age)
+ except SignatureExpired:
+  return None,'Este link de convite expirou. Solicite um novo link à locadora.'
+ except BadSignature:
+  return None,'Este link de convite é inválido.'
+ try:
+  access=InvestorAccess.query.filter_by(
+   id=int(data.get('access_id')),tenant_id=int(data.get('tenant_id')),investor_id=int(data.get('investor_id'))
+  ).first()
+ except Exception:
+  access=None
+ if not access or data.get('version')!=_versao_acesso_proprietario(access):
+  return None,'Este link já foi utilizado ou foi substituído por um convite mais recente.'
+ investor=Investor.query.filter_by(id=access.investor_id,tenant_id=access.tenant_id).first()
+ if not investor:
+  return None,'O proprietário vinculado a este convite não foi encontrado.'
+ return (access,investor),None
+
 @app.route('/investidores/<int:id>/acesso',methods=['GET','POST'])
 @login_required
 def acesso_proprietario(id):
  investor=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id).first()
  senha_temporaria=None
+ link_convite=None
  if request.method=='POST':
   action=(request.form.get('acao') or 'salvar').strip()
   if action=='bloquear' and access:
@@ -1487,6 +1525,32 @@ def acesso_proprietario(id):
   if action=='ativar' and access:
    access.ativo=True; db.session.commit(); flash('Acesso do proprietário ativado.','success')
    return redirect(url_for('acesso_proprietario',id=id))
+  if action=='gerar_convite':
+   email=(request.form.get('email') or (access.email if access else None) or investor.email or '').strip().lower()
+   if not email:
+    flash('Informe o e-mail do proprietário antes de gerar o convite.','danger')
+    return redirect(url_for('acesso_proprietario',id=id))
+   duplicate=InvestorAccess.query.filter(InvestorAccess.email==email)
+   if access: duplicate=duplicate.filter(InvestorAccess.id!=access.id)
+   if duplicate.first():
+    flash('Este e-mail já está vinculado a outro acesso de proprietário.','danger')
+    return redirect(url_for('acesso_proprietario',id=id))
+   if not access:
+    # O acesso nasce bloqueado para login por senha até o proprietário ativar o convite.
+    access=InvestorAccess(tenant_id=tid(),investor_id=investor.id,email=email,senha=generate_password_hash(uuid.uuid4().hex),ativo=False)
+    db.session.add(access); db.session.flush()
+   else:
+    access.email=email
+    # Se ainda não houve acesso, a emissão de um novo convite invalida links anteriores.
+    if not access.ultimo_acesso_em and not access.ativo:
+     access.senha=generate_password_hash(uuid.uuid4().hex)
+   investor.email=investor.email or email
+   db.session.commit()
+   token=gerar_token_convite_proprietario(access)
+   link_convite=url_for('ativar_convite_proprietario',token=token,_external=True)
+   if request.host and 'onrender.com' in request.host:
+    link_convite=link_convite.replace('http://','https://',1)
+   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=link_convite,convite_expira_dias=7)
   email=(request.form.get('email') or investor.email or '').strip().lower()
   if not email:
    flash('Informe um e-mail para o acesso do proprietário.','danger')
@@ -1511,10 +1575,37 @@ def acesso_proprietario(id):
   investor.email=investor.email or email
   db.session.commit()
   if senha_temporaria:
-   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria)
+   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria,link_convite=None,convite_expira_dias=7)
   flash('Acesso do proprietário atualizado.','success')
   return redirect(url_for('acesso_proprietario',id=id))
- return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None)
+ return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,link_convite=None,convite_expira_dias=7)
+
+@app.route('/portal-proprietario/ativar/<token>',methods=['GET','POST'])
+def ativar_convite_proprietario(token):
+ validado,erro=validar_token_convite_proprietario(token)
+ if erro:
+  return render_template('portal_proprietario_ativar.html',erro=erro,tenant_login=None,investor=None,token=None),400
+ access,investor=validado
+ tenant_login=Tenant.query.get(access.tenant_id)
+ if request.method=='POST':
+  senha=request.form.get('senha') or ''
+  confirmar=request.form.get('confirmar_senha') or ''
+  if len(senha)<6:
+   flash('Crie uma senha com pelo menos 6 caracteres.','danger')
+  elif senha!=confirmar:
+   flash('As senhas não coincidem.','danger')
+  else:
+   # Alterar a senha muda a versão usada no token e torna este convite inutilizável imediatamente.
+   access.senha=generate_password_hash(senha)
+   access.ativo=True
+   db.session.commit()
+   session['owner_access_id']=access.id
+   session['owner_investor_id']=access.investor_id
+   session['owner_tenant_id']=access.tenant_id
+   access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
+   flash('Acesso ativado com sucesso. Bem-vindo ao Portal do Proprietário.','success')
+   return redirect(url_for('portal_proprietario'))
+ return render_template('portal_proprietario_ativar.html',erro=None,tenant_login=tenant_login,investor=investor,token=token)
 
 @app.route('/portal-proprietario/entrar',methods=['GET','POST'])
 def portal_proprietario_entrar():

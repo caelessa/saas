@@ -1,61 +1,37 @@
-FROTA FÁCIL — RC CUMULATIVA
-Comprovantes de Manutenção + Dashboard Financeiro da Locadora
+FROTA FÁCIL — RC CONVITE DO PORTAL DO PROPRIETÁRIO
 
-BASE
-- Esta RC parte da RC de comprovantes de manutenção, que por sua vez preserva o Dashboard do Proprietário com visões Teórica + Real.
-- Não há migração de banco nesta RC.
+Base: RC COMPROVANTES + DASHBOARD LOCADORA CORRIGIDO.
+Esta RC é cumulativa e preserva as melhorias anteriores.
 
-NOVIDADE 1 — COMPROVANTES DE MANUTENÇÃO
-- Mantém anexos de NF, recibos, orçamento, comprovante de pagamento e outros documentos vinculados à manutenção.
-- Proprietário pode visualizar os comprovantes das manutenções dos próprios veículos.
+NOVO FLUXO
+- Em Proprietários > Acesso ao portal, existe "Gerar link de acesso".
+- O link é criptograficamente assinado com SECRET_KEY, contém tenant + proprietário + acesso e nonce único.
+- Validade: 7 dias.
+- O proprietário abre uma página pública com a identidade visual da locadora.
+- Ele cria e confirma a própria senha.
+- Após ativar, entra automaticamente no Portal do Proprietário.
+- O mesmo link deixa de funcionar após a ativação porque a versão do acesso muda junto com a senha.
+- Há botão "Copiar link".
+- Se o proprietário tiver telefone, há atalho "Enviar por WhatsApp" (abre o WhatsApp com a mensagem pronta).
+- O acesso manual por e-mail/senha foi preservado.
+- Bloquear/ativar acesso foi preservado.
 
-NOVIDADE 2 — DASHBOARD FINANCEIRO DA LOCADORA
-Novo menu: "Financeiro da locadora"
-Nova rota: /financeiro-locadora
+BANCO DE DADOS
+- Não exige migração nem nova tabela.
+- Reutiliza InvestorAccess e assinatura temporizada via SECRET_KEY.
 
-Visão TEÓRICA
-- Receita teórica da frota com base nos contratos e periodicidade.
-- Repasse teórico aos proprietários conforme regra vigente por veículo/competência.
-- Receita teórica da locadora.
-- Custos de manutenção registrados.
-- Resultado teórico da locadora.
-- Excesso de KM não é projetado.
-
-Visão REAL
-- Receita efetivamente paga.
-- Repasse aos proprietários sobre valores pagos.
-- Receita real da locadora.
-- Custos registrados.
-- Resultado real.
-- Cobranças pagas incluem excesso de KM quando existente.
-
-GRÁFICOS
-- Composição teórica.
-- Evolução mensal teórica.
-- Composição real.
-- Evolução mensal realizada.
-- Resultado teórico x real por veículo.
-- Tabela detalhada por veículo.
-
-SEGURANÇA DO CÁLCULO
-- Veículo sem proprietário: 100% da participação é da locadora.
-- Veículo com proprietário utiliza a regra vigente no período.
-- Se houver proprietário sem regra de repasse, a competência não é atribuída à locadora e o dashboard mostra um aviso.
-
-ARQUIVOS DESTA RC
+ARQUIVOS ALTERADOS/NOVOS
 - app.py
+- templates/proprietario_acesso.html
+- templates/portal_proprietario_ativar.html
+
+ARQUIVOS CUMULATIVOS DA RC ANTERIOR TAMBÉM INCLUÍDOS
 - templates/base.html
+- templates/comprovantes_manutencao.html
 - templates/financeiro_locadora.html
 - templates/portal_proprietario.html
 - templates/portal_proprietario_historico.html
-- templates/comprovantes_manutencao.html
 
-INSTALAÇÃO
-Substitua o app.py e os templates incluídos nesta RC, preservando os demais arquivos do projeto.
-
-
-CORREÇÃO FINANCEIRA:
-- Manutenções e demais despesas dos veículos são de responsabilidade dos proprietários.
-- Essas despesas permanecem visíveis no dashboard da locadora apenas como informação.
-- Não são descontadas do resultado teórico ou real da locadora.
-- O dashboard do proprietário continua descontando os custos do resultado do proprietário.
+VALIDAÇÃO
+- app.py validado com python -m py_compile.
+- templates validados pelo parser Jinja2.
