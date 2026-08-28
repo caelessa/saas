@@ -1,23 +1,28 @@
-FROTA FÁCIL - RC ENVIO AUTOMÁTICO DE VISTORIA POR WHATSAPP
+FROTA FÁCIL — RC DASHBOARD PROPRIETÁRIO: TEÓRICO + REAL
+Data: 27/08/2026
 
-Base: FROTA_FACIL_HOTFIX_LINK_PAGAMENTO_PUBLICO.zip (base mais recente).
+Base usada: app.py atual enviado pelo usuário (app (6).py).
 
 ALTERAÇÕES
-- Ao criar uma vistoria, o link é enviado automaticamente pela WhatsApp Business Platform.
-- Usa o template de vistoria configurado em Configurações > Integrações > WhatsApp.
-- Parâmetros enviados exatamente na ordem do template aprovado:
-  {{1}} nome do motorista
-  {{2}} veículo (marca/modelo)
-  {{3}} placa
-  {{4}} link público da vistoria
-- O envio é registrado em MessageQueue/MessageEvent.
-- Se o WhatsApp falhar, a vistoria continua criada e é mostrado um aviso.
-- Ao rejeitar uma vistoria e gerar novo link de regravação, o novo link também é enviado automaticamente.
-- O botão/manual via WhatsApp Web pode continuar como fallback.
+- Dashboard do proprietário passa a usar valores teóricos/previstos como visão principal.
+- Previsão calculada a partir do valor da locação dos contratos no período.
+- Aplica a regra de percentual do proprietário vigente em cada competência.
+- Mantém valores efetivamente pagos separados para comparação.
+- Gráfico mensal mostra Repasse teórico x Repasse pago x Custos x Resultado teórico.
+- Cards por veículo mostram Receita teórica, Repasse teórico, Custos e Resultado.
+- Excesso de KM NÃO é projetado, pois depende da quilometragem real; entra apenas no realizado quando pago.
+- Não altera banco de dados nem exige migração.
 
-INSTALAÇÃO
-1. Substitua apenas app.py pelo arquivo desta RC.
-2. Mantenha todos os templates e services atuais.
-3. Faça deploy/restart no Render.
-4. Confirme que o provedor está como WhatsApp Business e que inspection_template_name aponta para o template aprovado.
-5. Crie uma nova vistoria para testar.
+ARQUIVOS PARA SUBSTITUIR
+1. app.py
+2. templates/portal_proprietario.html
+
+IMPORTANTE
+Esta RC foi construída sobre o app.py atual fornecido em 27/08/2026, preservando as demais funcionalidades existentes.
+
+ATUALIZAÇÃO
+- Mantidos os gráficos teóricos.
+- Restaurada uma visão gráfica REAL separada, baseada somente em repasses efetivamente pagos.
+- Gráfico real mensal: Repasse pago x Custos x Resultado real.
+- Composição real: Custos x Resultado real.
+- Nenhuma alteração de banco de dados.
