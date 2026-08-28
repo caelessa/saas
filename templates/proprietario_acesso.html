@@ -4,13 +4,47 @@
 {% block content %}
 <section class="card">
 <h2>Portal exclusivo</h2>
-<p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por tenant + proprietário.</p>
+<p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por locadora + proprietário.</p>
+
+<h3 style="margin-top:20px">Convite por link</h3>
+<p>Gere um link seguro para o proprietário criar a própria senha. O link expira em {{ convite_expira_dias or 7 }} dias e deixa de funcionar depois da ativação.</p>
+<form method="post" class="form-grid">
+<input type="hidden" name="acao" value="gerar_convite">
+<label>E-mail do proprietário<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
+<button type="submit">Gerar link de acesso</button>
+</form>
+
+{% if link_convite %}
+<div class="flash success" style="margin-top:16px">
+<strong>Link de convite gerado.</strong><br>
+Envie este endereço somente ao proprietário. Ele poderá criar a senha e entrar diretamente no portal.
+</div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 18px">
+<input id="linkConviteProprietario" type="text" value="{{ link_convite }}" readonly style="min-width:min(100%,620px);flex:1">
+<button type="button" class="secondary" onclick="copiarConvite()">Copiar link</button>
+{% if investor.telefone %}
+<a class="button secondary" target="_blank" href="https://wa.me/{{ investor.telefone|replace('+','')|replace(' ','')|replace('-','')|replace('(','')|replace(')','') }}?text={{ ('Olá, ' ~ investor.nome ~ '! Acesse o Portal do Proprietário pelo link: ' ~ link_convite)|urlencode }}">Enviar por WhatsApp</a>
+{% endif %}
+</div>
+<script>
+function copiarConvite(){
+ const el=document.getElementById('linkConviteProprietario');
+ if(navigator.clipboard){navigator.clipboard.writeText(el.value).then(()=>alert('Link copiado.'));}
+ else{el.select();document.execCommand('copy');alert('Link copiado.');}
+}
+</script>
+{% endif %}
+
+<hr style="margin:24px 0;border:0;border-top:1px solid #e5e7eb">
+<h3>Acesso manual</h3>
+<p>Você também pode criar ou redefinir o acesso manualmente, informando uma senha.</p>
 <form method="post" class="form-grid">
 <input type="hidden" name="acao" value="salvar">
 <label>E-mail de acesso<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
 <label>Nova senha{% if access %} (deixe em branco para manter){% endif %}<input type="text" name="senha"></label>
 <button type="submit">{{ 'Atualizar acesso' if access else 'Criar acesso' }}</button>
 </form>
+
 {% if senha_temporaria %}
 <div class="flash success" style="margin-top:16px">
 <strong>Acesso criado.</strong><br>
@@ -19,10 +53,11 @@ Senha temporária: <strong>{{ senha_temporaria }}</strong><br>
 Envie esses dados ao proprietário e peça para guardar a senha com segurança.
 </div>
 {% endif %}
+
 {% if access %}
-<p><strong>Link do portal:</strong><br>
+<p><strong>Link da tela de login:</strong><br>
 <code>{{url_for('portal_proprietario_entrar',tenant=current_user.tenant_id,_external=True)}}</code></p>
-<p><strong>Status:</strong> {{ 'Ativo' if access.ativo else 'Bloqueado' }} · <strong>Último acesso:</strong> {{ access.ultimo_acesso_em|sp_datetime if access.ultimo_acesso_em else 'Nunca' }}</p>
+<p><strong>Status:</strong> {{ 'Ativo' if access.ativo else 'Aguardando ativação/Bloqueado' }} · <strong>Último acesso:</strong> {{ access.ultimo_acesso_em|sp_datetime if access.ultimo_acesso_em else 'Nunca' }}</p>
 <div class="inline">
 <form method="post"><input type="hidden" name="acao" value="{{ 'bloquear' if access.ativo else 'ativar' }}"><button class="secondary">{{ 'Bloquear acesso' if access.ativo else 'Ativar acesso' }}</button></form>
 <a class="button secondary" href="{{ url_for('portal_proprietario_entrar',tenant=current_user.tenant_id) }}" target="_blank">Abrir tela de login</a>
