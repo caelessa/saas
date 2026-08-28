@@ -1108,106 +1108,53 @@ def regra_proprietario_veiculo_portal(tenant_id, investor_id, vehicle_id, data_r
  ).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).first()
 
 def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
- """Resumo do portal com visão teórica (contratual) e realizado pago separados.
-
- O previsto considera o valor-base da locação e a regra de repasse vigente na
- data de cada competência. Excesso de KM não entra na previsão, pois só existe
- depois da leitura real. Valores pagos continuam disponíveis para comparação.
- """
  investor=Investor.query.filter_by(id=investor_id,tenant_id=tenant_id).first_or_404()
  vehicles=Vehicle.query.filter_by(tenant_id=tenant_id,investor_id=investor_id).order_by(Vehicle.placa).all()
  ids=[v.id for v in vehicles]
- rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'pago':Decimal('0'),'repasse_pago':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'aberto':Decimal('0')} for v in vehicles}
+ rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'aberto':Decimal('0')} for v in vehicles}
  contracts=Contract.query.filter(Contract.tenant_id==tenant_id,Contract.vehicle_id.in_(ids or [-1])).all()
  contract_map={c.id:c for c in contracts}
  monthly={}
 
- def month_bucket(d):
-  key=d.strftime('%Y-%m')
-  return monthly.setdefault(key,{'repasse':Decimal('0'),'pago':Decimal('0'),'custos':Decimal('0')})
-
- def parse_contract_date(value, fallback):
-  try: return datetime.strptime(value or '','%Y-%m-%d').date()
-  except Exception: return fallback
-
- def periodicidade_dias(c):
-  txt=unicodedata.normalize('NFKD',str(c.periodicidade or 'Semanal')).encode('ascii','ignore').decode('ascii').lower()
-  if 'diar' in txt: return 1
-  if 'mens' in txt: return None
-  return 7
-
- # 1) PREVISÃO TEÓRICA: nasce do contrato, não do status de pagamento.
- # Contratos cancelados/rascunhos não geram expectativa financeira.
- status_validos={'Gerado','Enviado','Visualizado','Assinado','Ativo','Encerrado','Finalizado'}
- for c in contracts:
-  if c.vehicle_id not in rows or (c.status and c.status not in status_validos):
-   continue
-  c_ini=parse_contract_date(c.data_inicio,inicio)
-  c_fim=parse_contract_date(c.data_fim,fim)
-  periodo_ini=max(inicio,c_ini); periodo_fim=min(fim,c_fim)
-  if periodo_ini>periodo_fim: continue
-  base=Decimal(str(c.valor_locacao or 0))
-  if base<=0: continue
-  intervalo=periodicidade_dias(c)
-  competencias=[]
-  if intervalo is None:  # mensal: uma competência por mês enquanto o contrato estiver vigente
-   cursor=date(periodo_ini.year,periodo_ini.month,1)
-   limite=date(periodo_fim.year,periodo_fim.month,1)
-   while cursor<=limite:
-    ref=max(cursor,periodo_ini)
-    competencias.append(ref)
-    cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
-  else:
-   # ancora a recorrência na data inicial do contrato e avança até entrar no filtro
-   ref=c_ini
-   if ref<periodo_ini:
-    saltos=max(0,(periodo_ini-ref).days//intervalo)
-    ref=ref+timedelta(days=saltos*intervalo)
-    while ref<periodo_ini: ref+=timedelta(days=intervalo)
-   while ref<=periodo_fim:
-    competencias.append(ref); ref+=timedelta(days=intervalo)
-  for ref in competencias:
-   rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,c.vehicle_id,ref)
-   pct=Decimal(str(rule.percentual_proprietario or 0)) if rule else Decimal('100')
-   share=base*pct/Decimal('100')
-   rows[c.vehicle_id]['receita']+=base
-   rows[c.vehicle_id]['repasse']+=share
-   month_bucket(ref)['repasse']+=share
-
- # 2) REALIZADO: mantém os pagamentos efetivamente baixados para comparação.
  audits=BillingAudit.query.filter(
   BillingAudit.tenant_id==tenant_id,
   BillingAudit.contract_id.in_(list(contract_map.keys()) or [-1]),
   BillingAudit.billing_date>=inicio,
   BillingAudit.billing_date<=fim
  ).order_by(BillingAudit.billing_date).all()
+
  for audit in audits:
   contract=contract_map.get(audit.contract_id)
-  if not contract or contract.vehicle_id not in rows: continue
+  if not contract or contract.vehicle_id not in rows:
+   continue
   total=Decimal(str(audit.total_amount or 0))
   row=rows[contract.vehicle_id]
+  key=audit.billing_date.strftime('%Y-%m')
+  monthly.setdefault(key,{'repasse':Decimal('0'),'custos':Decimal('0')})
   if (audit.payment_status or '').upper()=='PAGO':
    rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,contract.vehicle_id,audit.billing_date)
    pct=Decimal(str(rule.percentual_proprietario or 0)) if rule else Decimal('100')
    share=total*pct/Decimal('100')
-   row['pago']+=total; row['repasse_pago']+=share; month_bucket(audit.billing_date)['pago']+=share
+   row['receita']+=total; row['repasse']+=share; monthly[key]['repasse']+=share
   else:
    row['aberto']+=total
 
- # 3) Custos reais registrados no período.
  for m in Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(ids or [-1])).all():
   try: d=datetime.strptime(m.data,'%Y-%m-%d').date()
   except Exception: continue
   if d<inicio or d>fim or m.vehicle_id not in rows: continue
   cost=Decimal(str(m.custo or 0))
-  rows[m.vehicle_id]['custos']+=cost; month_bucket(d)['custos']+=cost
+  rows[m.vehicle_id]['custos']+=cost
+  key=d.strftime('%Y-%m')
+  monthly.setdefault(key,{'repasse':Decimal('0'),'custos':Decimal('0')})
+  monthly[key]['custos']+=cost
 
- total_receita=total_repasse=total_pago=total_repasse_pago=total_custos=total_aberto=Decimal('0')
+ total_receita=total_repasse=total_custos=total_aberto=Decimal('0')
  vehicle_rows=[]
  for v in vehicles:
   row=rows[v.id]
   row['resultado']=row['repasse']-row['custos']
-  total_receita+=row['receita']; total_repasse+=row['repasse']; total_pago+=row['pago']; total_repasse_pago+=row['repasse_pago']; total_custos+=row['custos']; total_aberto+=row['aberto']
+  total_receita+=row['receita']; total_repasse+=row['repasse']; total_custos+=row['custos']; total_aberto+=row['aberto']
   row['driver']=Driver.query.filter_by(id=v.current_driver_id,tenant_id=tenant_id).first() if v.current_driver_id else None
   row['contract']=Contract.query.filter(
    Contract.tenant_id==tenant_id,Contract.vehicle_id==v.id,
@@ -1222,14 +1169,14 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
  months=[]
  cursor=date(inicio.year,inicio.month,1); limit=date(fim.year,fim.month,1)
  while cursor<=limit:
-  key=cursor.strftime('%Y-%m'); item=monthly.get(key,{'repasse':Decimal('0'),'pago':Decimal('0'),'custos':Decimal('0')})
+  key=cursor.strftime('%Y-%m'); item=monthly.get(key,{'repasse':Decimal('0'),'custos':Decimal('0')})
   result=item['repasse']-item['custos']
-  months.append({'label':cursor.strftime('%m/%Y'),'repasse':float(item['repasse']),'pago':float(item['pago']),'custos':float(item['custos']),'resultado':float(result)})
+  months.append({'label':cursor.strftime('%m/%Y'),'repasse':float(item['repasse']),'custos':float(item['custos']),'resultado':float(result)})
   cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
 
  return {
   'investor':investor,'vehicles':vehicle_rows,'months':months,
-  'totals':{'receita':total_receita,'repasse':total_repasse,'pago':total_pago,'repasse_pago':total_repasse_pago,'custos':total_custos,'resultado':total_repasse-total_custos,'aberto':total_aberto}
+  'totals':{'receita':total_receita,'repasse':total_repasse,'custos':total_custos,'resultado':total_repasse-total_custos,'aberto':total_aberto}
  }
 
 
