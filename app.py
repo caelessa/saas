@@ -656,7 +656,17 @@ def oil_status(v):
 
 def recalcular_alertas(tenant_id):
  try:
-  return sync_operational_alerts(db.session,Alert,Maintenance,Vehicle,tenant_id,'/manutencoes','/veiculos')
+  result=sync_operational_alerts(db.session,Alert,Maintenance,Vehicle,tenant_id,'/manutencoes','/veiculos')
+  # Manutenções canceladas não podem voltar a gerar alertas operacionais.
+  canceladas=[m.id for m in Maintenance.query.filter_by(tenant_id=tenant_id,status='Cancelada').all()]
+  if canceladas:
+   agora=agora_sao_paulo_naive()
+   Alert.query.filter(
+    Alert.tenant_id==tenant_id,Alert.entidade=='Manutenção',
+    Alert.entidade_id.in_(canceladas),Alert.resolvido_em.is_(None)
+   ).update({'resolvido_em':agora},synchronize_session=False)
+   db.session.commit()
+  return result
  except Exception:
   db.session.rollback()
   app.logger.exception('Falha ao recalcular alertas do tenant %s',tenant_id)
@@ -1215,7 +1225,7 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
    Contract.status.in_(['Gerado','Enviado','Visualizado','Assinado','Ativo'])
   ).order_by(Contract.id.desc()).first()
   row['maintenance']=Maintenance.query.filter(
-   Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id==v.id,Maintenance.status!='Concluída'
+   Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id==v.id,Maintenance.status.notin_(['Concluída','Cancelada'])
   ).order_by(Maintenance.id.desc()).first()
   row['alerts']=Alert.query.filter_by(tenant_id=tenant_id,entidade='vehicle',entidade_id=v.id).filter(Alert.resolvido_em.is_(None)).count()
   vehicle_rows.append(row)
@@ -2088,25 +2098,59 @@ def configuracoes_automacoes():
   if not item:
    item=Integration(tenant_id=tid(),tipo='whatsapp',ativo=False,configuracao='{}'); db.session.add(item)
   cfg=CommunicationService.parse_config(item)
-  try: weekday=max(0,min(6,int(request.form.get('automation_weekday') or 0)))
-  except Exception: weekday=0
-  try: start_hour=max(0,min(23,int(request.form.get('automation_start_hour') or 7)))
-  except Exception: start_hour=7
-  try: end_hour=max(0,min(23,int(request.form.get('automation_end_hour') or 20)))
-  except Exception: end_hour=20
-  try: interval=max(1,min(12,int(request.form.get('reminder_interval_hours') or 1)))
-  except Exception: interval=1
-  if end_hour < start_hour:
-   flash('O horário final não pode ser anterior ao horário inicial.','danger')
-   return redirect(url_for('configuracoes_automacoes'))
+
+  def _hora(nome,padrao):
+   try: return max(0,min(23,int(request.form.get(nome) or padrao)))
+   except Exception: return padrao
+  def _intervalo(nome,padrao):
+   try: return max(1,min(12,int(request.form.get(nome) or padrao)))
+   except Exception: return padrao
+  def _dias(nome,fallback):
+   valores=[]
+   for raw in request.form.getlist(nome):
+    try:
+     n=int(raw)
+     if 0<=n<=6 and n not in valores: valores.append(n)
+    except Exception: pass
+   return sorted(valores) if valores else list(fallback)
+
+  try: old_weekday=max(0,min(6,int(cfg.get('automation_weekday',0))))
+  except Exception: old_weekday=0
+  old_start=_hora('automation_start_hour',int(cfg.get('automation_start_hour',7) or 7))
+  old_end=_hora('automation_end_hour',int(cfg.get('automation_end_hour',20) or 20))
+  try: old_interval=max(1,min(12,int(cfg.get('reminder_interval_hours',1) or 1)))
+  except Exception: old_interval=1
+
+  km_enabled=request.form.get('km_automation_enabled')=='1'
+  billing_enabled=request.form.get('billing_automation_enabled')=='1'
+  km_days=_dias('km_automation_weekdays',cfg.get('km_automation_weekdays') or [old_weekday])
+  billing_days=_dias('billing_automation_weekdays',cfg.get('billing_automation_weekdays') or [old_weekday])
+  km_start=_hora('km_start_hour',int(cfg.get('km_start_hour',old_start) or old_start))
+  km_end=_hora('km_end_hour',int(cfg.get('km_end_hour',old_end) or old_end))
+  billing_start=_hora('billing_start_hour',int(cfg.get('billing_start_hour',old_start) or old_start))
+  billing_end=_hora('billing_end_hour',int(cfg.get('billing_end_hour',old_end) or old_end))
+  km_interval=_intervalo('km_reminder_interval_hours',int(cfg.get('km_reminder_interval_hours',old_interval) or old_interval))
+  billing_interval=_intervalo('billing_reminder_interval_hours',int(cfg.get('billing_reminder_interval_hours',old_interval) or old_interval))
+
+  if km_enabled and not request.form.getlist('km_automation_weekdays'):
+   flash('Selecione pelo menos um dia para a solicitação de KM/foto.','danger'); return redirect(url_for('configuracoes_automacoes'))
+  if billing_enabled and not request.form.getlist('billing_automation_weekdays'):
+   flash('Selecione pelo menos um dia para as cobranças.','danger'); return redirect(url_for('configuracoes_automacoes'))
+  if km_end < km_start:
+   flash('Na automação de KM, o horário final não pode ser anterior ao inicial.','danger'); return redirect(url_for('configuracoes_automacoes'))
+  if billing_end < billing_start:
+   flash('Na automação de cobranças, o horário final não pode ser anterior ao inicial.','danger'); return redirect(url_for('configuracoes_automacoes'))
+
   cfg.update({
    'automation_enabled':request.form.get('automation_enabled')=='1',
-   'automation_weekday':weekday,
-   'automation_start_hour':start_hour,
-   'automation_end_hour':end_hour,
-   'reminder_interval_hours':interval,
-   'automatic_billing_enabled':request.form.get('automatic_billing_enabled')=='1',
-   'automatic_km_enabled':request.form.get('automatic_km_enabled')=='1',
+   'km_automation_enabled':km_enabled,
+   'km_automation_weekdays':km_days,
+   'km_start_hour':km_start,'km_end_hour':km_end,'km_reminder_interval_hours':km_interval,
+   'billing_automation_enabled':billing_enabled,
+   'billing_automation_weekdays':billing_days,
+   'billing_start_hour':billing_start,'billing_end_hour':billing_end,'billing_reminder_interval_hours':billing_interval,
+   # Mantém as chaves antigas durante a transição para não quebrar outras rotinas/RCs.
+   'automatic_km_enabled':km_enabled,'automatic_billing_enabled':billing_enabled,
    'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
   })
   item.configuracao=json.dumps(cfg,ensure_ascii=False); db.session.commit(); flash('Automações atualizadas.','success'); return redirect(url_for('configuracoes_automacoes'))
@@ -3485,6 +3529,65 @@ def concluir_manutencao(id):
  flash('Manutenção concluída e registrada no histórico do veículo.','success')
  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
 
+@app.route('/manutencoes/gerenciar')
+@login_required
+def gerenciar_manutencoes():
+ items=Maintenance.query.options(joinedload(Maintenance.vehicle)).filter_by(tenant_id=tid()).order_by(Maintenance.id.desc()).all()
+ ids=[m.id for m in items]
+ docs=Document.query.filter(Document.tenant_id==tid(),Document.entidade=='Manutenção',Document.entidade_id.in_(ids or [-1]),Document.status=='Ativo').all()
+ docs_count={}
+ for d in docs: docs_count[d.entidade_id]=docs_count.get(d.entidade_id,0)+1
+ return render_template('gerenciar_manutencoes.html',items=items,docs_count=docs_count)
+
+@app.route('/manutencoes/<int:id>/cancelar',methods=['POST'])
+@login_required
+def cancelar_manutencao(id):
+ m=Maintenance.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ status=(m.status or 'Ativa').strip()
+ if status=='Concluída':
+  flash('Uma manutenção concluída não pode ser cancelada.','warning'); return redirect(url_for('gerenciar_manutencoes'))
+ if status=='Cancelada':
+  flash('Esta manutenção já está cancelada.','info'); return redirect(url_for('gerenciar_manutencoes'))
+ motivo=(request.form.get('motivo') or '').strip()[:500]
+ agora=agora_sao_paulo_naive()
+ m.status='Cancelada'; m.notificar_motorista=False; m.lembrete_um_dia=False
+ if motivo:
+  m.observacoes=((m.observacoes+'\n') if m.observacoes else '')+'Cancelamento: '+motivo
+ # Cancela lembretes ainda não enviados. Mensagens já entregues permanecem no histórico.
+ MessageQueue.query.filter(
+  MessageQueue.tenant_id==tid(),MessageQueue.related_entity=='Manutencao',MessageQueue.related_entity_id==m.id,
+  MessageQueue.status.in_(['AGENDADA','PENDENTE'])
+ ).update({'status':'CANCELADA','updated_at':agora},synchronize_session=False)
+ Alert.query.filter(
+  Alert.tenant_id==tid(),Alert.entidade=='Manutenção',Alert.entidade_id==m.id,Alert.resolvido_em.is_(None)
+ ).update({'resolvido_em':agora},synchronize_session=False)
+ if m.vehicle_id:
+  v=Vehicle.query.filter_by(id=m.vehicle_id,tenant_id=tid()).first()
+  if v:
+   descricao=f"{m.tipo or 'Manutenção'} cancelada"+(f". Motivo: {motivo}" if motivo else '')
+   db.session.add(VehicleEvent(tenant_id=tid(),vehicle_id=v.id,user_id=current_user.id,evento='Manutenção cancelada',descricao=descricao,status_anterior=v.status,status_novo=v.status))
+ db.session.commit(); flash('Manutenção cancelada. Os lembretes pendentes foram interrompidos.','success')
+ return redirect(url_for('gerenciar_manutencoes'))
+
+@app.route('/manutencoes/<int:id>/excluir',methods=['POST'])
+@login_required
+def excluir_manutencao(id):
+ m=Maintenance.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ if (m.status or '').strip()=='Concluída':
+  flash('Manutenção concluída faz parte do histórico e não pode ser excluída.','warning'); return redirect(url_for('gerenciar_manutencoes'))
+ if _documentos_manutencao_query(tid(),m.id).first():
+  flash('Esta manutenção possui comprovantes. Exclua os comprovantes antes de excluir o cadastro.','warning'); return redirect(url_for('gerenciar_manutencoes'))
+ agora=agora_sao_paulo_naive()
+ MessageQueue.query.filter(
+  MessageQueue.tenant_id==tid(),MessageQueue.related_entity=='Manutencao',MessageQueue.related_entity_id==m.id,
+  MessageQueue.status.in_(['AGENDADA','PENDENTE'])
+ ).update({'status':'CANCELADA','updated_at':agora},synchronize_session=False)
+ Alert.query.filter(
+  Alert.tenant_id==tid(),Alert.entidade=='Manutenção',Alert.entidade_id==m.id,Alert.resolvido_em.is_(None)
+ ).update({'resolvido_em':agora},synchronize_session=False)
+ db.session.delete(m); db.session.commit(); flash('Cadastro de manutenção excluído.','success')
+ return redirect(url_for('gerenciar_manutencoes'))
+
 def enviar_vistoria_whatsapp_automatico(item):
  """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
 
@@ -3661,14 +3764,8 @@ def vistoria_upload(token):
  except Exception: duracao=0
  if duracao < 15:
   return {'ok':False,'error':'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'},400
- # Avalia o vídeo ao longo de toda a gravação, e não apenas por uma amostra isolada.
- # Em uso real, sombras naturais do veículo (pneus, caixas de roda, interior e parte inferior)
- # elevam o dark_ratio mesmo sob boa iluminação. Por isso, trechos escuros isoladamente
- # não reprovam mais a vistoria: a média de brilho também precisa indicar vídeo realmente escuro.
- if sample_count < 5:
-  return {'ok':False,'error':'Não foi possível avaliar a iluminação do vídeo. Grave novamente mantendo a câmera apontada para o veículo.'},400
- if brilho < 30 and dark_ratio > 0.60:
-  return {'ok':False,'error':'Iluminação insuficiente durante parte relevante do vídeo. Grave novamente em local mais iluminado.'},400
+ # Validação automática de luminosidade desativada.
+ # Os valores eventualmente enviados pelo navegador são apenas informativos e não bloqueiam a vistoria.
  ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
  chave=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}/{uuid.uuid4().hex}{ext}"
  try:
@@ -3676,10 +3773,10 @@ def vistoria_upload(token):
  except Exception:
   app.logger.exception('Falha ao armazenar vídeo da vistoria %s',item.id)
   return {'ok':False,'error':'Não foi possível armazenar o vídeo. Tente novamente.'},503
- item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao; item.brightness_avg=Decimal(str(round(brilho,2))); item.brightness_status='Adequada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'; item.notes=None
+ item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao; item.brightness_avg=Decimal(str(round(brilho,2))); item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'; item.notes=None
  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,brightness_avg=Decimal(str(round(brilho,2))),brightness_min=Decimal(str(round(brilho_min,2))),dark_ratio=Decimal(str(round(dark_ratio,4))),submitted_at=item.submitted_at,decision='Pendente')
  db.session.add(tentativa)
- db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=f'Vídeo gravado pelo link de vistoria #{item.id}; duração {duracao}s; luminosidade média {brilho:.1f}; trechos escuros {dark_ratio*100:.0f}%. Aguardando aprovação.'))
+ db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=f'Vídeo gravado pelo link de vistoria #{item.id}; duração {duracao}s. Aguardando aprovação.'))
  db.session.commit()
  return {'ok':True,'message':'Vistoria enviada com sucesso.'}
 
@@ -3744,7 +3841,7 @@ def alerta_whatsapp_motorista(id):
  integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  template_name=(cfg.get('maintenance_template_name') or '').strip() or None
- params=[d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo,a.mensagem]
+ params=[d.nome,v.marca_modelo or 'Veículo',v.placa,m.tipo or 'Manutenção',data_br(m.proxima_data) if m and m.proxima_data else 'a definir',m.proxima_hora or 'a definir'] if m else [d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo or 'Alerta',a.mensagem or '','a definir']
  fila,redirect_url,err=criar_mensagem_whatsapp(tenant_id=tid(),driver=d,body=body,message_type=msg_type,related_entity=a.entidade or 'Alerta',related_entity_id=a.entidade_id or a.id,template_name=template_name,template_parameters=params)
  db.session.commit()
  if err: flash('Não foi possível enviar o alerta: '+err,'danger')
@@ -3932,19 +4029,35 @@ def _automation_cfg(tenant_id):
  cfg=CommunicationService.parse_config(integration)
  return integration,cfg
 
-def _automation_window_open(cfg, agora=None):
+def _automation_window_open(cfg, kind=None, agora=None):
  agora=agora or datetime.now(SAO_PAULO)
  if not cfg.get('automation_enabled',False): return False
- try: weekday=int(cfg.get('automation_weekday',0))
- except Exception: weekday=0
- try: start_hour=int(cfg.get('automation_start_hour',7))
+ try: old_weekday=int(cfg.get('automation_weekday',0))
+ except Exception: old_weekday=0
+ if kind=='km':
+  weekdays=cfg.get('km_automation_weekdays') or [old_weekday]
+  start_raw=cfg.get('km_start_hour',cfg.get('automation_start_hour',7))
+  end_raw=cfg.get('km_end_hour',cfg.get('automation_end_hour',20))
+ elif kind=='billing':
+  weekdays=cfg.get('billing_automation_weekdays') or [old_weekday]
+  start_raw=cfg.get('billing_start_hour',cfg.get('automation_start_hour',7))
+  end_raw=cfg.get('billing_end_hour',cfg.get('automation_end_hour',20))
+ else:
+  weekdays=[old_weekday]
+  start_raw=cfg.get('automation_start_hour',7); end_raw=cfg.get('automation_end_hour',20)
+ try: weekdays=[int(x) for x in weekdays]
+ except Exception: weekdays=[old_weekday]
+ try: start_hour=int(start_raw)
  except Exception: start_hour=7
- try: end_hour=int(cfg.get('automation_end_hour',20))
+ try: end_hour=int(end_raw)
  except Exception: end_hour=20
- return agora.weekday()==weekday and start_hour<=agora.hour<=end_hour
+ return agora.weekday() in weekdays and start_hour<=agora.hour<=end_hour
 
-def _reminder_interval(cfg):
- try: return max(1,int(cfg.get('reminder_interval_hours',1)))
+def _reminder_interval(cfg, kind=None):
+ key='reminder_interval_hours'
+ if kind=='km': key='km_reminder_interval_hours'
+ elif kind=='billing': key='billing_reminder_interval_hours'
+ try: return max(1,int(cfg.get(key,cfg.get('reminder_interval_hours',1))))
  except Exception: return 1
 
 def _audit_info(audit):
@@ -3990,14 +4103,14 @@ def processar_cobrancas_automaticas(tenant_id=None):
   periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
   if periodicidade and 'seman' not in periodicidade: continue
   integration,cfg=_automation_cfg(c.tenant_id)
-  if not cfg.get('automatic_billing_enabled',False) or not _automation_window_open(cfg,agora): continue
+  if not cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) or not _automation_window_open(cfg,'billing',agora): continue
   # Envio realmente automático só é possível pela Business Platform. No Web, o botão manual continua disponível.
   if (cfg.get('provider') or 'web').lower()!='business': continue
   audit=BillingAudit.query.filter_by(tenant_id=c.tenant_id,contract_id=c.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
   if audit and (audit.payment_status or 'PENDENTE')=='PAGO': continue
   if not audit:
    gerar_e_enviar_cobranca(c,automatico=True); enviados+=1; continue
-  intervalo=_reminder_interval(cfg)
+  intervalo=_reminder_interval(cfg,'billing')
   if audit.last_reminder_at and (agora_sao_paulo_naive()-audit.last_reminder_at)<timedelta(hours=intervalo): continue
   _enviar_cobranca_audit(c,audit,cfg); enviados+=1
  db.session.commit(); return enviados
@@ -4010,7 +4123,7 @@ def processar_km_automatico(tenant_id=None):
  for c in q.all():
   if not c.driver or not c.vehicle: continue
   integration,cfg=_automation_cfg(c.tenant_id)
-  if not cfg.get('automatic_km_enabled',False) or not _automation_window_open(cfg,agora): continue
+  if not cfg.get('km_automation_enabled',cfg.get('automatic_km_enabled',False)) or not _automation_window_open(cfg,'km',agora): continue
   if (cfg.get('provider') or 'web').lower()!='business': continue
   # Se a foto/KM já foi recebida hoje, encerra a automação desse veículo no dia.
   # submitted_at é salvo em UTC sem timezone; convertemos para São Paulo antes de comparar a data.
@@ -4027,7 +4140,7 @@ def processar_km_automatico(tenant_id=None):
   if not req:
    req=MileageRequest(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=c.vehicle.km_atual); db.session.add(req); db.session.flush()
   ultimo=MessageQueue.query.filter_by(tenant_id=c.tenant_id,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id).filter(MessageQueue.created_at>=inicio).order_by(MessageQueue.id.desc()).first()
-  intervalo=_reminder_interval(cfg)
+  intervalo=_reminder_interval(cfg,'km')
   if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo): continue
   link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
   body=f'Olá, {c.driver.nome}! Precisamos da quilometragem atual do veículo {c.vehicle.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
@@ -4044,7 +4157,10 @@ def processar_alertas_automaticos(tenant_id=None):
   integration=Integration.query.filter_by(tenant_id=a.tenant_id,tipo='whatsapp').first(); cfg=CommunicationService.parse_config(integration)
   if not cfg.get('automatic_alerts_enabled',False): continue
   v=None; m=None
-  if a.entidade=='Manutenção': m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first(); v=m.vehicle if m else None
+  if a.entidade=='Manutenção':
+   m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first()
+   if m and (m.status or '').strip()=='Cancelada': continue
+   v=m.vehicle if m else None
   elif a.entidade=='Veículo': v=Vehicle.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first()
   if not v: continue
   d=motorista_atual_veiculo(v)
@@ -4053,7 +4169,7 @@ def processar_alertas_automaticos(tenant_id=None):
   if existing: continue
   body=maintenance_message(driver_name=d.nome,vehicle=v,maintenance=m,reminder=False) if m else f'Olá, {d.nome}! A locadora identificou um alerta no veículo {v.marca_modelo or "Veículo"} — {v.placa}: {a.titulo}. {a.mensagem}'
   template_name=(cfg.get('maintenance_template_name') or '').strip() or None
-  params=[d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo or 'Alerta',a.mensagem or '']
+  params=[d.nome,v.marca_modelo or 'Veículo',v.placa,m.tipo or 'Manutenção',data_br(m.proxima_data) if m and m.proxima_data else 'a definir',m.proxima_hora or 'a definir'] if m else [d.nome,v.marca_modelo or 'Veículo',v.placa,a.titulo or 'Alerta',a.mensagem or '','a definir']
   criar_mensagem_whatsapp(tenant_id=a.tenant_id,driver=d,body=body,message_type='alerta_automatico',related_entity='Alerta',related_entity_id=a.id,template_name=template_name,template_parameters=params); enviados+=1
  db.session.commit(); return enviados
 
