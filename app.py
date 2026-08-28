@@ -1129,7 +1129,7 @@ def regra_proprietario_veiculo_portal(tenant_id, investor_id, vehicle_id, data_r
   or_(InvestorVehicleRule.vigencia_fim.is_(None),InvestorVehicleRule.vigencia_fim>=data_ref)
  ).order_by(InvestorVehicleRule.vigencia_inicio.desc(),InvestorVehicleRule.id.desc()).first()
 
-def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
+def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=None, placa=None):
  """Resumo do portal com visão teórica (contratual) e realizado pago separados.
 
  O previsto considera o valor-base da locação e a regra de repasse vigente na
@@ -1137,7 +1137,12 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim):
  depois da leitura real. Valores pagos continuam disponíveis para comparação.
  """
  investor=Investor.query.filter_by(id=investor_id,tenant_id=tenant_id).first_or_404()
- vehicles=Vehicle.query.filter_by(tenant_id=tenant_id,investor_id=investor_id).order_by(Vehicle.placa).all()
+ vehicles_query=Vehicle.query.filter_by(tenant_id=tenant_id,investor_id=investor_id)
+ if vehicle_id:
+  vehicles_query=vehicles_query.filter(Vehicle.id==vehicle_id)
+ if placa:
+  vehicles_query=vehicles_query.filter(Vehicle.placa.ilike(f'%{placa}%'))
+ vehicles=vehicles_query.order_by(Vehicle.placa).all()
  ids=[v.id for v in vehicles]
  rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'pago':Decimal('0'),'repasse_pago':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'aberto':Decimal('0')} for v in vehicles}
  contracts=Contract.query.filter(Contract.tenant_id==tenant_id,Contract.vehicle_id.in_(ids or [-1])).all()
@@ -1573,9 +1578,14 @@ def portal_proprietario():
  try: fim=datetime.strptime(request.args.get('fim') or today.isoformat(),'%Y-%m-%d').date()
  except Exception: fim=today
  if inicio>fim: inicio,fim=fim,inicio
- data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim)
+ vehicle_id=request.args.get('vehicle_id',type=int)
+ placa=(request.args.get('placa') or '').strip().upper()[:10]
+ available_vehicles=Vehicle.query.filter_by(tenant_id=tenant_id,investor_id=investor_id).order_by(Vehicle.placa).all()
+ if vehicle_id and not any(v.id==vehicle_id for v in available_vehicles):
+  vehicle_id=None
+ data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim,vehicle_id=vehicle_id,placa=placa)
  tenant=Tenant.query.get(tenant_id)
- return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),**data)
+ return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),vehicle_id=vehicle_id,placa=placa,available_vehicles=available_vehicles,**data)
 
 
 def _veiculo_portal_proprietario(vehicle_id):
