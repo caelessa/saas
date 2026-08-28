@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block heading %}Vistorias{% endblock %}
-{% block subheading %}Solicite vistorias em vídeo no modo guiado ou em vídeo simples, com gravação feita na hora e armazenamento seguro.{% endblock %}
+{% block subheading %}Solicite vistorias em vídeo no modo guiado ou simples. O mesmo fluxo registra foto do painel e quilometragem atual.{% endblock %}
 {% block content %}
 <section class="card">
   <h2>Nova vistoria em vídeo</h2>
@@ -22,13 +22,13 @@
     </label>
     <button type="submit">Gerar link de vistoria</button>
   </form>
-  <p class="muted">O veículo precisa estar vinculado a um motorista por contrato vigente. Nos dois modos o vídeo é gravado pela câmera dentro do link; não é permitido enviar um vídeo antigo da galeria.</p>
+  <p class="muted">O veículo precisa estar vinculado a um motorista por contrato vigente. Nos dois modos o vídeo é gravado pela câmera dentro do link. Ao concluir, o motorista fotografa o painel e informa a KM; o valor é registrado automaticamente no histórico do veículo.</p>
 </section>
 
 <section class="card">
   <h2>Solicitações</h2>
   <div class="table-wrap"><table>
-    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Vídeo</th><th>Ações</th></tr>
+    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Vídeo</th><th>Painel / KM</th><th>Ações</th></tr>
     {% for x in items %}
     <tr>
       <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
@@ -37,6 +37,7 @@
       <td><span class="alert-status {% if x.status=='Aprovada' %}ok{% elif x.status in ['Regravar'] %}danger{% elif x.status=='Recebida' %}warning{% else %}info{% endif %}">{{x.status}}</span></td>
       <td>{{x.requested_at.strftime('%d/%m/%Y %H:%M') if x.requested_at else '-'}}</td>
       <td>{% if x.video_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_video',id=x.id)}}">▶ Ver vídeo</a>{% else %}-{% endif %}</td>
+      <td>{% if x.painel_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_painel',id=x.id)}}">📷 Ver painel</a><br>{% endif %}{% if x.km_informada is not none %}<b>{{'{:,}'.format(x.km_informada).replace(',','.')}} km</b>{% elif not x.painel_photo_key %}-{% endif %}</td>
       <td class="inspection-actions">
         {% set link=url_for('vistoria_publica',token=x.token,_external=True) %}
         <button type="button" class="button secondary" onclick="navigator.clipboard.writeText('{{link}}');this.textContent='Link copiado ✓'">Copiar link</button>
@@ -48,7 +49,7 @@
         {% if x.status=='Regravar' and x.notes %}<small class="muted">{{x.notes}}</small>{% endif %}
       </td>
     </tr>
-    {% else %}<tr><td colspan="7">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="8">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
   </table></div>
 </section>
 {% endblock %}
