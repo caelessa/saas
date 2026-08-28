@@ -1202,9 +1202,13 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
    month_bucket(ref)['repasse']+=share
 
  # 2) REALIZADO: mantém os pagamentos efetivamente baixados para comparação.
- audits=BillingAudit.query.filter(
+ # Filtra o realizado também pelo veículo no próprio SQL. Isso evita que o KPI
+ # "Repasse efetivamente pago" agregue baixas de outros veículos do proprietário
+ # quando houver filtro por veículo/placa no portal.
+ audits=BillingAudit.query.join(Contract,Contract.id==BillingAudit.contract_id).filter(
   BillingAudit.tenant_id==tenant_id,
-  BillingAudit.contract_id.in_(list(contract_map.keys()) or [-1]),
+  Contract.tenant_id==tenant_id,
+  Contract.vehicle_id.in_(ids or [-1]),
   BillingAudit.billing_date>=inicio,
   BillingAudit.billing_date<=fim
  ).order_by(BillingAudit.billing_date).all()
