@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block title %}Financeiro da locadora · Frota Fácil{% endblock %}
+{% block heading %}Dashboard financeiro da locadora{% endblock %}
+{% block subheading %}Visão teórica da operação e comparação com os valores efetivamente realizados.{% endblock %}
+{% block content %}
+<style>
+.ff-fin-filter{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;padding:14px;border-radius:14px;margin-bottom:16px}.ff-fin-filter label{font-size:.85rem;color:#64748b}.ff-fin-filter input{display:block;margin-top:4px;padding:8px;border:1px solid #cbd5e1;border-radius:8px}.ff-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:16px 0}.ff-kpi,.ff-panel{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px}.ff-kpi small{display:block;color:#64748b;margin-bottom:6px}.ff-kpi strong{font-size:1.35rem}.ff-kpi em{display:block;color:#94a3b8;font-size:.78rem;margin-top:6px;font-style:normal}.ff-charts{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(380px,1.65fr);gap:18px;margin-top:18px}.ff-chart{height:300px}.ff-table{width:100%;border-collapse:collapse}.ff-table th,.ff-table td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left}.ff-table th{font-size:.82rem;color:#64748b}.ff-table td.num,.ff-table th.num{text-align:right}.ff-muted{color:#64748b;font-size:.86rem}.ff-warning{padding:12px 14px;border-radius:12px;background:#fff7ed;border:1px solid #fed7aa;margin:12px 0}.ff-positive{font-weight:700}.ff-scroll{overflow:auto}@media(max-width:900px){.ff-charts{grid-template-columns:1fr}}
+</style>
+<form class="ff-fin-filter" method="get">
+ <label>De<input type="date" name="inicio" value="{{inicio}}"></label>
+ <label>Até<input type="date" name="fim" value="{{fim}}"></label>
+ <button type="submit">Aplicar período</button>
+</form>
+
+{% if sem_regra %}<div class="ff-warning"><strong>Atenção:</strong> {{sem_regra}} veículo(s) de proprietário possuem competência sem regra de repasse cadastrada. Por segurança, essas competências não foram atribuídas como receita da locadora.</div>{% endif %}
+
+<div class="ff-kpis">
+ <div class="ff-kpi"><small>Receita teórica da frota</small><strong>R$ {{totals.receita_teorica|brl}}</strong><em>Valor-base previsto pelos contratos</em></div>
+ <div class="ff-kpi"><small>Repasse teórico aos proprietários</small><strong>R$ {{totals.repasse_teorico|brl}}</strong><em>Participação prevista dos proprietários</em></div>
+ <div class="ff-kpi"><small>Receita teórica da locadora</small><strong>R$ {{totals.locadora_teorica|brl}}</strong><em>Parcela prevista da locadora antes dos custos</em></div>
+ <div class="ff-kpi"><small>Custos registrados</small><strong>R$ {{totals.custos|brl}}</strong><em>Manutenções registradas no período</em></div>
+ <div class="ff-kpi"><small>Resultado teórico</small><strong>R$ {{totals.resultado_teorico|brl}}</strong><em>Receita teórica da locadora menos custos</em></div>
+ <div class="ff-kpi"><small>Receita efetivamente paga</small><strong>R$ {{totals.receita_paga|brl}}</strong><em>Cobranças já baixadas como pagas</em></div>
+ <div class="ff-kpi"><small>Receita real da locadora</small><strong>R$ {{totals.locadora_real|brl}}</strong><em>Parcela da locadora sobre valores pagos</em></div>
+ <div class="ff-kpi"><small>Resultado real</small><strong>R$ {{totals.resultado_real|brl}}</strong><em>Receita real da locadora menos custos</em></div>
+</div>
+
+<p class="ff-muted"><strong>Como é calculado:</strong> o teórico usa o valor-base dos contratos e a regra de repasse vigente em cada competência. Excesso de KM não é projetado. No realizado, entram as cobranças efetivamente pagas, inclusive excessos já cobrados.</p>
+
+<div class="ff-charts">
+ <section class="ff-panel"><h2>Composição teórica</h2><p class="ff-muted">Repasse aos proprietários, custos e resultado teórico da locadora.</p><div class="ff-chart"><canvas id="donutTeorico"></canvas></div></section>
+ <section class="ff-panel"><h2>Evolução mensal · teórico</h2><p class="ff-muted">Receita da locadora, repasses, custos e resultado previstos.</p><div class="ff-chart"><canvas id="lineTeorico"></canvas></div></section>
+</div>
+<div class="ff-charts">
+ <section class="ff-panel"><h2>Composição real</h2><p class="ff-muted">Valores efetivamente pagos no período.</p><div class="ff-chart"><canvas id="donutReal"></canvas></div></section>
+ <section class="ff-panel"><h2>Evolução mensal · realizado</h2><p class="ff-muted">Receita efetiva da locadora, repasses pagos, custos e resultado real.</p><div class="ff-chart"><canvas id="lineReal"></canvas></div></section>
+</div>
+<section class="ff-panel" style="margin-top:18px"><h2>Resultado por veículo</h2><div class="ff-chart"><canvas id="barVeiculos"></canvas></div></section>
+
+<section class="ff-panel" style="margin-top:18px">
+ <h2>Detalhamento por veículo</h2>
+ <div class="ff-scroll"><table class="ff-table"><thead><tr><th>Veículo</th><th>Proprietário</th><th class="num">Receita teórica</th><th class="num">Receita locadora</th><th class="num">Custos</th><th class="num">Resultado teórico</th><th class="num">Receita locadora real</th><th class="num">Resultado real</th></tr></thead><tbody>
+ {% for row in vehicles %}{% set v=row.vehicle %}<tr><td><strong>{{v.placa}}</strong><br><span class="ff-muted">{{v.marca_modelo or 'Veículo'}}</span></td><td>{{v.investor.nome if v.investor else 'Locadora'}}</td><td class="num">R$ {{row.receita_teorica|brl}}</td><td class="num">R$ {{row.locadora_teorica|brl}}</td><td class="num">R$ {{row.custos|brl}}</td><td class="num ff-positive">R$ {{row.resultado_teorico|brl}}</td><td class="num">R$ {{row.locadora_real|brl}}</td><td class="num ff-positive">R$ {{row.resultado_real|brl}}</td></tr>{% else %}<tr><td colspan="8">Nenhum veículo cadastrado.</td></tr>{% endfor %}
+ </tbody></table></div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const meses={{months|tojson}};
+const placas={{vehicles|map(attribute='vehicle.placa')|list|tojson}};
+const teoricos=[{% for row in vehicles %}{{row.resultado_teorico|float}}{% if not loop.last %},{% endif %}{% endfor %}];
+const reais=[{% for row in vehicles %}{{row.resultado_real|float}}{% if not loop.last %},{% endif %}{% endfor %}];
+new Chart(document.getElementById('donutTeorico'),{type:'doughnut',data:{labels:['Repasse proprietários','Custos','Resultado locadora'],datasets:[{data:[Math.max({{totals.repasse_teorico|float}},0),Math.max({{totals.custos|float}},0),Math.max({{totals.resultado_teorico|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
+new Chart(document.getElementById('lineTeorico'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Receita locadora',data:meses.map(x=>x.locadora_teorica),tension:.25},{label:'Repasse proprietários',data:meses.map(x=>x.repasse_teorico),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado teórico',data:meses.map(x=>x.resultado_teorico),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+new Chart(document.getElementById('donutReal'),{type:'doughnut',data:{labels:['Repasse proprietários','Custos','Resultado locadora'],datasets:[{data:[Math.max({{totals.repasse_pago|float}},0),Math.max({{totals.custos|float}},0),Math.max({{totals.resultado_real|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
+new Chart(document.getElementById('lineReal'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Receita locadora real',data:meses.map(x=>x.locadora_real),tension:.25},{label:'Repasse pago',data:meses.map(x=>x.repasse_pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado real',data:meses.map(x=>x.resultado_real),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+new Chart(document.getElementById('barVeiculos'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado teórico',data:teoricos},{label:'Resultado real',data:reais}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+</script>
+{% endblock %}
