@@ -1796,11 +1796,24 @@ def veiculos():
   flash('Veículo cadastrado e CRLV armazenado automaticamente.','success')
   return redirect(url_for('veiculos'))
  q=(request.args.get('q') or '').strip()
+ proprietario_filtro=(request.args.get('proprietario') or '').strip()
  query=Vehicle.query.filter_by(tenant_id=tid())
  if q:
   like=f'%{q}%'
   query=query.filter(or_(Vehicle.placa.ilike(like),Vehicle.renavam.ilike(like),Vehicle.chassi.ilike(like),Vehicle.marca_modelo.ilike(like),Vehicle.proprietario_legal.ilike(like)))
- return render_template('veiculos.html',items=query.order_by(Vehicle.placa).all(),investidores=Investor.query.filter_by(tenant_id=tid()).all(),motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),oil_status=oil_status,q=q)
+ if proprietario_filtro=='sem':
+  query=query.filter(Vehicle.investor_id.is_(None))
+ elif proprietario_filtro:
+  try:
+   proprietario_id=int(proprietario_filtro)
+  except (TypeError,ValueError):
+   proprietario_id=None
+  if proprietario_id and Investor.query.filter_by(id=proprietario_id,tenant_id=tid()).first():
+   query=query.filter(Vehicle.investor_id==proprietario_id)
+  else:
+   proprietario_filtro=''
+ investidores=Investor.query.filter_by(tenant_id=tid()).order_by(Investor.nome).all()
+ return render_template('veiculos.html',items=query.order_by(Vehicle.placa).all(),investidores=investidores,motoristas=Driver.query.filter_by(tenant_id=tid(),status='Ativo').order_by(Driver.nome).all(),oil_status=oil_status,q=q,proprietario_filtro=proprietario_filtro)
 @app.route('/veiculos/importar',methods=['POST'])
 @login_required
 def importar_veiculo():
