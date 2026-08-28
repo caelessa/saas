@@ -1201,24 +1201,49 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
    rows[c.vehicle_id]['repasse']+=share
    month_bucket(ref)['repasse']+=share
 
- # 2) REALIZADO: mantém os pagamentos efetivamente baixados para comparação.
- # Filtra o realizado também pelo veículo no próprio SQL. Isso evita que o KPI
- # "Repasse efetivamente pago" agregue baixas de outros veículos do proprietário
- # quando houver filtro por veículo/placa no portal.
- audits=BillingAudit.query.join(Contract,Contract.id==BillingAudit.contract_id).filter(
+ # 2) REALIZADO: pagamentos efetivamente baixados.
+ # IMPORTANTE: BillingAudit guarda a placa como fotografia do momento da cobrança.
+ # O filtro do portal deve usar essa placa histórica, e não depender apenas do
+ # vehicle_id atual do contrato (que pode ter sido alterado/reutilizado depois).
+ # Assim, ao selecionar um veículo, o KPI "Repasse efetivamente pago" considera
+ # somente as cobranças que realmente pertencem àquela placa.
+ def _placa_norm(value):
+  return re.sub(r'[^A-Z0-9]','',str(value or '').upper())
+
+ vehicle_by_plate={_placa_norm(v.placa):v for v in vehicles if _placa_norm(v.placa)}
+ audits_raw=BillingAudit.query.filter(
   BillingAudit.tenant_id==tenant_id,
-  Contract.tenant_id==tenant_id,
-  Contract.vehicle_id.in_(ids or [-1]),
   BillingAudit.billing_date>=inicio,
   BillingAudit.billing_date<=fim
- ).order_by(BillingAudit.billing_date).all()
- for audit in audits:
-  contract=contract_map.get(audit.contract_id)
-  if not contract or contract.vehicle_id not in rows: continue
+ ).order_by(BillingAudit.billing_date,BillingAudit.id).all()
+
+ # RC: um reenvio manual antigo podia criar mais de um BillingAudit para a
+ # mesma cobrança semanal. Isso fazia o portal somar duas vezes um pagamento
+ # que, operacionalmente, era a mesma competência. Agrupamos por contrato +
+ # data de cobrança + placa e usamos um único registro, priorizando o PAGO mais
+ # recente. Assim os históricos antigos também ficam corretos sem apagar dados.
+ audits_por_cobranca={}
+ for audit in audits_raw:
+  chave=(audit.contract_id,audit.billing_date,_placa_norm(audit.plate))
+  atual=audits_por_cobranca.get(chave)
+  audit_pago=(audit.payment_status or '').upper()=='PAGO'
+  atual_pago=(atual.payment_status or '').upper()=='PAGO' if atual else False
+  if atual is None or (audit_pago and not atual_pago) or (audit_pago==atual_pago and (audit.id or 0)>(atual.id or 0)):
+   audits_por_cobranca[chave]=audit
+
+ for audit in audits_por_cobranca.values():
+  vehicle=vehicle_by_plate.get(_placa_norm(audit.plate))
+  # Compatibilidade com cobranças antigas que não tenham a placa gravada.
+  if not vehicle:
+   contract=Contract.query.filter_by(id=audit.contract_id,tenant_id=tenant_id).first()
+   if contract and contract.vehicle_id in rows:
+    vehicle=rows[contract.vehicle_id]['vehicle']
+  if not vehicle or vehicle.id not in rows:
+   continue
   total=Decimal(str(audit.total_amount or 0))
-  row=rows[contract.vehicle_id]
+  row=rows[vehicle.id]
   if (audit.payment_status or '').upper()=='PAGO':
-   rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,contract.vehicle_id,audit.billing_date)
+   rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,vehicle.id,audit.billing_date)
    pct=Decimal(str(rule.percentual_proprietario or 0)) if rule else Decimal('100')
    share=total*pct/Decimal('100')
    row['pago']+=total; row['repasse_pago']+=share; month_bucket(audit.billing_date)['pago']+=share
@@ -4129,10 +4154,31 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  provider=(cfg.get('provider') or 'web').lower()
  template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
  hoje=datetime.now(SAO_PAULO).date()
- audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
- db.session.add(audit); db.session.flush()
- comprovante_url=url_comprovante_cobranca(audit)
- audit.body=mensagem_cobranca_semanal(contract,info,comprovante_url)
+
+ # Reenvio da cobrança do mesmo contrato no mesmo dia deve reutilizar a mesma
+ # auditoria. Antes, cada clique manual criava outra BillingAudit e, se ambas
+ # fossem baixadas como pagas, o portal do proprietário somava em duplicidade.
+ audit=BillingAudit.query.filter_by(tenant_id=contract.tenant_id,contract_id=contract.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
+ if audit:
+  # Mantém o registro já pago intacto. Para pendentes, atualiza a fotografia da
+  # cobrança antes do reenvio, sem criar uma segunda competência financeira.
+  if (audit.payment_status or 'PENDENTE').upper()!='PAGO':
+   audit.driver_name=contract.driver.nome if contract.driver else None
+   audit.vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None
+   audit.plate=contract.vehicle.placa if contract.vehicle else None
+   audit.base_amount=info['valor_base']; audit.km_period=info.get('km_periodo'); audit.km_limit=info.get('limite_km')
+   audit.km_excess=info.get('km_excedente') or 0; audit.excess_rate=contract.valor_km_excedente or 0
+   audit.excess_amount=info.get('valor_excesso') or 0; audit.total_amount=info['total']; audit.template_name=template_name
+   audit.provider='whatsapp_business' if provider=='business' else 'whatsapp_web'
+   comprovante_url=url_comprovante_cobranca(audit)
+   audit.body=mensagem_cobranca_semanal(contract,info,comprovante_url)
+  else:
+   return None,audit,None,'Esta cobrança já está baixada como paga.'
+ else:
+  audit=BillingAudit(tenant_id=contract.tenant_id,contract_id=contract.id,driver_name=contract.driver.nome if contract.driver else None,vehicle_label=contract.vehicle.marca_modelo if contract.vehicle else None,plate=contract.vehicle.placa if contract.vehicle else None,billing_date=hoje,base_amount=info['valor_base'],km_period=info.get('km_periodo'),km_limit=info.get('limite_km'),km_excess=info.get('km_excedente') or 0,excess_rate=contract.valor_km_excedente or 0,excess_amount=info.get('valor_excesso') or 0,total_amount=info['total'],body='',template_name=template_name,provider='whatsapp_business' if provider=='business' else 'whatsapp_web',status='GERADA',payment_status='PENDENTE',created_at=agora_sao_paulo_naive())
+  db.session.add(audit); db.session.flush()
+  comprovante_url=url_comprovante_cobranca(audit)
+  audit.body=mensagem_cobranca_semanal(contract,info,comprovante_url)
  fila,redirect_url,err=_enviar_cobranca_audit(contract,audit,cfg)
  return fila,audit,redirect_url,err
 
