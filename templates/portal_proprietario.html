@@ -32,22 +32,23 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 </header>
 <main>
 <div class="hero">
-<div><h1>Olá, {{ investor.nome }}</h1><p class="muted">Aqui estão somente os seus veículos e resultados vinculados a esta locadora.</p></div>
+<div><h1>Olá, {{ investor.nome }}</h1><p class="muted">Visão teórica dos seus veículos no período, com comparação entre o previsto pelo contrato e o efetivamente pago.</p></div>
 <form method="get" class="filters"><label>De<input type="date" name="inicio" value="{{inicio}}"></label><label>Até<input type="date" name="fim" value="{{fim}}"></label><button>Aplicar período</button></form>
 </div>
 <div class="kpis">
-<div class="kpi"><small>Receita bruta paga</small><strong>R$ {{ totals.receita|brl }}</strong><em>Total recebido dos seus veículos</em></div>
-<div class="kpi"><small>Seu repasse</small><strong>R$ {{ totals.repasse|brl }}</strong><em>Parcela destinada ao proprietário</em></div>
+<div class="kpi"><small>Receita teórica</small><strong>R$ {{ totals.receita|brl }}</strong><em>Locações previstas pelos contratos no período</em></div>
+<div class="kpi"><small>Repasse teórico</small><strong>R$ {{ totals.repasse|brl }}</strong><em>Valor previsto pela sua regra de participação</em></div>
+<div class="kpi"><small>Repasse efetivamente pago</small><strong>R$ {{ totals.repasse_pago|brl }}</strong><em>Pagamentos já baixados pela locadora</em></div>
 <div class="kpi"><small>Custos registrados</small><strong>R$ {{ totals.custos|brl }}</strong><em>Manutenções registradas no período</em></div>
-<div class="kpi"><small>Resultado líquido</small><strong>R$ {{ totals.resultado|brl }}</strong><em>Repasse menos custos</em></div>
-<div class="kpi"><small>Valores em aberto</small><strong>R$ {{ totals.aberto|brl }}</strong><em>Cobranças ainda não pagas</em></div>
+<div class="kpi"><small>Resultado teórico</small><strong>R$ {{ totals.resultado|brl }}</strong><em>Repasse teórico menos custos registrados</em></div>
 <div class="kpi"><small>Veículos</small><strong>{{ vehicles|length }}</strong><em>Vinculados a você</em></div>
 </div>
+<p class="muted"><strong>Como é calculado:</strong> a previsão usa o valor-base dos contratos e a regra de repasse vigente em cada competência. Excesso de KM não é projetado; ele só entra quando existir cobrança real.</p>
 <div class="charts">
-<section class="panel"><h2>Para onde foi o dinheiro</h2><div class="chart"><canvas id="donut"></canvas></div></section>
-<section class="panel"><h2>Evolução mensal</h2><div class="chart"><canvas id="line"></canvas></div></section>
+<section class="panel"><h2>Composição do resultado teórico</h2><div class="chart"><canvas id="donut"></canvas></div></section>
+<section class="panel"><h2>Evolução mensal · previsto x pago</h2><div class="chart"><canvas id="line"></canvas></div></section>
 </div>
-<section class="panel"><h2>Resultado por veículo</h2><div class="chart"><canvas id="bar"></canvas></div></section>
+<section class="panel"><h2>Resultado teórico por veículo</h2><div class="chart"><canvas id="bar"></canvas></div></section>
 <section>
 <h2>Estado dos veículos</h2>
 <div class="cars">
@@ -61,11 +62,11 @@ section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85
 <div><strong>Contrato</strong>{{row.contract.numero_contrato if row.contract else 'Sem contrato ativo'}}</div>
 <div><strong>Alertas</strong>{{row.alerts}}</div>
 <div><strong>Próxima manutenção</strong>{% if row.maintenance %}{{row.maintenance.tipo or 'Manutenção'}}{% if row.maintenance.proxima_km %} · {{row.maintenance.proxima_km}} km{% endif %}{% else %}Sem previsão{% endif %}</div>
-<div><strong>Em aberto</strong>R$ {{row.aberto|brl}}</div>
+<div><strong>Repasse pago</strong>R$ {{row.repasse_pago|brl}}</div>
 </div>
 <div class="finance">
-<div><small>Receita</small><strong>R$ {{row.receita|brl}}</strong></div>
-<div><small>Repasse</small><strong>R$ {{row.repasse|brl}}</strong></div>
+<div><small>Receita teórica</small><strong>R$ {{row.receita|brl}}</strong></div>
+<div><small>Repasse teórico</small><strong>R$ {{row.repasse|brl}}</strong></div>
 <div><small>Custos</small><strong>R$ {{row.custos|brl}}</strong></div>
 <div><small>Resultado</small><strong>R$ {{row.resultado|brl}}</strong></div>
 </div>
@@ -81,7 +82,7 @@ const meses={{months|tojson}};
 const placas={{vehicles|map(attribute='vehicle.placa')|list|tojson}};
 const resultados=[{% for row in vehicles %}{{row.resultado|float}}{% if not loop.last %},{% endif %}{% endfor %}];
 new Chart(document.getElementById('donut'),{type:'doughnut',data:{labels:['Custos','Resultado líquido'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max({{totals.resultado|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
-new Chart(document.getElementById('line'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse',data:meses.map(x=>x.repasse),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado',data:meses.map(x=>x.resultado),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
-new Chart(document.getElementById('bar'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado líquido (R$)',data:resultados}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+new Chart(document.getElementById('line'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse teórico',data:meses.map(x=>x.repasse),tension:.25},{label:'Repasse pago',data:meses.map(x=>x.pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado teórico',data:meses.map(x=>x.resultado),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+new Chart(document.getElementById('bar'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado teórico (R$)',data:resultados}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
 </script>
 </body></html>
