@@ -48,7 +48,9 @@ Senha temporária: <strong>{{ senha_temporaria }}</strong>
 <form method="post"><input type="hidden" name="acao" value="{{ 'bloquear' if access.ativo else 'ativar' }}"><button class="secondary">{{ 'Bloquear acesso' if access.ativo else 'Ativar acesso' }}</button></form>
 <a class="button secondary" href="{{ url_for('portal_proprietario_entrar', tenant=investor.tenant_id) }}" target="_blank">Abrir tela de login</a>
 <form method="post" action="{{ url_for('enviar_acesso_proprietario_whatsapp', id=investor.id) }}"><button class="secondary" type="submit">📲 Reenviar portal pelo WhatsApp</button></form>
+<form method="post" action="{{ url_for('redefinir_acesso_proprietario', id=investor.id) }}" onsubmit="return confirm('Redefinir o acesso? O e-mail/senha atuais deixarão de funcionar imediatamente e um novo link de ativação será enviado pelo WhatsApp.');"><button class="secondary" type="submit">🔄 Redefinir acesso</button></form>
 </div>
+<p style="margin-top:12px;color:#666"><small>Use “Redefinir acesso” quando o proprietário quiser escolher outro e-mail, criar uma nova senha ou quando for necessário reenviar o fluxo completo de ativação.</small></p>
 {% endif %}
 </section>
 {% endblock %}
