@@ -29,6 +29,7 @@ from decimal import Decimal
 from urllib.parse import quote
 from docx import Document as DocxDocument
 from functools import wraps
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
 storage=StorageService(UPLOAD)
@@ -1538,13 +1539,41 @@ def proprietario_financeiro(id):
 
 
 
+
+def _owner_activation_serializer():
+ return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-activation-v1')
+
+def gerar_link_ativacao_portal_proprietario(investor):
+ """Gera link assinado para o proprietário escolher e-mail e senha do portal."""
+ if not investor:
+  return None
+ token=_owner_activation_serializer().dumps({'tenant_id':investor.tenant_id,'investor_id':investor.id})
+ return url_for('portal_proprietario_ativar',token=token,_external=True)
+
+def _dados_token_ativacao_proprietario(token,max_age=604800):
+ try:
+  data=_owner_activation_serializer().loads(token,max_age=max_age)
+ except SignatureExpired:
+  return None,'Este link de ativação expirou. Solicite um novo link à locadora.'
+ except BadSignature:
+  return None,'Este link de ativação é inválido.'
+ try:
+  tenant_id=int(data.get('tenant_id'))
+  investor_id=int(data.get('investor_id'))
+ except (TypeError,ValueError,AttributeError):
+  return None,'Este link de ativação é inválido.'
+ investor=Investor.query.filter_by(id=investor_id,tenant_id=tenant_id).first()
+ if not investor:
+  return None,'Proprietário não encontrado para este link.'
+ return investor,None
+
 def enviar_acesso_portal_proprietario_whatsapp(investor):
  """Envia ao proprietário o link do Portal do Proprietário via template Meta.
 
  O nome do template pode ser configurado por ``owner_portal_template_name`` na
  integração WhatsApp. Enquanto essa opção ainda não estiver exposta na tela de
  Integrações, usa o template aprovado ``acesso_portal_proprietario`` como padrão.
- Parâmetros do template: 1 proprietário, 2 locadora, 3 link do portal.
+ Parâmetros do template: 1 proprietário, 2 locadora, 3 link (ativação ou login).
  """
  if not investor:
   return False,'Proprietário não encontrado.'
@@ -1563,10 +1592,16 @@ def enviar_acesso_portal_proprietario_whatsapp(investor):
   or (((tenant.nome if tenant else '') or '').strip())
   or 'Locadora'
  )
- link=url_for('portal_proprietario_entrar',tenant=investor.tenant_id,_external=True)
+ access=InvestorAccess.query.filter_by(tenant_id=investor.tenant_id,investor_id=investor.id,ativo=True).first()
+ if access:
+  link=url_for('portal_proprietario_entrar',tenant=investor.tenant_id,_external=True)
+  instrucao='Use seu e-mail e senha já cadastrados para entrar.'
+ else:
+  link=gerar_link_ativacao_portal_proprietario(investor)
+  instrucao='Abra o link para escolher seu e-mail de acesso e criar sua senha.'
  params=[investor.nome or '',nome_locadora,link]
- body=(f'Olá, {investor.nome}. A {nome_locadora} disponibilizou seu Portal do Proprietário '
-       f'para consulta das informações dos seus veículos. Acesse: {link}')
+ body=(f'Olá, {investor.nome}. A {nome_locadora} disponibilizou seu Portal do Proprietário. '
+       f'{instrucao} Acesse: {link}')
  fila=MessageQueue(
   tenant_id=investor.tenant_id,channel='whatsapp',provider='whatsapp_business',
   recipient=telefone,recipient_name=investor.nome,message_type='acesso_portal_proprietario',
@@ -1606,9 +1641,6 @@ def enviar_acesso_portal_proprietario_whatsapp(investor):
 def enviar_acesso_proprietario_whatsapp(id):
  investor=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id,ativo=True).first()
- if not access:
-  flash('Ative ou crie o acesso do proprietário antes de enviar o portal.','danger')
-  return redirect(url_for('acesso_proprietario',id=id))
  ok,msg=enviar_acesso_portal_proprietario_whatsapp(investor)
  flash(msg,'success' if ok else 'warning')
  return redirect(url_for('acesso_proprietario',id=id))
@@ -1661,6 +1693,49 @@ def acesso_proprietario(id):
   flash('Acesso do proprietário atualizado.','success')
   return redirect(url_for('acesso_proprietario',id=id))
  return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,envio_portal_msg=None,envio_portal_ok=False)
+
+
+@app.route('/portal-proprietario/ativar/<token>',methods=['GET','POST'])
+def portal_proprietario_ativar(token):
+ investor,erro=_dados_token_ativacao_proprietario(token)
+ if erro:
+  return render_template('portal_proprietario_ativar.html',investor=None,tenant=None,erro=erro,email_sugerido='',token=token),400
+ tenant=Tenant.query.get(investor.tenant_id)
+ access=InvestorAccess.query.filter_by(tenant_id=investor.tenant_id,investor_id=investor.id).first()
+ if access:
+  flash('Seu acesso ao Portal do Proprietário já foi criado. Entre com seu e-mail e senha.','success')
+  return redirect(url_for('portal_proprietario_entrar',tenant=investor.tenant_id))
+ email_sugerido=(investor.email or '').strip().lower()
+ if request.method=='POST':
+  email=(request.form.get('email') or '').strip().lower()
+  senha=request.form.get('senha') or ''
+  confirmar=request.form.get('confirmar_senha') or ''
+  if not email or '@' not in email or '.' not in email.rsplit('@',1)[-1]:
+   flash('Informe um e-mail válido para acessar o portal.','danger')
+   return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email,token=token)
+  if len(senha)<6:
+   flash('Crie uma senha com pelo menos 6 caracteres.','danger')
+   return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email,token=token)
+  if senha!=confirmar:
+   flash('A confirmação da senha não confere.','danger')
+   return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email,token=token)
+  duplicate=InvestorAccess.query.filter_by(email=email).first()
+  if duplicate:
+   flash('Este e-mail já está vinculado a outro acesso de proprietário. Escolha outro e-mail.','danger')
+   return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email,token=token)
+  access=InvestorAccess(
+   tenant_id=investor.tenant_id,investor_id=investor.id,email=email,
+   senha=generate_password_hash(senha),ativo=True,
+  )
+  db.session.add(access)
+  db.session.commit()
+  session['owner_access_id']=access.id
+  session['owner_investor_id']=access.investor_id
+  session['owner_tenant_id']=access.tenant_id
+  access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
+  flash('Acesso criado com sucesso. Bem-vindo ao Portal do Proprietário!','success')
+  return redirect(url_for('portal_proprietario'))
+ return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email_sugerido,token=token)
 
 @app.route('/portal-proprietario/entrar',methods=['GET','POST'])
 def portal_proprietario_entrar():
