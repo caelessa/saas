@@ -1529,12 +1529,89 @@ def proprietario_financeiro(id):
  return render_template('proprietario_financeiro.html',x=x,resumo=resumo,regras=regras,veiculos_disponiveis=disponiveis,previsoes=previsoes)
 
 
+
+def enviar_acesso_portal_proprietario_whatsapp(investor):
+ """Envia ao proprietário o link do Portal do Proprietário via template Meta.
+
+ O nome do template pode ser configurado por ``owner_portal_template_name`` na
+ integração WhatsApp. Enquanto essa opção ainda não estiver exposta na tela de
+ Integrações, usa o template aprovado ``acesso_portal_proprietario`` como padrão.
+ Parâmetros do template: 1 proprietário, 2 locadora, 3 link do portal.
+ """
+ if not investor:
+  return False,'Proprietário não encontrado.'
+ telefone=normalize_phone(investor.telefone)
+ if not telefone:
+  return False,'Proprietário sem telefone/WhatsApp válido.'
+ integration=Integration.query.filter_by(tenant_id=investor.tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ provider=(cfg.get('provider') or 'web').lower()
+ if provider!='business' or not integration or not integration.ativo:
+  return False,'O envio automático requer WhatsApp Business conectado.'
+ template_name=(cfg.get('owner_portal_template_name') or '').strip() or 'acesso_portal_proprietario'
+ tenant=Tenant.query.get(investor.tenant_id)
+ nome_locadora=(
+  (((tenant.nome_fantasia if tenant else '') or '').strip())
+  or (((tenant.nome if tenant else '') or '').strip())
+  or 'Locadora'
+ )
+ link=url_for('portal_proprietario_entrar',tenant=investor.tenant_id,_external=True)
+ params=[investor.nome or '',nome_locadora,link]
+ body=(f'Olá, {investor.nome}. A {nome_locadora} disponibilizou seu Portal do Proprietário '
+       f'para consulta das informações dos seus veículos. Acesse: {link}')
+ fila=MessageQueue(
+  tenant_id=investor.tenant_id,channel='whatsapp',provider='whatsapp_business',
+  recipient=telefone,recipient_name=investor.nome,message_type='acesso_portal_proprietario',
+  body=body,template_name=template_name,template_parameters=json.dumps(params,ensure_ascii=False),
+  related_entity='Proprietario',related_entity_id=investor.id,status='PENDENTE',
+  created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive(),
+ )
+ db.session.add(fila); db.session.flush()
+ try:
+  result=CommunicationService().send_whatsapp(
+   phone=telefone,message=body,integration=integration,template_name=template_name,
+   template_language=cfg.get('template_language') or 'pt_BR',template_parameters=params,
+  )
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id
+  fila.attempts=(fila.attempts or 0)+1
+  fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  db.session.add(MessageEvent(
+   tenant_id=investor.tenant_id,message_id=fila.id,event=result.status,
+   description='Acesso ao Portal do Proprietário processado pelo WhatsApp.',
+   created_at=agora_sao_paulo_naive(),
+  ))
+  db.session.commit()
+  if result.status=='ENVIADA':
+   return True,'Link do Portal do Proprietário enviado pelo WhatsApp.'
+  return False,f'O WhatsApp retornou status {result.status}.'
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
+  db.session.add(MessageEvent(
+   tenant_id=investor.tenant_id,message_id=fila.id,event='FALHA',description=str(exc),
+   created_at=agora_sao_paulo_naive(),
+  ))
+  db.session.commit()
+  return False,str(exc)
+
+@app.route('/investidores/<int:id>/acesso/whatsapp',methods=['POST'])
+@login_required
+def enviar_acesso_proprietario_whatsapp(id):
+ investor=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id,ativo=True).first()
+ if not access:
+  flash('Ative ou crie o acesso do proprietário antes de enviar o portal.','danger')
+  return redirect(url_for('acesso_proprietario',id=id))
+ ok,msg=enviar_acesso_portal_proprietario_whatsapp(investor)
+ flash(msg,'success' if ok else 'warning')
+ return redirect(url_for('acesso_proprietario',id=id))
+
 @app.route('/investidores/<int:id>/acesso',methods=['GET','POST'])
 @login_required
 def acesso_proprietario(id):
  investor=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id).first()
  senha_temporaria=None
+ acesso_novo=False
  if request.method=='POST':
   action=(request.form.get('acao') or 'salvar').strip()
   if action=='bloquear' and access:
@@ -1559,6 +1636,7 @@ def acesso_proprietario(id):
     senha_temporaria=nova_senha
    access=InvestorAccess(tenant_id=tid(),investor_id=investor.id,email=email,senha=generate_password_hash(nova_senha),ativo=True)
    db.session.add(access)
+   acesso_novo=True
   else:
    access.email=email; access.ativo=True
    if nova_senha:
@@ -1566,11 +1644,15 @@ def acesso_proprietario(id):
     senha_temporaria=nova_senha
   investor.email=investor.email or email
   db.session.commit()
+  envio_portal_msg=None
+  envio_portal_ok=False
+  if acesso_novo:
+   envio_portal_ok,envio_portal_msg=enviar_acesso_portal_proprietario_whatsapp(investor)
   if senha_temporaria:
-   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria)
+   return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=senha_temporaria,envio_portal_msg=envio_portal_msg,envio_portal_ok=envio_portal_ok)
   flash('Acesso do proprietário atualizado.','success')
   return redirect(url_for('acesso_proprietario',id=id))
- return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None)
+ return render_template('proprietario_acesso.html',investor=investor,access=access,senha_temporaria=None,envio_portal_msg=None,envio_portal_ok=False)
 
 @app.route('/portal-proprietario/entrar',methods=['GET','POST'])
 def portal_proprietario_entrar():
@@ -2187,23 +2269,35 @@ def configuracoes_automacoes():
 
   km_enabled=request.form.get('km_automation_enabled')=='1'
   billing_enabled=request.form.get('billing_automation_enabled')=='1'
+  inspection_enabled=request.form.get('inspection_automation_enabled')=='1'
   km_days=_dias('km_automation_weekdays',cfg.get('km_automation_weekdays') or [old_weekday])
   billing_days=_dias('billing_automation_weekdays',cfg.get('billing_automation_weekdays') or [old_weekday])
+  inspection_days=_dias('inspection_automation_weekdays',cfg.get('inspection_automation_weekdays') or [old_weekday])
   km_start=_hora('km_start_hour',int(cfg.get('km_start_hour',old_start) or old_start))
   km_end=_hora('km_end_hour',int(cfg.get('km_end_hour',old_end) or old_end))
   billing_start=_hora('billing_start_hour',int(cfg.get('billing_start_hour',old_start) or old_start))
   billing_end=_hora('billing_end_hour',int(cfg.get('billing_end_hour',old_end) or old_end))
+  inspection_start=_hora('inspection_start_hour',int(cfg.get('inspection_start_hour',10) or 10))
+  inspection_end=_hora('inspection_end_hour',int(cfg.get('inspection_end_hour',20) or 20))
   km_interval=_intervalo('km_reminder_interval_hours',int(cfg.get('km_reminder_interval_hours',old_interval) or old_interval))
   billing_interval=_intervalo('billing_reminder_interval_hours',int(cfg.get('billing_reminder_interval_hours',old_interval) or old_interval))
+  try: inspection_interval=max(1,min(168,int(request.form.get('inspection_reminder_interval_hours') or cfg.get('inspection_reminder_interval_hours',3) or 3)))
+  except Exception: inspection_interval=3
+  try: inspection_expiry=max(24,min(168,int(request.form.get('inspection_expiry_hours') or cfg.get('inspection_expiry_hours',168) or 168)))
+  except Exception: inspection_expiry=168
 
   if km_enabled and not request.form.getlist('km_automation_weekdays'):
    flash('Selecione pelo menos um dia para a solicitação de KM/foto.','danger'); return redirect(url_for('configuracoes_automacoes'))
   if billing_enabled and not request.form.getlist('billing_automation_weekdays'):
    flash('Selecione pelo menos um dia para as cobranças.','danger'); return redirect(url_for('configuracoes_automacoes'))
+  if inspection_enabled and not request.form.getlist('inspection_automation_weekdays'):
+   flash('Selecione pelo menos um dia para a vistoria automática.','danger'); return redirect(url_for('configuracoes_automacoes'))
   if km_end < km_start:
    flash('Na automação de KM, o horário final não pode ser anterior ao inicial.','danger'); return redirect(url_for('configuracoes_automacoes'))
   if billing_end < billing_start:
    flash('Na automação de cobranças, o horário final não pode ser anterior ao inicial.','danger'); return redirect(url_for('configuracoes_automacoes'))
+  if inspection_end < inspection_start:
+   flash('Na automação de vistoria, o horário final não pode ser anterior ao inicial.','danger'); return redirect(url_for('configuracoes_automacoes'))
 
   cfg.update({
    'automation_enabled':request.form.get('automation_enabled')=='1',
@@ -2213,6 +2307,10 @@ def configuracoes_automacoes():
    'billing_automation_enabled':billing_enabled,
    'billing_automation_weekdays':billing_days,
    'billing_start_hour':billing_start,'billing_end_hour':billing_end,'billing_reminder_interval_hours':billing_interval,
+   'inspection_automation_enabled':inspection_enabled,
+   'inspection_automation_weekdays':inspection_days,
+   'inspection_start_hour':inspection_start,'inspection_end_hour':inspection_end,
+   'inspection_reminder_interval_hours':inspection_interval,'inspection_expiry_hours':inspection_expiry,
    # Mantém as chaves antigas durante a transição para não quebrar outras rotinas/RCs.
    'automatic_km_enabled':km_enabled,'automatic_billing_enabled':billing_enabled,
    'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
@@ -4160,6 +4258,10 @@ def _automation_window_open(cfg, kind=None, agora=None):
   weekdays=cfg.get('billing_automation_weekdays') or [old_weekday]
   start_raw=cfg.get('billing_start_hour',cfg.get('automation_start_hour',7))
   end_raw=cfg.get('billing_end_hour',cfg.get('automation_end_hour',20))
+ elif kind=='inspection':
+  weekdays=cfg.get('inspection_automation_weekdays') or [old_weekday]
+  start_raw=cfg.get('inspection_start_hour',10)
+  end_raw=cfg.get('inspection_end_hour',20)
  else:
   weekdays=[old_weekday]
   start_raw=cfg.get('automation_start_hour',7); end_raw=cfg.get('automation_end_hour',20)
@@ -4175,6 +4277,7 @@ def _reminder_interval(cfg, kind=None):
  key='reminder_interval_hours'
  if kind=='km': key='km_reminder_interval_hours'
  elif kind=='billing': key='billing_reminder_interval_hours'
+ elif kind=='inspection': key='inspection_reminder_interval_hours'
  try: return max(1,int(cfg.get(key,cfg.get('reminder_interval_hours',1))))
  except Exception: return 1
 
@@ -4287,6 +4390,64 @@ def processar_km_automatico(tenant_id=None):
   params=[c.driver.nome,c.vehicle.marca_modelo or 'Veículo',c.vehicle.placa,link]
   criar_mensagem_whatsapp(tenant_id=c.tenant_id,driver=c.driver,body=body,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id,template_name=template,template_parameters=params); enviados+=1
  db.session.commit(); return enviados
+
+def processar_vistorias_automaticas(tenant_id=None):
+ """Cria uma vistoria semanal por veículo e reenvia o mesmo link enquanto estiver pendente.
+
+ A vistoria só é criada para contrato ativo/assinado com motorista e veículo. Enquanto existir
+ uma vistoria Pendente para o veículo, ela é reutilizada, inclusive se atravessar a semana.
+ Assim que for recebida, aprovada ou rejeitada, os reenvios automáticos daquela solicitação param.
+ """
+ agora=datetime.now(SAO_PAULO)
+ q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
+ if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
+ enviados=0
+ # Segunda-feira 00:00 da semana corrente em horário de São Paulo, convertida para UTC naive
+ inicio_semana_sp=(agora-timedelta(days=agora.weekday())).replace(hour=0,minute=0,second=0,microsecond=0)
+ inicio_semana_utc=inicio_semana_sp.astimezone(timezone.utc).replace(tzinfo=None)
+ for c in q.all():
+  if not c.driver or not c.vehicle: continue
+  integration,cfg=_automation_cfg(c.tenant_id)
+  if not cfg.get('inspection_automation_enabled',False) or not _automation_window_open(cfg,'inspection',agora): continue
+  if (cfg.get('provider') or 'web').lower()!='business': continue
+
+  # Se já existe uma vistoria pendente, nunca criamos outra: reutilizamos o mesmo token/link.
+  item=Inspection.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,status='Pendente').order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
+  if not item:
+   # Proteção adicional contra duplicidade da mesma competência semanal.
+   existente_semana=Inspection.query.filter(
+    Inspection.tenant_id==c.tenant_id,
+    Inspection.vehicle_id==c.vehicle.id,
+    Inspection.requested_at>=inicio_semana_utc,
+   ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
+   if existente_semana:
+    continue
+   try: validade=max(24,min(168,int(cfg.get('inspection_expiry_hours',168) or 168)))
+   except Exception: validade=168
+   item=Inspection(
+    tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,contract_id=c.id,
+    token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',tipo_vistoria='guiada',
+    expires_at=datetime.utcnow()+timedelta(hours=validade),
+   )
+   db.session.add(item); db.session.flush()
+  else:
+   # Mantém motorista/contrato atuais e preserva o mesmo link.
+   item.driver_id=c.driver.id; item.contract_id=c.id
+   try: validade=max(24,min(168,int(cfg.get('inspection_expiry_hours',168) or 168)))
+   except Exception: validade=168
+   if not item.expires_at or item.expires_at<=datetime.utcnow()+timedelta(hours=1):
+    item.expires_at=datetime.utcnow()+timedelta(hours=validade)
+
+  intervalo=_reminder_interval(cfg,'inspection')
+  ultimo=MessageQueue.query.filter_by(
+   tenant_id=c.tenant_id,message_type='vistoria',related_entity='Vistoria',related_entity_id=item.id
+  ).order_by(MessageQueue.created_at.desc(),MessageQueue.id.desc()).first()
+  if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo):
+   continue
+  ok,_=enviar_vistoria_whatsapp_automatico(item)
+  if ok: enviados+=1
+ db.session.commit()
+ return enviados
 
 def processar_alertas_automaticos(tenant_id=None):
  q=Alert.query.filter(Alert.resolvido_em.is_(None))
@@ -4493,6 +4654,7 @@ def integracoes():
     'graph_version':request.form.get('graph_version','v23.0').strip() or 'v23.0',
     'contract_template_name':request.form.get('contract_template_name','').strip(),
     'inspection_template_name':request.form.get('inspection_template_name','').strip(),
+    'owner_portal_template_name':request.form.get('owner_portal_template_name',cfg.get('owner_portal_template_name','acesso_portal_proprietario')).strip() or 'acesso_portal_proprietario',
     'mileage_template_name':request.form.get('mileage_template_name','').strip(),
     'maintenance_template_name':request.form.get('maintenance_template_name','').strip(),
     'maintenance_reminder_template_name':request.form.get('maintenance_reminder_template_name','').strip(),
@@ -4658,8 +4820,8 @@ def templates_meta_whatsapp():
 @app.route('/automacoes/processar-mensagens',methods=['POST'])
 @login_required
 def processar_mensagens_manual():
- km=processar_km_automatico(tid()); cobrancas=processar_cobrancas_automaticas(tid()); alertas=processar_alertas_automaticos(tid()); quantidade=processar_mensagens_agendadas(tid(),limit=200)
- flash(f'Automação processada: {km} KM, {cobrancas} cobrança(s), {alertas} alerta(s) e {quantidade} mensagem(ns) agendada(s).','success')
+ km=processar_km_automatico(tid()); cobrancas=processar_cobrancas_automaticas(tid()); vistorias_auto=processar_vistorias_automaticas(tid()); alertas=processar_alertas_automaticos(tid()); quantidade=processar_mensagens_agendadas(tid(),limit=200)
+ flash(f'Automação processada: {km} KM, {cobrancas} cobrança(s), {vistorias_auto} vistoria(s), {alertas} alerta(s) e {quantidade} mensagem(ns) agendada(s).','success')
  return redirect(url_for('configuracoes_automacoes'))
 
 @app.route('/jobs/processar-mensagens',methods=['GET','POST'])
@@ -4670,9 +4832,10 @@ def processar_mensagens_job():
   abort(403)
  km=processar_km_automatico(None)
  cobrancas=processar_cobrancas_automaticas(None)
+ vistorias_auto=processar_vistorias_automaticas(None)
  alertas=processar_alertas_automaticos(None)
  quantidade=processar_mensagens_agendadas(None,limit=500)
- return {'ok':True,'solicitacoes_km':km,'cobrancas_geradas':cobrancas,'alertas_enviados':alertas,'mensagens_agendadas_processadas':quantidade,'executado_em':agora_sao_paulo_naive().isoformat()}
+ return {'ok':True,'solicitacoes_km':km,'cobrancas_geradas':cobrancas,'vistorias_enviadas':vistorias_auto,'alertas_enviados':alertas,'mensagens_agendadas_processadas':quantidade,'executado_em':agora_sao_paulo_naive().isoformat()}
 
 @app.route('/integracoes/whatsapp/testar',methods=['POST'])
 @login_required
