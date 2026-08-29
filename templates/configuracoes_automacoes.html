@@ -59,6 +59,15 @@
  </section>
 
  <section class="auto-card">
+  <h2>👤 Portal do Proprietário</h2>
+  <p class="muted2">Ao cadastrar um novo proprietário, o Frota Fácil pode enviar imediatamente pelo WhatsApp o link individual para ele escolher o e-mail de acesso e criar a própria senha.</p>
+  <div class="switch-row"><input type="checkbox" id="owner_portal_auto_invite_enabled" name="owner_portal_auto_invite_enabled" value="1" {% if cfg.get('owner_portal_auto_invite_enabled',False) %}checked{% endif %}><div><label for="owner_portal_auto_invite_enabled">Enviar convite do Portal do Proprietário automaticamente ao cadastrar</label><div class="muted2">Se o WhatsApp não puder ser enviado, o cadastro é preservado e o envio manual continua disponível em "Acesso ao portal".</div></div></div>
+  <div class="switch-row"><input type="checkbox" id="driver_portal_auto_invite_enabled" name="driver_portal_auto_invite_enabled" value="1" {% if cfg.get('driver_portal_auto_invite_enabled',False) %}checked{% endif %}><div><label for="driver_portal_auto_invite_enabled">Enviar convite do Portal do Motorista automaticamente ao cadastrar</label><div class="muted2">Usa o template de WhatsApp <strong>acesso_portal_motorista</strong>. O cadastro é preservado mesmo se o convite falhar. O envio manual continua disponível na gestão de acessos.</div></div></div>
+  <div style="margin:8px 0 4px 34px"><a href="{{ url_for('acessos_portal_motorista') }}" style="font-weight:700">👤 Gerenciar acessos do Portal do Motorista</a></div>
+  <p class="muted2">O botão manual de envio não é removido e pode ser usado a qualquer momento para reenviar o acesso.</p>
+ </section>
+
+ <section class="auto-card">
   <h2>🚨 Alertas operacionais</h2>
   <div class="switch-row"><input type="checkbox" id="automatic_alerts_enabled" name="automatic_alerts_enabled" value="1" {% if cfg.get('automatic_alerts_enabled') %}checked{% endif %}><div><label for="automatic_alerts_enabled">Ativar alertas automáticos</label><div class="muted2">Mantém o comportamento atual dos alertas. A separação desta RC afeta KM e cobranças.</div></div></div>
   <div class="actions"><button type="submit">Salvar automações</button><a class="button secondary" href="{{url_for('configuracoes')}}">Voltar às configurações</a></div>

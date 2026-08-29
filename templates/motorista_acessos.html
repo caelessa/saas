@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block content %}
+<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px">
+ <div><h1 style="margin-bottom:5px">Portal do Motorista</h1><div style="color:#667085">Gerencie convites, redefinições e bloqueios de acesso.</div></div>
+ <a href="{{ url_for('motoristas') }}" class="btn btn-secondary">← Motoristas</a>
+</div>
+<div class="card" style="overflow:auto">
+<table style="width:100%;border-collapse:collapse;min-width:760px">
+<thead><tr><th style="text-align:left;padding:10px">Motorista</th><th style="text-align:left;padding:10px">Telefone</th><th style="text-align:left;padding:10px">E-mail de login</th><th style="text-align:left;padding:10px">Status</th><th style="text-align:left;padding:10px">Ações</th></tr></thead>
+<tbody>
+{% for d in drivers %}{% set a=access_map.get(d.id) %}
+<tr style="border-top:1px solid #e5e7eb">
+<td style="padding:10px"><strong>{{ d.nome }}</strong></td><td style="padding:10px">{{ d.telefone or '-' }}</td><td style="padding:10px">{{ a.email if a else (d.email or '-') }}</td>
+<td style="padding:10px">{% if a and a.ativo %}<span style="color:#067647;font-weight:700">Ativo</span>{% elif a %}<span style="color:#b54708;font-weight:700">Aguardando/Bloqueado</span>{% else %}<span style="color:#667085">Não ativado</span>{% endif %}</td>
+<td style="padding:10px"><div style="display:flex;gap:7px;flex-wrap:wrap">
+<form method="post" action="{{ url_for('enviar_acesso_motorista_whatsapp',id=d.id) }}"><button class="btn btn-primary" type="submit">📲 Enviar portal</button></form>
+{% if a %}<form method="post" action="{{ url_for('redefinir_acesso_motorista',id=d.id) }}" onsubmit="return confirm('Invalidar o acesso atual e enviar nova ativação?')"><button class="btn btn-secondary" type="submit">🔄 Redefinir</button></form>{% endif %}
+{% if a and a.ativo %}<form method="post" action="{{ url_for('bloquear_acesso_motorista',id=d.id) }}" onsubmit="return confirm('Bloquear o acesso deste motorista?')"><button class="btn btn-danger" type="submit">Bloquear</button></form>{% endif %}
+</div></td></tr>{% else %}<tr><td colspan="5" style="padding:18px">Nenhum motorista cadastrado.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}
