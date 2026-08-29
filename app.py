@@ -1243,12 +1243,20 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
   vehicle=rows[contract.vehicle_id]['vehicle']
   total=Decimal(str(audit.total_amount or 0))
   row=rows[vehicle.id]
-  if (audit.payment_status or '').upper()=='PAGO':
+  pagamento_status=(audit.payment_status or '').upper()
+  contrato_status=unicodedata.normalize('NFKD',str(contract.status or '')).encode('ascii','ignore').decode('ascii').strip().lower()
+
+  # Contrato cancelado deixa de produzir saldo em aberto no Portal do Proprietário.
+  # O histórico de valores realmente pagos é preservado, pois representa movimentação
+  # financeira efetivamente ocorrida antes do cancelamento.
+  contrato_cancelado=contrato_status in {'cancelado','cancelada','cancelled','canceled'}
+
+  if pagamento_status=='PAGO':
    rule=regra_proprietario_veiculo_portal(tenant_id,investor_id,vehicle.id,audit.billing_date)
    pct=Decimal(str(rule.percentual_proprietario or 0)) if rule else Decimal('100')
    share=total*pct/Decimal('100')
    row['pago']+=total; row['repasse_pago']+=share; month_bucket(audit.billing_date)['pago']+=share
-  else:
+  elif not contrato_cancelado:
    row['aberto']+=total
 
  # 3) Custos reais registrados no período.
