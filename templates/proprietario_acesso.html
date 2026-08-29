@@ -1,22 +1,40 @@
 {% extends 'base.html' %}
 {% block heading %}Acesso do proprietário{% endblock %}
-{% block subheading %}Crie ou controle o acesso exclusivo de {{ investor.nome }} ao Portal do Proprietário.{% endblock %}
+{% block subheading %}Controle o acesso exclusivo de {{ investor.nome }} ao Portal do Proprietário.{% endblock %}
 {% block content %}
 <section class="card">
 <h2>Portal exclusivo</h2>
-<p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por tenant + proprietário.</p>
+<p>O proprietário acessará somente os próprios veículos e valores.</p>
+{% if not access %}
+<div class="flash success" style="margin:14px 0">
+<strong>Ativação pelo proprietário</strong><br>
+Envie o convite pelo WhatsApp. Ao abrir o link, o proprietário escolherá o e-mail que deseja usar e criará a própria senha. Se houver e-mail no cadastro, ele aparecerá apenas como sugestão e poderá ser alterado.
+</div>
+<div class="inline" style="margin-bottom:20px">
+<form method="post" action="{{ url_for('enviar_acesso_proprietario_whatsapp', id=investor.id) }}"><button type="submit">📲 Enviar link de ativação pelo WhatsApp</button></form>
+</div>
+<details>
+<summary><strong>Criar acesso manualmente (alternativa)</strong></summary>
+<form method="post" class="form-grid" style="margin-top:14px">
+<input type="hidden" name="acao" value="salvar">
+<label>E-mail de acesso<input type="email" name="email" value="{{ investor.email or '' }}" required></label>
+<label>Senha<input type="text" name="senha" placeholder="Deixe vazio para gerar uma senha temporária"></label>
+<button type="submit">Criar acesso manual</button>
+</form>
+</details>
+{% else %}
 <form method="post" class="form-grid">
 <input type="hidden" name="acao" value="salvar">
-<label>E-mail de acesso<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
-<label>Nova senha{% if access %} (deixe em branco para manter){% endif %}<input type="text" name="senha"></label>
-<button type="submit">{{ 'Atualizar acesso' if access else 'Criar acesso' }}</button>
+<label>E-mail de acesso<input type="email" name="email" value="{{ access.email }}" required></label>
+<label>Nova senha (deixe em branco para manter)<input type="text" name="senha"></label>
+<button type="submit">Atualizar acesso</button>
 </form>
+{% endif %}
 {% if senha_temporaria %}
 <div class="flash success" style="margin-top:16px">
-<strong>Acesso criado.</strong><br>
+<strong>Acesso criado manualmente.</strong><br>
 E-mail: {{ access.email }}<br>
-Senha temporária: <strong>{{ senha_temporaria }}</strong><br>
-Envie esses dados ao proprietário e peça para guardar a senha com segurança.
+Senha temporária: <strong>{{ senha_temporaria }}</strong>
 </div>
 {% endif %}
 {% if envio_portal_msg %}
@@ -29,7 +47,7 @@ Envie esses dados ao proprietário e peça para guardar a senha com segurança.
 <div class="inline">
 <form method="post"><input type="hidden" name="acao" value="{{ 'bloquear' if access.ativo else 'ativar' }}"><button class="secondary">{{ 'Bloquear acesso' if access.ativo else 'Ativar acesso' }}</button></form>
 <a class="button secondary" href="{{ url_for('portal_proprietario_entrar', tenant=investor.tenant_id) }}" target="_blank">Abrir tela de login</a>
-<form method="post" action="{{ url_for('enviar_acesso_proprietario_whatsapp', id=investor.id) }}"><button class="secondary" type="submit">📲 Enviar portal pelo WhatsApp</button></form>
+<form method="post" action="{{ url_for('enviar_acesso_proprietario_whatsapp', id=investor.id) }}"><button class="secondary" type="submit">📲 Reenviar portal pelo WhatsApp</button></form>
 </div>
 {% endif %}
 </section>
