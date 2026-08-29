@@ -99,6 +99,18 @@ class InvestorAccess(db.Model):
  criado_em=db.Column(db.DateTime,default=datetime.utcnow)
  investor=db.relationship('Investor')
 
+class DriverAccess(db.Model):
+ __tablename__='driver_access'
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,nullable=False,index=True)
+ driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False,unique=True,index=True)
+ email=db.Column(db.String(150),nullable=False,unique=True,index=True)
+ senha=db.Column(db.String(255),nullable=False)
+ ativo=db.Column(db.Boolean,default=True,index=True)
+ ultimo_acesso_em=db.Column(db.DateTime)
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ driver=db.relationship('Driver')
+
 class InvestorVehicleRule(db.Model):
  __tablename__='investor_vehicle_rule'
  id=db.Column(db.Integer,primary_key=True)
@@ -1014,7 +1026,20 @@ def motoristas():
    app.logger.exception('Falha ao cadastrar motorista e armazenar CNH')
    flash('Não foi possível concluir o cadastro e armazenar a CNH. Tente novamente.','danger')
    return redirect(url_for('motoristas'))
-  flash('Motorista cadastrado e CNH armazenada automaticamente.','success')
+  try:
+   integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+   cfg=CommunicationService.parse_config(integration)
+   if bool(cfg.get('driver_portal_auto_invite_enabled',False)):
+    ok_convite,msg_convite=enviar_acesso_portal_motorista_whatsapp(d)
+    if not ok_convite:
+     flash('Motorista cadastrado, mas o convite do portal não foi enviado: '+msg_convite,'warning')
+    else:
+     flash('Motorista cadastrado e convite do Portal do Motorista enviado pelo WhatsApp.','success')
+   else:
+    flash('Motorista cadastrado e CNH armazenada automaticamente.','success')
+  except Exception as exc:
+   app.logger.exception('Falha ao enviar convite automático do Portal do Motorista')
+   flash('Motorista cadastrado, mas o convite automático do portal não pôde ser enviado.','warning')
   return redirect(url_for('motoristas'))
  q=(request.args.get('q') or '').strip()
  query=Driver.query.filter_by(tenant_id=tid())
@@ -1440,7 +1465,19 @@ def investidores():
    flash('Telefone inválido. Informe DDD + número; o Frota Fácil acrescenta o código do Brasil automaticamente.','danger')
    return redirect(url_for('investidores'))
   x=Investor(tenant_id=tid(),nome=request.form['nome'],cpf_cnpj=request.form.get('cpf_cnpj'),telefone=telefone,email=request.form.get('email'),regra_repasse='Percentual por veículo',observacoes=request.form.get('observacoes'))
-  db.session.add(x); db.session.commit(); flash('Proprietário cadastrado. Agora você pode vincular os veículos e percentuais.','success'); return redirect(url_for('proprietario_financeiro',id=x.id))
+  db.session.add(x); db.session.commit()
+  flash('Proprietário cadastrado. Agora você pode vincular os veículos e percentuais.','success')
+  # Convite do portal disparado no momento do cadastro, quando habilitado.
+  # O envio manual continua disponível em "Acesso ao portal" independentemente desta opção.
+  integracao_whatsapp=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
+  cfg_whatsapp=CommunicationService.parse_config(integracao_whatsapp)
+  if cfg_whatsapp.get('owner_portal_auto_invite_enabled'):
+   ok_convite,msg_convite=enviar_acesso_portal_proprietario_whatsapp(x)
+   if ok_convite:
+    flash('Convite para ativar o Portal do Proprietário enviado automaticamente pelo WhatsApp.','success')
+   else:
+    flash('Proprietário cadastrado, mas o convite automático do portal não foi enviado: '+msg_convite+' Você pode reenviar manualmente em Acesso ao portal.','warning')
+  return redirect(url_for('proprietario_financeiro',id=x.id))
  q=(request.args.get('q') or '').strip(); query=Investor.query.filter_by(tenant_id=tid())
  if q:
   like=f'%{q}%'; query=query.filter(or_(Investor.nome.ilike(like),Investor.cpf_cnpj.ilike(like),Investor.telefone.ilike(like),Investor.email.ilike(like)))
@@ -1539,6 +1576,186 @@ def proprietario_financeiro(id):
 
 
 
+
+def driver_portal_required(view):
+ @wraps(view)
+ def wrapped(*args,**kwargs):
+  access_id=session.get('driver_access_id'); driver_id=session.get('driver_portal_driver_id'); tenant_id=session.get('driver_portal_tenant_id')
+  if not access_id or not driver_id or not tenant_id:
+   return redirect(url_for('portal_motorista_entrar'))
+  access=DriverAccess.query.filter_by(id=access_id,driver_id=driver_id,tenant_id=tenant_id,ativo=True).first()
+  if not access:
+   session.pop('driver_access_id',None); session.pop('driver_portal_driver_id',None); session.pop('driver_portal_tenant_id',None)
+   return redirect(url_for('portal_motorista_entrar'))
+  return view(*args,**kwargs)
+ return wrapped
+
+def _driver_activation_serializer():
+ return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-driver-activation-v1')
+
+def gerar_link_ativacao_portal_motorista(driver,reset_nonce=None):
+ if not driver: return None
+ payload={'tenant_id':driver.tenant_id,'driver_id':driver.id}
+ if reset_nonce: payload['reset_nonce']=reset_nonce
+ token=_driver_activation_serializer().dumps(payload)
+ return url_for('portal_motorista_ativar',token=token,_external=True)
+
+def _dados_token_ativacao_motorista(token,max_age=604800):
+ try:
+  data=_driver_activation_serializer().loads(token,max_age=max_age)
+ except SignatureExpired:
+  return None,'Este link de ativação expirou. Solicite um novo link à locadora.',None
+ except BadSignature:
+  return None,'Este link de ativação é inválido.',None
+ try:
+  tenant_id=int(data.get('tenant_id')); driver_id=int(data.get('driver_id'))
+ except (TypeError,ValueError,AttributeError):
+  return None,'Este link de ativação é inválido.',None
+ driver=Driver.query.filter_by(id=driver_id,tenant_id=tenant_id).first()
+ if not driver: return None,'Motorista não encontrado para este link.',None
+ return driver,None,data
+
+def enviar_acesso_portal_motorista_whatsapp(driver):
+ if not driver: return False,'Motorista não encontrado.'
+ telefone=normalize_phone(driver.telefone)
+ if not telefone: return False,'Motorista sem telefone/WhatsApp válido.'
+ integration=Integration.query.filter_by(tenant_id=driver.tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ provider=(cfg.get('provider') or 'web').lower()
+ if provider!='business' or not integration or not integration.ativo:
+  return False,'O envio requer WhatsApp Business conectado.'
+ template_name=(cfg.get('driver_portal_template_name') or '').strip() or 'acesso_portal_motorista'
+ tenant=Tenant.query.get(driver.tenant_id)
+ nome_locadora=(((tenant.nome_fantasia if tenant else '') or '').strip() or ((tenant.nome if tenant else '') or '').strip() or 'Locadora')
+ access=DriverAccess.query.filter_by(tenant_id=driver.tenant_id,driver_id=driver.id).first()
+ if access and (access.senha or '').startswith('RESET_PENDING:'):
+  nonce=(access.senha or '').split(':',1)[1]
+  link=gerar_link_ativacao_portal_motorista(driver,reset_nonce=nonce)
+  instrucao='Abra o link para escolher novamente seu e-mail e criar uma nova senha.'
+ elif access and access.ativo:
+  link=url_for('portal_motorista_entrar',tenant=driver.tenant_id,_external=True)
+  instrucao='Use seu e-mail e senha já cadastrados para entrar.'
+ else:
+  link=gerar_link_ativacao_portal_motorista(driver)
+  instrucao='Abra o link para escolher seu e-mail e criar sua senha.'
+ params=[driver.nome or '',nome_locadora,link]
+ body=f'Olá, {driver.nome}. A {nome_locadora} disponibilizou seu Portal do Motorista. {instrucao} Acesse: {link}'
+ fila=MessageQueue(tenant_id=driver.tenant_id,channel='whatsapp',provider='whatsapp_business',recipient=telefone,recipient_name=driver.nome,message_type='acesso_portal_motorista',body=body,template_name=template_name,template_parameters=json.dumps(params,ensure_ascii=False),related_entity='Motorista',related_entity_id=driver.id,status='PENDENTE',created_at=agora_sao_paulo_naive(),updated_at=agora_sao_paulo_naive())
+ db.session.add(fila); db.session.flush()
+ try:
+  result=CommunicationService().send_whatsapp(phone=telefone,message=body,integration=integration,template_name=template_name,template_language=cfg.get('template_language') or 'pt_BR',template_parameters=params)
+  fila.provider=result.provider; fila.status=result.status; fila.external_id=result.external_id; fila.attempts=(fila.attempts or 0)+1; fila.sent_at=agora_sao_paulo_naive() if result.status=='ENVIADA' else None
+  db.session.add(MessageEvent(tenant_id=driver.tenant_id,message_id=fila.id,event=result.status,description='Acesso ao Portal do Motorista processado pelo WhatsApp.',created_at=agora_sao_paulo_naive()))
+  db.session.commit()
+  return (True,'Link do Portal do Motorista enviado pelo WhatsApp.') if result.status=='ENVIADA' else (False,f'O WhatsApp retornou status {result.status}.')
+ except CommunicationError as exc:
+  fila.status='FALHA'; fila.error_message=str(exc); fila.attempts=(fila.attempts or 0)+1
+  db.session.add(MessageEvent(tenant_id=driver.tenant_id,message_id=fila.id,event='FALHA',description=str(exc),created_at=agora_sao_paulo_naive()))
+  db.session.commit(); return False,str(exc)
+
+@app.route('/motoristas/portal-acessos')
+@login_required
+def acessos_portal_motorista():
+ drivers=Driver.query.filter_by(tenant_id=tid()).order_by(Driver.nome).all()
+ access_map={a.driver_id:a for a in DriverAccess.query.filter_by(tenant_id=tid()).all()}
+ return render_template('motorista_acessos.html',drivers=drivers,access_map=access_map)
+
+@app.route('/motoristas/<int:id>/portal/whatsapp',methods=['POST'])
+@login_required
+def enviar_acesso_motorista_whatsapp(id):
+ driver=Driver.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ ok,msg=enviar_acesso_portal_motorista_whatsapp(driver); flash(msg,'success' if ok else 'warning')
+ return redirect(url_for('acessos_portal_motorista'))
+
+@app.route('/motoristas/<int:id>/portal/redefinir',methods=['POST'])
+@login_required
+def redefinir_acesso_motorista(id):
+ driver=Driver.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ access=DriverAccess.query.filter_by(tenant_id=tid(),driver_id=driver.id).first()
+ if access:
+  nonce=uuid.uuid4().hex+uuid.uuid4().hex; access.ativo=False; access.senha='RESET_PENDING:'+nonce; db.session.commit()
+ ok,msg=enviar_acesso_portal_motorista_whatsapp(driver)
+ flash(('Acesso anterior invalidado. '+msg) if access else msg,'success' if ok else 'warning')
+ return redirect(url_for('acessos_portal_motorista'))
+
+@app.route('/motoristas/<int:id>/portal/bloquear',methods=['POST'])
+@login_required
+def bloquear_acesso_motorista(id):
+ driver=Driver.query.filter_by(id=id,tenant_id=tid()).first_or_404(); access=DriverAccess.query.filter_by(tenant_id=tid(),driver_id=driver.id).first()
+ if access: access.ativo=False; db.session.commit(); flash('Acesso do motorista bloqueado.','success')
+ return redirect(url_for('acessos_portal_motorista'))
+
+@app.route('/portal-motorista/ativar/<token>',methods=['GET','POST'])
+def portal_motorista_ativar(token):
+ driver,erro,data=_dados_token_ativacao_motorista(token)
+ if erro: return render_template('portal_motorista_ativar.html',driver=None,tenant=None,erro=erro,email_sugerido='',token=token),400
+ tenant=Tenant.query.get(driver.tenant_id); access=DriverAccess.query.filter_by(tenant_id=driver.tenant_id,driver_id=driver.id).first()
+ reset=bool(access and (access.senha or '').startswith('RESET_PENDING:')); token_nonce=(data or {}).get('reset_nonce')
+ if access and reset:
+  stored=(access.senha or '').split(':',1)[1]
+  if not token_nonce or token_nonce!=stored: return render_template('portal_motorista_ativar.html',driver=driver,tenant=tenant,erro='Este link de redefinição não é mais válido.',email_sugerido=access.email or driver.email or '',token=token),400
+ elif access:
+  flash('Seu acesso ao Portal do Motorista já foi criado. Entre com seu e-mail e senha.','success'); return redirect(url_for('portal_motorista_entrar',tenant=driver.tenant_id))
+ elif token_nonce:
+  return render_template('portal_motorista_ativar.html',driver=driver,tenant=tenant,erro='Este link de redefinição não é mais válido.',email_sugerido=driver.email or '',token=token),400
+ email_sugerido=((access.email if access else None) or driver.email or '').strip().lower()
+ if request.method=='POST':
+  email=(request.form.get('email') or '').strip().lower(); senha=request.form.get('senha') or ''; confirmar=request.form.get('confirmar_senha') or ''
+  if not email or '@' not in email: flash('Informe um e-mail válido.','danger')
+  elif len(senha)<6: flash('Crie uma senha com pelo menos 6 caracteres.','danger')
+  elif senha!=confirmar: flash('A confirmação da senha não confere.','danger')
+  else:
+   duplicate=DriverAccess.query.filter(DriverAccess.email==email)
+   if access: duplicate=duplicate.filter(DriverAccess.id!=access.id)
+   if duplicate.first(): flash('Este e-mail já está vinculado a outro acesso de motorista.','danger')
+   else:
+    if access: access.email=email; access.senha=generate_password_hash(senha); access.ativo=True
+    else: access=DriverAccess(tenant_id=driver.tenant_id,driver_id=driver.id,email=email,senha=generate_password_hash(senha),ativo=True); db.session.add(access)
+    db.session.commit(); session['driver_access_id']=access.id; session['driver_portal_driver_id']=driver.id; session['driver_portal_tenant_id']=driver.tenant_id; access.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
+    flash('Acesso criado com sucesso. Bem-vindo ao Portal do Motorista!','success'); return redirect(url_for('portal_motorista'))
+  email_sugerido=email
+ return render_template('portal_motorista_ativar.html',driver=driver,tenant=tenant,erro=None,email_sugerido=email_sugerido,token=token)
+
+@app.route('/portal-motorista/entrar',methods=['GET','POST'])
+def portal_motorista_entrar():
+ if session.get('driver_access_id'): return redirect(url_for('portal_motorista'))
+ tenant_ref=request.args.get('tenant',type=int) or request.form.get('tenant',type=int); tenant_login=Tenant.query.get(tenant_ref) if tenant_ref else None
+ if request.method=='POST':
+  email=(request.form.get('email') or '').strip().lower(); access=DriverAccess.query.filter_by(email=email,ativo=True).first()
+  if access and check_password_hash(access.senha,request.form.get('senha') or ''):
+   driver=Driver.query.filter_by(id=access.driver_id,tenant_id=access.tenant_id).first()
+   if driver:
+    session['driver_access_id']=access.id; session['driver_portal_driver_id']=driver.id; session['driver_portal_tenant_id']=driver.tenant_id; access.ultimo_acesso_em=datetime.utcnow(); db.session.commit(); return redirect(url_for('portal_motorista'))
+  flash('E-mail ou senha inválidos.','danger')
+ return render_template('portal_motorista_login.html',tenant_login=tenant_login)
+
+@app.route('/portal-motorista/sair')
+def portal_motorista_sair():
+ tenant_ref=session.get('driver_portal_tenant_id'); session.pop('driver_access_id',None); session.pop('driver_portal_driver_id',None); session.pop('driver_portal_tenant_id',None)
+ return redirect(url_for('portal_motorista_entrar',tenant=tenant_ref)) if tenant_ref else redirect(url_for('portal_motorista_entrar'))
+
+@app.route('/portal-motorista')
+@driver_portal_required
+def portal_motorista():
+ tenant_id=int(session['driver_portal_tenant_id']); driver_id=int(session['driver_portal_driver_id']); driver=Driver.query.filter_by(id=driver_id,tenant_id=tenant_id).first_or_404(); tenant=Tenant.query.get(tenant_id)
+ contracts=Contract.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Contract.id.desc()).all(); contract_ids=[c.id for c in contracts]
+ vehicle_ids={c.vehicle_id for c in contracts if c.vehicle_id}; vehicles=Vehicle.query.filter(Vehicle.tenant_id==tenant_id,Vehicle.id.in_(vehicle_ids)).all() if vehicle_ids else []
+ current_vehicle=Vehicle.query.filter_by(tenant_id=tenant_id,current_driver_id=driver_id).first()
+ if not current_vehicle:
+  active=next((c for c in contracts if (c.status or '') in {'Assinado','Ativo'} and c.vehicle_id),None); current_vehicle=active.vehicle if active else None
+ audits=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(contract_ids)).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).all() if contract_ids else []
+ pagos=sum(Decimal(str(a.total_amount or 0)) for a in audits if (a.payment_status or '').upper()=='PAGO'); pendentes=sum(Decimal(str(a.total_amount or 0)) for a in audits if (a.payment_status or '').upper()!='PAGO')
+ km_requests=MileageRequest.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(MileageRequest.sent_at.desc()).limit(30).all()
+ inspections=Inspection.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Inspection.requested_at.desc()).limit(30).all()
+ maintenances=Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(list(vehicle_ids))).order_by(Maintenance.id.desc()).limit(30).all() if vehicle_ids else []
+ pendencias=[]
+ for a in audits:
+  if (a.payment_status or '').upper()!='PAGO': pendencias.append({'tipo':'Pagamento','texto':f'{a.vehicle_label or a.plate or "Veículo"} — R$ {brl(a.total_amount)}','url':url_for('enviar_comprovante_pagamento',token=a.receipt_token) if a.receipt_token else None})
+ for r in km_requests:
+  if (r.status or '').lower()=='pendente' and (not r.expires_at or r.expires_at>=datetime.utcnow()): pendencias.append({'tipo':'Quilometragem','texto':f'{r.vehicle.marca_modelo} — {r.vehicle.placa}','url':url_for('registrar_quilometragem_publica',token=r.token)})
+ for i in inspections:
+  if (i.status or '').lower()=='pendente' and (not i.expires_at or i.expires_at>=datetime.utcnow()): pendencias.append({'tipo':'Vistoria','texto':f'{i.vehicle.marca_modelo} — {i.vehicle.placa}','url':url_for('vistoria_publica',token=i.token)})
+ return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,audits=audits,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias)
 
 def _owner_activation_serializer():
  return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-activation-v1')
@@ -2446,6 +2663,8 @@ def configuracoes_automacoes():
    'inspection_automation_weekdays':inspection_days,
    'inspection_start_hour':inspection_start,'inspection_end_hour':inspection_end,
    'inspection_reminder_interval_hours':inspection_interval,'inspection_expiry_hours':inspection_expiry,
+   'owner_portal_auto_invite_enabled':request.form.get('owner_portal_auto_invite_enabled')=='1',
+    'driver_portal_auto_invite_enabled':request.form.get('driver_portal_auto_invite_enabled')=='1',
    # Mantém as chaves antigas durante a transição para não quebrar outras rotinas/RCs.
    'automatic_km_enabled':km_enabled,'automatic_billing_enabled':billing_enabled,
    'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
