@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Automações · Frota Fácil{% endblock %}
 {% block heading %}Automações e mensagens{% endblock %}
-{% block subheading %}Configure KM e cobranças de forma independente.{% endblock %}
+{% block subheading %}Configure KM, cobranças e vistorias de forma independente.{% endblock %}
 {% block content %}
 <style>
 .auto-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px;margin-bottom:16px}.auto-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px}.auto-card label{display:block;font-weight:600;margin-bottom:6px}.auto-card input[type=number]{width:100%;box-sizing:border-box;padding:10px;border:1px solid #cbd5e1;border-radius:8px}.switch-row{display:flex;gap:10px;align-items:flex-start;padding:10px 0}.switch-row input{margin-top:4px}.muted2{color:#64748b;font-size:14px}.status-pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#f1f5f9;font-size:13px;font-weight:700}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.actions button,.actions a{padding:10px 14px;border-radius:8px;text-decoration:none}.days{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 16px}.day{display:flex!important;align-items:center;gap:6px;border:1px solid #cbd5e1;border-radius:999px;padding:7px 10px;font-weight:500!important;margin:0!important}.day input{margin:0}.auto-card h2{margin-bottom:4px}.auto-card h3{margin:18px 0 8px}.master{border-left:4px solid #2563eb}
@@ -9,6 +9,7 @@
 {% set old_day = cfg.get('automation_weekday',0)|int %}
 {% set km_days = cfg.get('km_automation_weekdays') or [old_day] %}
 {% set billing_days = cfg.get('billing_automation_weekdays') or [old_day] %}
+{% set inspection_days = cfg.get('inspection_automation_weekdays') or [old_day] %}
 <form method="post">
  <section class="auto-card master">
   <h2>🤖 Controle geral</h2>
@@ -40,6 +41,21 @@
    <div><label for="billing_end_hour">Fim (hora)</label><input id="billing_end_hour" type="number" min="0" max="23" name="billing_end_hour" value="{{cfg.get('billing_end_hour',cfg.get('automation_end_hour',20))}}"></div>
    <div><label for="billing_reminder_interval_hours">Repetir a cada (horas)</label><input id="billing_reminder_interval_hours" type="number" min="1" max="12" name="billing_reminder_interval_hours" value="{{cfg.get('billing_reminder_interval_hours',cfg.get('reminder_interval_hours',1))}}"></div>
   </div>
+ </section>
+
+ <section class="auto-card">
+  <h2>🎥 Vistoria semanal automática</h2>
+  <p class="muted2">Cria automaticamente uma vistoria semanal por veículo. Enquanto ela estiver pendente, reenvia a mesma solicitação e o mesmo link no intervalo configurado. Assim que a vistoria for recebida, os reenvios param.</p>
+  <div class="switch-row"><input type="checkbox" id="inspection_automation_enabled" name="inspection_automation_enabled" value="1" {% if cfg.get('inspection_automation_enabled',False) %}checked{% endif %}><label for="inspection_automation_enabled">Ativar vistoria automática</label></div>
+  <h3>Dias de envio</h3>
+  <div class="days">{% for n,nome in [(0,'Seg'),(1,'Ter'),(2,'Qua'),(3,'Qui'),(4,'Sex'),(5,'Sáb'),(6,'Dom')] %}<label class="day"><input type="checkbox" name="inspection_automation_weekdays" value="{{n}}" {% if n in inspection_days %}checked{% endif %}>{{nome}}</label>{% endfor %}</div>
+  <div class="auto-grid">
+   <div><label for="inspection_start_hour">Início (hora)</label><input id="inspection_start_hour" type="number" min="0" max="23" name="inspection_start_hour" value="{{cfg.get('inspection_start_hour',10)}}"></div>
+   <div><label for="inspection_end_hour">Fim (hora)</label><input id="inspection_end_hour" type="number" min="0" max="23" name="inspection_end_hour" value="{{cfg.get('inspection_end_hour',20)}}"></div>
+   <div><label for="inspection_reminder_interval_hours">Reenviar a cada (horas)</label><input id="inspection_reminder_interval_hours" type="number" min="1" max="168" name="inspection_reminder_interval_hours" value="{{cfg.get('inspection_reminder_interval_hours',3)}}"></div>
+   <div><label for="inspection_expiry_hours">Validade do link (horas)</label><input id="inspection_expiry_hours" type="number" min="24" max="168" name="inspection_expiry_hours" value="{{cfg.get('inspection_expiry_hours',168)}}"></div>
+  </div>
+  <p class="muted2" style="margin-top:12px">Proteção contra duplicidade: se já houver vistoria pendente para o veículo, o Frota Fácil não cria outra; reaproveita a existente.</p>
  </section>
 
  <section class="auto-card">

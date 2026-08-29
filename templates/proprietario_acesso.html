@@ -4,45 +4,13 @@
 {% block content %}
 <section class="card">
 <h2>Portal exclusivo</h2>
-<p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por locadora + proprietário.</p>
-
-<h3 style="margin-top:20px">Convite por link</h3>
-<p>Gere um link seguro para o proprietário criar a própria senha. O link não expira e deixa de funcionar somente depois da ativação ou quando um novo convite é gerado.</p>
-<form method="post" class="form-grid">
-<input type="hidden" name="acao" value="gerar_convite">
-<label>E-mail do proprietário<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
-<button type="submit">Gerar e enviar acesso</button>
-</form>
-
-{% if link_convite %}
-<div class="flash success" style="margin-top:16px">
-<strong>Link de convite gerado.</strong><br>
-O proprietário poderá criar a senha e entrar diretamente no portal. O link não possui prazo de expiração.
-{% if envio_whatsapp == 'enviado' %}<br><strong>WhatsApp:</strong> enviado automaticamente pela conta Business conectada.{% elif envio_whatsapp == 'falha' %}<br><strong>WhatsApp:</strong> o envio automático falhou; o link continua disponível para cópia.{% endif %}
-</div>
-<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 18px">
-<input id="linkConviteProprietario" type="text" value="{{ link_convite }}" readonly style="min-width:min(100%,620px);flex:1">
-<button type="button" class="secondary" onclick="copiarConvite()">Copiar link</button>
-</div>
-<script>
-function copiarConvite(){
- const el=document.getElementById('linkConviteProprietario');
- if(navigator.clipboard){navigator.clipboard.writeText(el.value).then(()=>alert('Link copiado.'));}
- else{el.select();document.execCommand('copy');alert('Link copiado.');}
-}
-</script>
-{% endif %}
-
-<hr style="margin:24px 0;border:0;border-top:1px solid #e5e7eb">
-<h3>Acesso manual</h3>
-<p>Você também pode criar ou redefinir o acesso manualmente, informando uma senha.</p>
+<p>O proprietário acessará somente os próprios veículos e valores. O vínculo é feito por tenant + proprietário.</p>
 <form method="post" class="form-grid">
 <input type="hidden" name="acao" value="salvar">
 <label>E-mail de acesso<input type="email" name="email" value="{{ access.email if access else investor.email or '' }}" required></label>
 <label>Nova senha{% if access %} (deixe em branco para manter){% endif %}<input type="text" name="senha"></label>
 <button type="submit">{{ 'Atualizar acesso' if access else 'Criar acesso' }}</button>
 </form>
-
 {% if senha_temporaria %}
 <div class="flash success" style="margin-top:16px">
 <strong>Acesso criado.</strong><br>
@@ -51,14 +19,17 @@ Senha temporária: <strong>{{ senha_temporaria }}</strong><br>
 Envie esses dados ao proprietário e peça para guardar a senha com segurança.
 </div>
 {% endif %}
-
+{% if envio_portal_msg %}
+<div class="flash {{ 'success' if envio_portal_ok else 'warning' }}" style="margin-top:16px">
+<strong>WhatsApp:</strong> {{ envio_portal_msg }}
+</div>
+{% endif %}
 {% if access %}
-<p><strong>Link da tela de login:</strong><br>
-<code>{{url_for('portal_proprietario_entrar',tenant=current_user.tenant_id,_external=True)}}</code></p>
-<p><strong>Status:</strong> {{ 'Ativo' if access.ativo else 'Aguardando ativação/Bloqueado' }} · <strong>Último acesso:</strong> {{ access.ultimo_acesso_em|sp_datetime if access.ultimo_acesso_em else 'Nunca' }}</p>
+<p><strong>Status:</strong> {{ 'Ativo' if access.ativo else 'Bloqueado' }} · <strong>Último acesso:</strong> {{ access.ultimo_acesso_em|sp_datetime if access.ultimo_acesso_em else 'Nunca' }}</p>
 <div class="inline">
 <form method="post"><input type="hidden" name="acao" value="{{ 'bloquear' if access.ativo else 'ativar' }}"><button class="secondary">{{ 'Bloquear acesso' if access.ativo else 'Ativar acesso' }}</button></form>
-<a class="button secondary" href="{{ url_for('portal_proprietario_entrar',tenant=current_user.tenant_id) }}" target="_blank">Abrir tela de login</a>
+<a class="button secondary" href="{{ url_for('portal_proprietario_entrar', tenant=investor.tenant_id) }}" target="_blank">Abrir tela de login</a>
+<form method="post" action="{{ url_for('enviar_acesso_proprietario_whatsapp', id=investor.id) }}"><button class="secondary" type="submit">📲 Enviar portal pelo WhatsApp</button></form>
 </div>
 {% endif %}
 </section>
