@@ -1543,29 +1543,36 @@ def proprietario_financeiro(id):
 def _owner_activation_serializer():
  return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-activation-v1')
 
-def gerar_link_ativacao_portal_proprietario(investor):
- """Gera link assinado para o proprietário escolher e-mail e senha do portal."""
+def gerar_link_ativacao_portal_proprietario(investor,reset_nonce=None):
+ """Gera link assinado para o proprietário escolher e-mail e senha do portal.
+
+ Quando ``reset_nonce`` é informado, o link fica vinculado à redefinição atual,
+ impedindo que um convite antigo seja reutilizado após uma nova redefinição.
+ """
  if not investor:
   return None
- token=_owner_activation_serializer().dumps({'tenant_id':investor.tenant_id,'investor_id':investor.id})
+ payload={'tenant_id':investor.tenant_id,'investor_id':investor.id}
+ if reset_nonce:
+  payload['reset_nonce']=reset_nonce
+ token=_owner_activation_serializer().dumps(payload)
  return url_for('portal_proprietario_ativar',token=token,_external=True)
 
 def _dados_token_ativacao_proprietario(token,max_age=604800):
  try:
   data=_owner_activation_serializer().loads(token,max_age=max_age)
  except SignatureExpired:
-  return None,'Este link de ativação expirou. Solicite um novo link à locadora.'
+  return None,'Este link de ativação expirou. Solicite um novo link à locadora.',None
  except BadSignature:
-  return None,'Este link de ativação é inválido.'
+  return None,'Este link de ativação é inválido.',None
  try:
   tenant_id=int(data.get('tenant_id'))
   investor_id=int(data.get('investor_id'))
  except (TypeError,ValueError,AttributeError):
-  return None,'Este link de ativação é inválido.'
+  return None,'Este link de ativação é inválido.',None
  investor=Investor.query.filter_by(id=investor_id,tenant_id=tenant_id).first()
  if not investor:
-  return None,'Proprietário não encontrado para este link.'
- return investor,None
+  return None,'Proprietário não encontrado para este link.',None
+ return investor,None,data
 
 def enviar_acesso_portal_proprietario_whatsapp(investor):
  """Envia ao proprietário o link do Portal do Proprietário via template Meta.
@@ -1592,8 +1599,13 @@ def enviar_acesso_portal_proprietario_whatsapp(investor):
   or (((tenant.nome if tenant else '') or '').strip())
   or 'Locadora'
  )
- access=InvestorAccess.query.filter_by(tenant_id=investor.tenant_id,investor_id=investor.id,ativo=True).first()
- if access:
+ access=InvestorAccess.query.filter_by(tenant_id=investor.tenant_id,investor_id=investor.id).first()
+ reset_nonce=None
+ if access and (access.senha or '').startswith('RESET_PENDING:'):
+  reset_nonce=(access.senha or '').split(':',1)[1]
+  link=gerar_link_ativacao_portal_proprietario(investor,reset_nonce=reset_nonce)
+  instrucao='Abra o link para escolher novamente seu e-mail de acesso e criar uma nova senha.'
+ elif access and access.ativo:
   link=url_for('portal_proprietario_entrar',tenant=investor.tenant_id,_external=True)
   instrucao='Use seu e-mail e senha já cadastrados para entrar.'
  else:
@@ -1643,6 +1655,29 @@ def enviar_acesso_proprietario_whatsapp(id):
  access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id,ativo=True).first()
  ok,msg=enviar_acesso_portal_proprietario_whatsapp(investor)
  flash(msg,'success' if ok else 'warning')
+ return redirect(url_for('acesso_proprietario',id=id))
+
+@app.route('/investidores/<int:id>/acesso/redefinir',methods=['POST'])
+@login_required
+def redefinir_acesso_proprietario(id):
+ investor=Investor.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ access=InvestorAccess.query.filter_by(tenant_id=tid(),investor_id=investor.id).first()
+ if not access:
+  ok,msg=enviar_acesso_portal_proprietario_whatsapp(investor)
+  flash(msg,'success' if ok else 'warning')
+  return redirect(url_for('acesso_proprietario',id=id))
+ # Mantém o mesmo registro para preservar o vínculo, mas invalida imediatamente
+ # a senha atual e exige uma nova ativação. O nonce também revoga convites de
+ # redefinição anteriores sem precisar de nova coluna no banco.
+ reset_nonce=uuid.uuid4().hex+uuid.uuid4().hex
+ access.ativo=False
+ access.senha='RESET_PENDING:'+reset_nonce
+ db.session.commit()
+ ok,msg=enviar_acesso_portal_proprietario_whatsapp(investor)
+ if ok:
+  flash('Acesso anterior invalidado. Novo link de ativação enviado pelo WhatsApp.','success')
+ else:
+  flash('Acesso anterior invalidado, mas o WhatsApp não foi enviado: '+msg,'warning')
  return redirect(url_for('acesso_proprietario',id=id))
 
 @app.route('/investidores/<int:id>/acesso',methods=['GET','POST'])
@@ -1697,15 +1732,25 @@ def acesso_proprietario(id):
 
 @app.route('/portal-proprietario/ativar/<token>',methods=['GET','POST'])
 def portal_proprietario_ativar(token):
- investor,erro=_dados_token_ativacao_proprietario(token)
+ investor,erro,token_data=_dados_token_ativacao_proprietario(token)
  if erro:
   return render_template('portal_proprietario_ativar.html',investor=None,tenant=None,erro=erro,email_sugerido='',token=token),400
  tenant=Tenant.query.get(investor.tenant_id)
  access=InvestorAccess.query.filter_by(tenant_id=investor.tenant_id,investor_id=investor.id).first()
- if access:
+ reset_em_andamento=bool(access and (access.senha or '').startswith('RESET_PENDING:'))
+ token_reset_nonce=(token_data or {}).get('reset_nonce')
+ if access and reset_em_andamento:
+  stored_nonce=(access.senha or '').split(':',1)[1]
+  if not token_reset_nonce or token_reset_nonce!=stored_nonce:
+   erro='Este link de redefinição não é mais válido. Solicite um novo link à locadora.'
+   return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=erro,email_sugerido=access.email or investor.email or '',token=token),400
+ elif access:
   flash('Seu acesso ao Portal do Proprietário já foi criado. Entre com seu e-mail e senha.','success')
   return redirect(url_for('portal_proprietario_entrar',tenant=investor.tenant_id))
- email_sugerido=(investor.email or '').strip().lower()
+ elif token_reset_nonce:
+  erro='Este link de redefinição não é mais válido. Solicite um novo link à locadora.'
+  return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=erro,email_sugerido=investor.email or '',token=token),400
+ email_sugerido=((access.email if access else None) or investor.email or '').strip().lower()
  if request.method=='POST':
   email=(request.form.get('email') or '').strip().lower()
   senha=request.form.get('senha') or ''
@@ -1719,15 +1764,22 @@ def portal_proprietario_ativar(token):
   if senha!=confirmar:
    flash('A confirmação da senha não confere.','danger')
    return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email,token=token)
-  duplicate=InvestorAccess.query.filter_by(email=email).first()
-  if duplicate:
+  duplicate=InvestorAccess.query.filter(InvestorAccess.email==email)
+  if access:
+   duplicate=duplicate.filter(InvestorAccess.id!=access.id)
+  if duplicate.first():
    flash('Este e-mail já está vinculado a outro acesso de proprietário. Escolha outro e-mail.','danger')
    return render_template('portal_proprietario_ativar.html',investor=investor,tenant=tenant,erro=None,email_sugerido=email,token=token)
-  access=InvestorAccess(
-   tenant_id=investor.tenant_id,investor_id=investor.id,email=email,
-   senha=generate_password_hash(senha),ativo=True,
-  )
-  db.session.add(access)
+  if access and reset_em_andamento:
+   access.email=email
+   access.senha=generate_password_hash(senha)
+   access.ativo=True
+  else:
+   access=InvestorAccess(
+    tenant_id=investor.tenant_id,investor_id=investor.id,email=email,
+    senha=generate_password_hash(senha),ativo=True,
+   )
+   db.session.add(access)
   db.session.commit()
   session['owner_access_id']=access.id
   session['owner_investor_id']=access.investor_id
