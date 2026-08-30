@@ -2196,6 +2196,42 @@ def _veiculo_portal_proprietario(vehicle_id):
   joinedload(Vehicle.current_driver),joinedload(Vehicle.current_contract)
  ).filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
 
+def _ajustar_eventos_vistoria_para_status_atual(eventos, vistorias):
+ """Atualiza apenas a exibição de eventos antigos de vistoria para não manter 'Aguardando aprovação' após decisão.
+ Também cobre registros já existentes, sem exigir alteração manual no banco.
+ """
+ for evento in eventos:
+  if (evento.evento or '').strip()!='Vistoria em vídeo recebida':
+   continue
+  descricao=evento.descricao or ''
+  if 'Aguardando aprovação' not in descricao:
+   continue
+  candidatos=[]
+  for vistoria in vistorias:
+   if vistoria.vehicle_id!=evento.vehicle_id:
+    continue
+   if evento.contract_id and vistoria.contract_id and evento.contract_id!=vistoria.contract_id:
+    continue
+   if evento.driver_id and vistoria.driver_id and evento.driver_id!=vistoria.driver_id:
+    continue
+   referencia=vistoria.submitted_at or vistoria.requested_at
+   if referencia and evento.criado_em:
+    distancia=abs((referencia-evento.criado_em).total_seconds())
+    if distancia>86400:
+     continue
+   else:
+    distancia=0
+   candidatos.append((distancia,vistoria.id,vistoria))
+  if not candidatos:
+   continue
+  vistoria=min(candidatos,key=lambda x:(x[0],-x[1]))[2]
+  status=(vistoria.status or '').strip().lower()
+  if status=='aprovada':
+   evento.descricao=descricao.replace('Aguardando aprovação.','Posteriormente aprovada pela locadora.').replace('Aguardando aprovação','Posteriormente aprovada pela locadora')
+  elif status in ('regravar','rejeitada','rejeitado'):
+   evento.descricao=descricao.replace('Aguardando aprovação.','Nova gravação solicitada pela locadora.').replace('Aguardando aprovação','Nova gravação solicitada pela locadora')
+ return eventos
+
 def _dados_historico_portal_proprietario(vehicle):
  """Histórico visível ao proprietário, sempre restrito ao tenant e ao veículo dele."""
  tenant_id=int(session['owner_tenant_id'])
@@ -2214,6 +2250,7 @@ def _dados_historico_portal_proprietario(vehicle):
  vistorias=Inspection.query.options(joinedload(Inspection.driver),joinedload(Inspection.contract)).filter_by(
   tenant_id=tenant_id,vehicle_id=vehicle.id
  ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).all()
+ _ajustar_eventos_vistoria_para_status_atual(eventos,vistorias)
  documentos=Document.query.filter_by(
   tenant_id=tenant_id,entidade='Veículo',entidade_id=vehicle.id,status='Ativo'
  ).order_by(Document.criado_em.desc(),Document.id.desc()).all()
@@ -2942,6 +2979,7 @@ def _dados_historico_veiculo(v):
  odometros=Odometer.query.filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Odometer.data.desc(),Odometer.id.desc()).all()
  manutencoes=Maintenance.query.filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Maintenance.id.desc()).all()
  vistorias=Inspection.query.options(joinedload(Inspection.driver),joinedload(Inspection.contract)).filter_by(tenant_id=tid(),vehicle_id=v.id).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).all()
+ _ajustar_eventos_vistoria_para_status_atual(eventos,vistorias)
  documentos=Document.query.filter_by(tenant_id=tid(),entidade='Veículo',entidade_id=v.id,status='Ativo').order_by(Document.criado_em.desc(),Document.id.desc()).all()
  return {
   'eventos':eventos,'contratos':contratos,'odometros':odometros,
@@ -4401,6 +4439,16 @@ def aprovar_vistoria(id):
  duracao_txt=f'{item.duration_seconds}s' if item.duration_seconds is not None else 'não informada'
  km_txt=(f'{item.km_informada:,} km'.replace(',','.') if item.km_informada is not None else 'não informada')
  descricao=f'Vistoria em vídeo aprovada pela locadora; duração {duracao_txt}; foto do painel anexada; KM registrada: {km_txt}.'
+ # Corrige também o evento de recebimento já gravado, para que o histórico não continue dizendo
+ # 'Aguardando aprovação' depois que a vistoria foi decidida.
+ evento_recebimento=VehicleEvent.query.filter_by(
+  tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,
+  driver_id=item.driver_id,evento='Vistoria em vídeo recebida'
+ ).order_by(VehicleEvent.id.desc()).first()
+ if evento_recebimento and 'Aguardando aprovação' in (evento_recebimento.descricao or ''):
+  evento_recebimento.descricao=(evento_recebimento.descricao or '').replace(
+   'Aguardando aprovação.','Posteriormente aprovada pela locadora.'
+  ).replace('Aguardando aprovação','Posteriormente aprovada pela locadora')
  db.session.add(VehicleEvent(
   tenant_id=item.tenant_id,
   vehicle_id=item.vehicle_id,
