@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}Gerenciar manutenções · Frota Fácil{% endblock %}
+{% block heading %}Gerenciar manutenções{% endblock %}
+{% block subheading %}Cancele uma manutenção que não será realizada ou exclua um cadastro feito por engano.{% endblock %}
+{% block content %}
+<style>
+.m-card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:18px;margin-bottom:14px}.m-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}.m-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin:14px 0}.m-meta div{background:#f8fafc;border-radius:9px;padding:9px}.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#e2e8f0;font-size:13px;font-weight:700}.badge.cancel{background:#fee2e2}.badge.done{background:#dcfce7}.m-actions{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}.m-actions form{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:0}.m-actions input{padding:9px;border:1px solid #cbd5e1;border-radius:8px;min-width:240px}.danger-btn{background:#b91c1c!important;color:#fff!important}.warning-btn{background:#d97706!important;color:#fff!important}.muted2{color:#64748b;font-size:14px}.top-actions{margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap}
+</style>
+<div class="top-actions"><a class="button secondary" href="{{url_for('manutencoes')}}">← Voltar às manutenções</a></div>
+{% for m in items %}
+<section class="m-card" id="manutencao-{{m.id}}">
+ <div class="m-head"><div><h2 style="margin:0 0 4px">{{m.tipo or 'Manutenção'}} · {{m.vehicle.marca_modelo if m.vehicle else 'Veículo'}} {{m.vehicle.placa if m.vehicle else ''}}</h2><div class="muted2">Registro #{{m.id}}</div></div><span class="badge {% if m.status=='Cancelada' %}cancel{% elif m.status=='Concluída' %}done{% endif %}">{{m.status or 'Ativa'}}</span></div>
+ <div class="m-meta"><div><strong>Data prevista</strong><br>{{m.proxima_data or '-'}}</div><div><strong>Horário</strong><br>{{m.proxima_hora or '-'}}</div><div><strong>KM previsto</strong><br>{{m.proxima_km if m.proxima_km is not none else '-'}}</div><div><strong>Comprovantes</strong><br>{{docs_count.get(m.id,0)}}</div></div>
+ {% if m.observacoes %}<p><strong>Observações:</strong> {{m.observacoes}}</p>{% endif %}
+ <div class="m-actions">
+  {% if (m.status or 'Ativa') not in ['Concluída','Cancelada'] %}
+  <form method="post" action="{{url_for('cancelar_manutencao',id=m.id)}}" onsubmit="return confirm('Cancelar esta manutenção e interromper os lembretes pendentes?');"><label>Motivo do cancelamento<br><input name="motivo" maxlength="500" placeholder="Opcional"></label><button class="warning-btn" type="submit">Cancelar manutenção</button></form>
+  {% endif %}
+  {% if (m.status or '') != 'Concluída' %}
+  <form method="post" action="{{url_for('excluir_manutencao',id=m.id)}}" onsubmit="return confirm('Excluir este cadastro de manutenção? Use somente para cadastro feito por engano.');"><button class="danger-btn" type="submit" {% if docs_count.get(m.id,0) %}disabled title="Exclua os comprovantes primeiro"{% endif %}>Excluir cadastro</button></form>
+  {% endif %}
+ </div>
+ {% if docs_count.get(m.id,0) %}<p class="muted2">Para excluir este cadastro, primeiro remova os comprovantes vinculados. O cancelamento continua disponível.</p>{% endif %}
+</section>
+{% else %}<section class="m-card"><p>Nenhuma manutenção cadastrada.</p></section>{% endfor %}
+{% endblock %}
