@@ -4296,7 +4296,7 @@ def enviar_vistoria_whatsapp_automatico(item):
  """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
 
  Parâmetros do template:
- 1 motorista, 2 veículo, 3 placa, 4 link da vistoria.
+ 1 motorista, 2 locadora, 3 veículo, 4 placa, 5 link da vistoria.
  A criação/regravação da vistoria nunca é desfeita se o WhatsApp falhar.
  """
  if not item or not item.driver or not item.vehicle:
@@ -4312,13 +4312,20 @@ def enviar_vistoria_whatsapp_automatico(item):
  if not template_name:
   return False,'Vistoria criada, mas o template de vistoria do WhatsApp não está configurado.'
  link=url_for('vistoria_publica',token=item.token,_external=True)
+ tenant=Tenant.query.filter_by(id=item.tenant_id).first()
+ nome_locadora=(
+  (((tenant.nome_fantasia if tenant else '') or '').strip())
+  or (((tenant.nome if tenant else '') or '').strip())
+  or 'Locadora'
+ )
  template_parameters=[
   item.driver.nome or '',
+  nome_locadora,
   item.vehicle.marca_modelo or '',
   item.vehicle.placa or '',
   link,
  ]
- mensagem=(f'Olá, {item.driver.nome}. A locadora solicita uma vistoria do veículo '
+ mensagem=(f'Olá, {item.driver.nome}. A locadora {nome_locadora} solicita uma vistoria do veículo '
            f'{item.vehicle.marca_modelo}, placa {item.vehicle.placa}. '
            f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela.')
  fila=MessageQueue(
