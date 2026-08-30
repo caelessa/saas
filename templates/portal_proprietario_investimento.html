@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="pt-BR"><head>
+{% if tenant and tenant.favicon_key %}<link rel="icon" href="{{url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon')}}">{% endif %}
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Investimento do veículo · Frota Fácil</title>
+<style>
+:root{--primary:{{tenant.cor_primaria or '#111827'}}}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f6f8fb;color:#172033}header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;justify-content:space-between;align-items:center}main{max-width:980px;margin:auto;padding:24px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:18px;margin-bottom:18px}.grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:14px}.field label{display:block;color:#64748b;font-size:.86rem;margin-bottom:5px}.field input{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;font-size:1rem}.btn{display:inline-block;border:0;border-radius:9px;padding:11px 15px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}.btn.secondary{background:#e2e8f0;color:#334155}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.muted{color:#64748b;font-size:.9rem}.note{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;color:#1e3a8a}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;white-space:nowrap}th{color:#64748b;font-size:.8rem;text-transform:uppercase}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style></head><body>
+<header><strong>{{tenant.nome_fantasia or tenant.nome}} · Portal do Proprietário</strong><a href="{{url_for('portal_proprietario')}}">Voltar ao portal</a></header>
+<main>
+<div class="panel"><h1>💰 Investimento do veículo</h1><h2>{{vehicle.placa}} · {{vehicle.marca_modelo or 'Veículo'}}</h2><p class="muted">Esses dados pertencem ao seu patrimônio e são informados por você. A locadora continua responsável pelos dados operacionais do veículo.</p><div class="note">O Frota Fácil usa essas informações para calcular ROI, rentabilidade mensal, payback e comparações entre seus veículos.</div></div>
+<form method="post" class="panel">
+<div class="grid">
+<div class="field"><label>Data de aquisição</label><input type="date" name="data_aquisicao" value="{{investment.data_aquisicao.isoformat() if investment and investment.data_aquisicao else ''}}"></div>
+<div class="field"><label>Valor de aquisição (R$)</label><input inputmode="decimal" name="valor_aquisicao" value="{{investment.valor_aquisicao if investment and investment.valor_aquisicao is not none else ''}}" placeholder="Ex.: 100000,00"></div>
+<div class="field"><label>Capital próprio / entrada (R$)</label><input inputmode="decimal" name="capital_proprio" value="{{investment.capital_proprio if investment and investment.capital_proprio is not none else ''}}" placeholder="Ex.: 30000,00"></div>
+<div class="field"><label>Valor financiado (R$)</label><input inputmode="decimal" name="valor_financiado" value="{{investment.valor_financiado if investment and investment.valor_financiado is not none else ''}}" placeholder="Ex.: 70000,00"></div>
+<div class="field"><label>Saldo devedor atual (R$)</label><input inputmode="decimal" name="saldo_devedor" value="{{investment.saldo_devedor if investment and investment.saldo_devedor is not none else ''}}" placeholder="Ex.: 55000,00"></div>
+<div class="field"><label>Valor de mercado atual (R$)</label><input inputmode="decimal" name="valor_mercado" value="{{investment.valor_mercado if investment and investment.valor_mercado is not none else ''}}" placeholder="Ex.: 95000,00"></div>
+</div>
+<div class="actions"><button class="btn" type="submit">Salvar investimento</button><a class="btn secondary" href="{{url_for('portal_proprietario',vehicle_id=vehicle.id)}}">Cancelar</a></div>
+</form>
+<div class="panel"><h2>Histórico das informações patrimoniais</h2><p class="muted">Cada salvamento gera um registro para preservar a evolução do patrimônio.</p><div class="table-wrap"><table><thead><tr><th>Registrado em</th><th>Aquisição</th><th>Capital próprio</th><th>Financiado</th><th>Saldo devedor</th><th>Valor de mercado</th></tr></thead><tbody>{% for h in history %}<tr><td>{{h.registrado_em|sp_datetime}}</td><td>R$ {{h.valor_aquisicao|brl}}</td><td>R$ {{h.capital_proprio|brl}}</td><td>R$ {{h.valor_financiado|brl}}</td><td>R$ {{h.saldo_devedor|brl}}</td><td>R$ {{h.valor_mercado|brl}}</td></tr>{% else %}<tr><td colspan="6">Nenhum histórico ainda.</td></tr>{% endfor %}</tbody></table></div></div>
+</main></body></html>

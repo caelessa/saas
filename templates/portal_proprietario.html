@@ -17,7 +17,7 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 .charts{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(360px,1.65fr);gap:18px}.chart{height:290px}
 .cars{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.car-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.status{padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:.82rem}
 .info,.finance{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:14px}.info strong,.finance small{display:block;color:#64748b;margin-bottom:3px}.finance{border-top:1px solid #eef2f7;padding-top:14px}.finance div{background:#f8fafc;padding:10px;border-radius:10px}
-.car-actions{margin-top:14px}.history-btn{display:inline-block;padding:9px 12px;border-radius:9px;background:var(--primary);color:#fff;text-decoration:none;font-weight:700;font-size:.9rem}
+.car-actions{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}.history-btn{display:inline-block;padding:9px 12px;border-radius:9px;background:var(--primary);color:#fff;text-decoration:none;font-weight:700;font-size:.9rem}.secondary-btn{background:#e2e8f0;color:#334155}.status-good{background:#dcfce7;color:#166534}.status-best{background:#dbeafe;color:#1d4ed8}.status-low{background:#fee2e2;color:#991b1b}.status-pending{background:#f1f5f9;color:#475569}.rank{font-weight:800}.note{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px;color:#854d0e}.compact td,.compact th{padding:9px 8px}.nowrap{white-space:nowrap}
 .table-wrap{overflow-x:auto}.summary-table{width:100%;border-collapse:collapse}.summary-table th,.summary-table td{padding:11px 10px;border-bottom:1px solid #e5e7eb;text-align:left}.summary-table th{color:#64748b;font-size:.82rem;text-transform:uppercase;letter-spacing:.03em}.summary-table td.money,.summary-table th.money{text-align:right;white-space:nowrap}.summary-table tfoot td{font-weight:800;border-top:2px solid #cbd5e1;border-bottom:0;background:#f8fafc}section{margin-top:18px}h1,h2,h3{margin-top:0}.muted{color:#64748b;font-size:.85rem}
 @media(max-width:850px){.charts{grid-template-columns:1fr}.info{grid-template-columns:1fr}}
 </style>
@@ -44,7 +44,11 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 <div class="kpi"><small>Veículos</small><strong>{{ vehicles|length }}</strong><em>Vinculados a você</em></div>
 </div>
 <p class="muted"><strong>Como é calculado:</strong> a previsão usa o valor-base dos contratos e a regra de repasse vigente em cada competência. Excesso de KM não é projetado; ele só entra quando existir cobrança real.</p>
-<section class="panel"><h2>Valor líquido das locações por veículo</h2><p class="muted">Resultado líquido de cada veículo no período selecionado, considerando o repasse do proprietário menos os custos registrados.</p><div class="table-wrap"><table class="summary-table"><thead><tr><th>Veículo</th><th>Placa</th><th class="money">Valor líquido</th></tr></thead><tbody>{% for row in vehicles %}<tr><td>{{row.vehicle.marca_modelo or 'Veículo'}}</td><td><strong>{{row.vehicle.placa}}</strong></td><td class="money">R$ {{row.resultado|brl}}</td></tr>{% else %}<tr><td colspan="3">Nenhum veículo vinculado no período.</td></tr>{% endfor %}</tbody><tfoot><tr><td colspan="2">Total líquido</td><td class="money">R$ {{totals.resultado|brl}}</td></tr></tfoot></table></div></section>
+<section class="panel"><h2>Comparativo de rentabilidade por veículo</h2><p class="muted">A tabela combina os dados operacionais da locadora com o investimento informado por você. O ROI usa o <strong>resultado real do período</strong> (repasse efetivamente pago menos custos) dividido pelo capital próprio informado.</p>
+{% if not ranking %}<div class="note">Para liberar ROI, rentabilidade e payback, informe os dados de investimento de pelo menos um veículo.</div>{% endif %}
+<div class="table-wrap"><table class="summary-table compact"><thead><tr><th>Pos.</th><th>Veículo</th><th>Placa</th><th class="money">Receita teórica</th><th class="money">Repasse pago</th><th class="money">Custos</th><th class="money">Resultado real</th><th class="money">Capital próprio</th><th class="money">ROI período</th><th class="money">Rentab./mês</th><th class="money">Payback</th><th>Situação</th><th></th></tr></thead><tbody>
+{% for row in vehicles %}<tr><td class="rank">{% if row.ranking %}#{{row.ranking}}{% else %}—{% endif %}</td><td>{{row.vehicle.marca_modelo or 'Veículo'}}</td><td><strong>{{row.vehicle.placa}}</strong></td><td class="money">R$ {{row.receita|brl}}</td><td class="money">R$ {{row.repasse_pago|brl}}</td><td class="money">R$ {{row.custos|brl}}</td><td class="money"><strong>R$ {{row.resultado_real|brl}}</strong></td><td class="money">{% if row.investment and row.investment.capital_proprio %}R$ {{row.investment.capital_proprio|brl}}{% else %}—{% endif %}</td><td class="money">{% if row.roi_periodo is not none %}{{'%.2f'|format(row.roi_periodo|float)}}%{% else %}—{% endif %}</td><td class="money">{% if row.rentabilidade_mensal is not none %}{{'%.2f'|format(row.rentabilidade_mensal|float)}}%{% else %}—{% endif %}</td><td class="money">{% if row.payback_meses is not none %}{{'%.1f'|format(row.payback_meses|float)}} meses{% else %}—{% endif %}</td><td><span class="status {% if row.desempenho=='Maior rentabilidade' %}status-best{% elif row.desempenho=='Retorno positivo' %}status-good{% elif row.desempenho=='Baixo retorno' %}status-low{% else %}status-pending{% endif %}">{{row.desempenho}}</span></td><td class="nowrap"><a href="{{url_for('portal_proprietario_relatorio_veiculo',vehicle_id=row.vehicle.id,inicio=inicio,fim=fim)}}">Relatório</a></td></tr>
+{% else %}<tr><td colspan="13">Nenhum veículo vinculado no período.</td></tr>{% endfor %}</tbody><tfoot><tr><td colspan="6">Resultado total do período</td><td class="money">R$ {{totals.resultado_real|brl}}</td><td colspan="6"></td></tr></tfoot></table></div></section>
 <div class="charts">
 <section class="panel"><h2>Composição do resultado teórico</h2><div class="chart"><canvas id="donutTeorico"></canvas></div></section>
 <section class="panel"><h2>Evolução mensal · previsto x pago</h2><div class="chart"><canvas id="lineTeorico"></canvas></div></section>
@@ -54,6 +58,7 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 <section class="panel"><h2>Evolução mensal · realizado</h2><p class="muted">Repasse efetivamente pago, custos e resultado real mês a mês.</p><div class="chart"><canvas id="lineReal"></canvas></div></section>
 </div>
 <section class="panel"><h2>Resultado teórico por veículo</h2><div class="chart"><canvas id="bar"></canvas></div></section>
+{% if ranking %}<section class="panel"><h2>Ranking de ROI no período</h2><p class="muted">Comparação do retorno real sobre o capital próprio informado pelo proprietário.</p><div class="chart"><canvas id="roiBar"></canvas></div></section>{% endif %}
 <section>
 <h2>Estado dos veículos</h2>
 <div class="cars">
@@ -73,9 +78,11 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 <div><small>Receita teórica</small><strong>R$ {{row.receita|brl}}</strong></div>
 <div><small>Repasse teórico</small><strong>R$ {{row.repasse|brl}}</strong></div>
 <div><small>Custos</small><strong>R$ {{row.custos|brl}}</strong></div>
-<div><small>Resultado</small><strong>R$ {{row.resultado|brl}}</strong></div>
+<div><small>Resultado teórico</small><strong>R$ {{row.resultado|brl}}</strong></div>
+<div><small>Resultado real</small><strong>R$ {{row.resultado_real|brl}}</strong></div>
+<div><small>ROI no período</small><strong>{% if row.roi_periodo is not none %}{{'%.2f'|format(row.roi_periodo|float)}}%{% else %}Informe o investimento{% endif %}</strong></div>
 </div>
-<div class="car-actions"><a class="history-btn" href="{{url_for('portal_proprietario_historico_veiculo',vehicle_id=v.id)}}">Histórico do veículo</a></div>
+<div class="car-actions"><a class="history-btn" href="{{url_for('portal_proprietario_historico_veiculo',vehicle_id=v.id)}}">Histórico do veículo</a><a class="history-btn secondary-btn" href="{{url_for('portal_proprietario_investimento',vehicle_id=v.id)}}">💰 Investimento</a><a class="history-btn secondary-btn" href="{{url_for('portal_proprietario_relatorio_veiculo',vehicle_id=v.id,inicio=inicio,fim=fim)}}">📄 Relatório</a></div>
 </article>
 {% else %}<p>Nenhum veículo vinculado ao seu cadastro.</p>{% endfor %}
 </div>
@@ -86,11 +93,14 @@ main{max-width:1280px;margin:auto;padding:24px}.hero{display:flex;justify-conten
 const meses={{months|tojson}};
 const placas={{vehicles|map(attribute='vehicle.placa')|list|tojson}};
 const resultados=[{% for row in vehicles %}{{row.resultado|float}}{% if not loop.last %},{% endif %}{% endfor %}];
-const resultadoRealTotal={{ (totals.repasse_pago - totals.custos)|float }};
+const resultadoRealTotal={{ totals.resultado_real|float }};
+const roiPlacas={{ranking|map(attribute='vehicle.placa')|list|tojson}};
+const roiValores=[{% for row in ranking %}{{row.roi_periodo|float}}{% if not loop.last %},{% endif %}{% endfor %}];
 new Chart(document.getElementById('donutTeorico'),{type:'doughnut',data:{labels:['Custos','Resultado teórico'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max({{totals.resultado|float}},0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
 new Chart(document.getElementById('lineTeorico'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse teórico',data:meses.map(x=>x.repasse),tension:.25},{label:'Repasse pago',data:meses.map(x=>x.pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado teórico',data:meses.map(x=>x.resultado),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
 new Chart(document.getElementById('donutReal'),{type:'doughnut',data:{labels:['Custos','Resultado real'],datasets:[{data:[Math.max({{totals.custos|float}},0),Math.max(resultadoRealTotal,0)]}]},options:{responsive:true,maintainAspectRatio:false,cutout:'62%',plugins:{legend:{position:'bottom'}}}});
 new Chart(document.getElementById('lineReal'),{type:'line',data:{labels:meses.map(x=>x.label),datasets:[{label:'Repasse pago',data:meses.map(x=>x.pago),tension:.25},{label:'Custos',data:meses.map(x=>x.custos),tension:.25},{label:'Resultado real',data:meses.map(x=>x.pago-x.custos),tension:.25}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
 new Chart(document.getElementById('bar'),{type:'bar',data:{labels:placas,datasets:[{label:'Resultado teórico (R$)',data:resultados}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+{% if ranking %}new Chart(document.getElementById('roiBar'),{type:'bar',data:{labels:roiPlacas,datasets:[{label:'ROI real no período (%)',data:roiValores}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false}}}});{% endif %}
 </script>
 </body></html>
