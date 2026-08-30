@@ -126,6 +126,39 @@ class InvestorVehicleRule(db.Model):
  investor=db.relationship('Investor')
  vehicle=db.relationship('Vehicle')
 
+class VehicleInvestment(db.Model):
+ __tablename__='vehicle_investment'
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,nullable=False,index=True)
+ investor_id=db.Column(db.Integer,db.ForeignKey('investor.id'),nullable=False,index=True)
+ vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False,unique=True,index=True)
+ data_aquisicao=db.Column(db.Date)
+ valor_aquisicao=db.Column(db.Numeric(14,2),default=0)
+ capital_proprio=db.Column(db.Numeric(14,2),default=0)
+ valor_financiado=db.Column(db.Numeric(14,2),default=0)
+ saldo_devedor=db.Column(db.Numeric(14,2),default=0)
+ valor_mercado=db.Column(db.Numeric(14,2),default=0)
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow)
+ atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
+ investor=db.relationship('Investor')
+ vehicle=db.relationship('Vehicle')
+
+class VehicleInvestmentHistory(db.Model):
+ __tablename__='vehicle_investment_history'
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,nullable=False,index=True)
+ investor_id=db.Column(db.Integer,db.ForeignKey('investor.id'),nullable=False,index=True)
+ vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False,index=True)
+ data_aquisicao=db.Column(db.Date)
+ valor_aquisicao=db.Column(db.Numeric(14,2),default=0)
+ capital_proprio=db.Column(db.Numeric(14,2),default=0)
+ valor_financiado=db.Column(db.Numeric(14,2),default=0)
+ saldo_devedor=db.Column(db.Numeric(14,2),default=0)
+ valor_mercado=db.Column(db.Numeric(14,2),default=0)
+ registrado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ investor=db.relationship('Investor')
+ vehicle=db.relationship('Vehicle')
+
 class Vehicle(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(100)); motorizacao=db.Column(db.String(20)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); current_driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); current_contract_id=db.Column(db.Integer,db.ForeignKey('contract.id')); status_changed_at=db.Column(db.DateTime); status_reason=db.Column(db.String(255)); investor=db.relationship('Investor'); current_driver=db.relationship('Driver',foreign_keys=[current_driver_id]); current_contract=db.relationship('Contract',foreign_keys=[current_contract_id],post_update=True)
 class Odometer(db.Model):
@@ -384,7 +417,7 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,InvestorAccess,InvestorVehicleRule,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit]
+ models=[Driver,Investor,InvestorAccess,InvestorVehicleRule,VehicleInvestment,VehicleInvestmentHistory,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
@@ -1177,7 +1210,7 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
   vehicles_query=vehicles_query.filter(Vehicle.placa.ilike(f'%{placa}%'))
  vehicles=vehicles_query.order_by(Vehicle.placa).all()
  ids=[v.id for v in vehicles]
- rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'pago':Decimal('0'),'repasse_pago':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'aberto':Decimal('0')} for v in vehicles}
+ rows={v.id:{'vehicle':v,'receita':Decimal('0'),'repasse':Decimal('0'),'pago':Decimal('0'),'repasse_pago':Decimal('0'),'custos':Decimal('0'),'resultado':Decimal('0'),'resultado_real':Decimal('0'),'aberto':Decimal('0'),'investment':None,'roi_periodo':None,'roi_aquisicao_periodo':None,'rentabilidade_mensal':None,'payback_meses':None,'capital_recuperado_pct':None,'desempenho':'Sem dados de investimento','ranking':None} for v in vehicles}
  contracts=Contract.query.filter(Contract.tenant_id==tenant_id,Contract.vehicle_id.in_(ids or [-1])).all()
  contract_map={c.id:c for c in contracts}
  monthly={}
@@ -1293,11 +1326,32 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
   cost=Decimal(str(m.custo or 0))
   rows[m.vehicle_id]['custos']+=cost; month_bucket(d)['custos']+=cost
 
+ investments={x.vehicle_id:x for x in VehicleInvestment.query.filter(
+  VehicleInvestment.tenant_id==tenant_id,
+  VehicleInvestment.investor_id==investor_id,
+  VehicleInvestment.vehicle_id.in_(ids or [-1])
+ ).all()}
+ periodo_meses=max(Decimal('1'),Decimal(str(max(1,(fim-inicio).days+1)))/Decimal('30.4375'))
+
  total_receita=total_repasse=total_pago=total_repasse_pago=total_custos=total_aberto=Decimal('0')
  vehicle_rows=[]
  for v in vehicles:
   row=rows[v.id]
   row['resultado']=row['repasse']-row['custos']
+  row['resultado_real']=row['repasse_pago']-row['custos']
+  inv=investments.get(v.id); row['investment']=inv
+  if inv:
+   capital=Decimal(str(inv.capital_proprio or 0))
+   aquisicao=Decimal(str(inv.valor_aquisicao or 0))
+   if capital>0:
+    row['roi_periodo']=(row['resultado_real']/capital)*Decimal('100')
+    row['rentabilidade_mensal']=row['roi_periodo']/periodo_meses
+    row['capital_recuperado_pct']=row['roi_periodo']
+    if row['resultado_real']>0:
+     media_mensal=row['resultado_real']/periodo_meses
+     row['payback_meses']=capital/media_mensal if media_mensal>0 else None
+   if aquisicao>0:
+    row['roi_aquisicao_periodo']=(row['resultado_real']/aquisicao)*Decimal('100')
   total_receita+=row['receita']; total_repasse+=row['repasse']; total_pago+=row['pago']; total_repasse_pago+=row['repasse_pago']; total_custos+=row['custos']; total_aberto+=row['aberto']
   row['driver']=Driver.query.filter_by(id=v.current_driver_id,tenant_id=tenant_id).first() if v.current_driver_id else None
   row['contract']=Contract.query.filter(
@@ -1310,6 +1364,21 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
   row['alerts']=Alert.query.filter_by(tenant_id=tenant_id,entidade='vehicle',entidade_id=v.id).filter(Alert.resolvido_em.is_(None)).count()
   vehicle_rows.append(row)
 
+ # Ranking de rentabilidade: prioriza ROI real quando o proprietário informou capital.
+ ranked=[r for r in vehicle_rows if r.get('roi_periodo') is not None]
+ ranked.sort(key=lambda r:r['roi_periodo'],reverse=True)
+ for pos,row in enumerate(ranked,1):
+  row['ranking']=pos
+  if row['resultado_real']<=0:
+   row['desempenho']='Baixo retorno'
+  elif pos==1 and len(ranked)>1:
+   row['desempenho']='Maior rentabilidade'
+  else:
+   row['desempenho']='Retorno positivo'
+ for row in vehicle_rows:
+  if row.get('roi_periodo') is None:
+   row['desempenho']='Investimento pendente'
+
  months=[]
  cursor=date(inicio.year,inicio.month,1); limit=date(fim.year,fim.month,1)
  while cursor<=limit:
@@ -1320,7 +1389,8 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
 
  return {
   'investor':investor,'vehicles':vehicle_rows,'months':months,
-  'totals':{'receita':total_receita,'repasse':total_repasse,'pago':total_pago,'repasse_pago':total_repasse_pago,'custos':total_custos,'resultado':total_repasse-total_custos,'aberto':total_aberto}
+  'ranking':ranked,
+  'totals':{'receita':total_receita,'repasse':total_repasse,'pago':total_pago,'repasse_pago':total_repasse_pago,'custos':total_custos,'resultado':total_repasse-total_custos,'resultado_real':total_repasse_pago-total_custos,'aberto':total_aberto}
  }
 
 
@@ -2050,6 +2120,73 @@ def portal_proprietario():
  data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim,vehicle_id=vehicle_id,placa=placa)
  tenant=Tenant.query.get(tenant_id)
  return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),vehicle_id=vehicle_id,placa=placa,available_vehicles=available_vehicles,**data)
+
+
+def _decimal_portal(valor):
+ txt=(valor or '').strip().replace('R$','').replace(' ','')
+ if not txt: return Decimal('0')
+ if ',' in txt:
+  txt=txt.replace('.','').replace(',','.')
+ try: return Decimal(txt)
+ except Exception: raise ValueError('Valor inválido')
+
+@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/investimento',methods=['GET','POST'])
+@owner_portal_required
+def portal_proprietario_investimento(vehicle_id):
+ tenant_id=int(session['owner_tenant_id']); investor_id=int(session['owner_investor_id'])
+ vehicle=Vehicle.query.filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
+ investment=VehicleInvestment.query.filter_by(tenant_id=tenant_id,investor_id=investor_id,vehicle_id=vehicle.id).first()
+ if request.method=='POST':
+  try:
+   data_txt=(request.form.get('data_aquisicao') or '').strip()
+   data_aquisicao=datetime.strptime(data_txt,'%Y-%m-%d').date() if data_txt else None
+   vals={
+    'valor_aquisicao':_decimal_portal(request.form.get('valor_aquisicao')),
+    'capital_proprio':_decimal_portal(request.form.get('capital_proprio')),
+    'valor_financiado':_decimal_portal(request.form.get('valor_financiado')),
+    'saldo_devedor':_decimal_portal(request.form.get('saldo_devedor')),
+    'valor_mercado':_decimal_portal(request.form.get('valor_mercado')),
+   }
+   if any(v<0 for v in vals.values()): raise ValueError('Os valores não podem ser negativos.')
+  except Exception as exc:
+   flash(str(exc) if str(exc) else 'Confira os valores informados.','danger')
+   return redirect(url_for('portal_proprietario_investimento',vehicle_id=vehicle.id))
+  if not investment:
+   investment=VehicleInvestment(tenant_id=tenant_id,investor_id=investor_id,vehicle_id=vehicle.id)
+   db.session.add(investment)
+  investment.data_aquisicao=data_aquisicao
+  for k,v in vals.items(): setattr(investment,k,v)
+  investment.atualizado_em=datetime.utcnow()
+  db.session.flush()
+  db.session.add(VehicleInvestmentHistory(
+   tenant_id=tenant_id,investor_id=investor_id,vehicle_id=vehicle.id,
+   data_aquisicao=data_aquisicao,valor_aquisicao=vals['valor_aquisicao'],capital_proprio=vals['capital_proprio'],
+   valor_financiado=vals['valor_financiado'],saldo_devedor=vals['saldo_devedor'],valor_mercado=vals['valor_mercado']
+  ))
+  db.session.commit()
+  flash('Dados de investimento atualizados. O Frota Fácil já usará esses valores nas análises.','success')
+  return redirect(url_for('portal_proprietario',vehicle_id=vehicle.id))
+ history=VehicleInvestmentHistory.query.filter_by(tenant_id=tenant_id,investor_id=investor_id,vehicle_id=vehicle.id).order_by(VehicleInvestmentHistory.registrado_em.desc()).limit(20).all()
+ tenant=Tenant.query.get(tenant_id)
+ return render_template('portal_proprietario_investimento.html',tenant=tenant,vehicle=vehicle,investment=investment,history=history)
+
+@app.route('/portal-proprietario/veiculos/<int:vehicle_id>/relatorio')
+@owner_portal_required
+def portal_proprietario_relatorio_veiculo(vehicle_id):
+ tenant_id=int(session['owner_tenant_id']); investor_id=int(session['owner_investor_id'])
+ vehicle=Vehicle.query.filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
+ today=date.today()
+ try: inicio=datetime.strptime(request.args.get('inicio') or f'{today.year}-01-01','%Y-%m-%d').date()
+ except Exception: inicio=date(today.year,1,1)
+ try: fim=datetime.strptime(request.args.get('fim') or today.isoformat(),'%Y-%m-%d').date()
+ except Exception: fim=today
+ if inicio>fim: inicio,fim=fim,inicio
+ # Calcula o relatório do veículo dentro do conjunto completo do proprietário,
+ # para preservar a posição real dele no ranking do período.
+ data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim)
+ row=next((r for r in data['vehicles'] if r['vehicle'].id==vehicle.id),None)
+ tenant=Tenant.query.get(tenant_id); investor=Investor.query.filter_by(id=investor_id,tenant_id=tenant_id).first_or_404()
+ return render_template('portal_proprietario_relatorio.html',tenant=tenant,investor=investor,vehicle=vehicle,row=row,inicio=inicio,fim=fim,gerado_em=agora_sao_paulo_naive())
 
 
 def _veiculo_portal_proprietario(vehicle_id):
