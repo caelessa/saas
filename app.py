@@ -3366,7 +3366,58 @@ def contrato_publico(codigo):
   except (ContractStateError,VehicleStateError):
    db.session.rollback()
  documento=Document.query.filter_by(id=c.documento_id,tenant_id=c.tenant_id).first() if c.documento_id else None
- return render_template('contrato_publico.html',c=c,documento=documento,signature=c.signature)
+ page_html=render_template('contrato_publico.html',c=c,documento=documento,signature=c.signature)
+ # UX: orienta o motorista e oferece atalho direto para a área de assinatura.
+ if not c.signature and c.status not in ('Assinado','Ativo','Encerrado'):
+  guia_assinatura='''
+  <div id="ff-signature-guide" style="position:sticky;top:0;z-index:9999;background:#fff7d6;border:1px solid #e7c84b;border-radius:12px;padding:14px 16px;margin:12px auto;max-width:980px;box-shadow:0 4px 14px rgba(0,0,0,.12);font-family:Arial,sans-serif;color:#2b2b2b">
+    <div style="font-size:18px;font-weight:700;margin-bottom:5px">✍️ Para assinar seu contrato</div>
+    <div style="font-size:15px;line-height:1.45">Leia o contrato e <strong>role a página até o final</strong>. O campo para fazer sua assinatura está no final do documento.</div>
+    <button type="button" id="ff-go-signature" style="margin-top:10px;border:0;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer;background:#1f6feb;color:white;font-size:15px">⬇️ Ir direto para assinatura</button>
+  </div>
+  <script>
+  (function(){
+    function assinaturaTarget(){
+      var input=document.querySelector('input[name="assinatura_data"]');
+      if(input && input.closest('form')) return input.closest('form');
+      var form=document.querySelector('form[action*="/assinar"]');
+      if(form) return form;
+      var canvas=document.querySelector('canvas');
+      return canvas || null;
+    }
+    function irParaAssinatura(){
+      var alvo=assinaturaTarget();
+      if(alvo){
+        alvo.scrollIntoView({behavior:'smooth',block:'start'});
+        setTimeout(function(){
+          var campo=alvo.querySelector ? alvo.querySelector('input:not([type="hidden"]), canvas, button') : null;
+          if(campo && campo.focus) campo.focus({preventScroll:true});
+        },500);
+      }else{
+        window.scrollTo({top:document.documentElement.scrollHeight,behavior:'smooth'});
+      }
+    }
+    document.addEventListener('DOMContentLoaded',function(){
+      var btn=document.getElementById('ff-go-signature');
+      if(btn) btn.addEventListener('click',irParaAssinatura);
+      var form=assinaturaTarget();
+      if(form){
+        var dica=document.createElement('div');
+        dica.style.cssText='font-weight:700;margin:0 0 10px;color:#1f2937;font-size:15px';
+        dica.textContent='Assine no quadro abaixo usando o dedo ou o mouse.';
+        form.insertBefore(dica,form.firstChild);
+      }
+    });
+  })();
+  </script>
+  '''
+  body_match=re.search(r'<body\b[^>]*>',page_html,flags=re.I)
+  if body_match:
+   pos=body_match.end()
+   page_html=page_html[:pos]+guia_assinatura+page_html[pos:]
+  else:
+   page_html=guia_assinatura+page_html
+ return page_html
 
 @app.route('/contrato-publico/<codigo>/assinar',methods=['POST'])
 def assinar_contrato_publico(codigo):
