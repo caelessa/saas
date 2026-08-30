@@ -4296,7 +4296,7 @@ def enviar_vistoria_whatsapp_automatico(item):
  """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
 
  Parâmetros do template:
- 1 motorista, 2 locadora, 3 veículo, 4 placa, 5 link da vistoria.
+ 1 motorista, 2 veículo, 3 placa, 4 link da vistoria.
  A criação/regravação da vistoria nunca é desfeita se o WhatsApp falhar.
  """
  if not item or not item.driver or not item.vehicle:
@@ -4312,20 +4312,13 @@ def enviar_vistoria_whatsapp_automatico(item):
  if not template_name:
   return False,'Vistoria criada, mas o template de vistoria do WhatsApp não está configurado.'
  link=url_for('vistoria_publica',token=item.token,_external=True)
- tenant=Tenant.query.filter_by(id=item.tenant_id).first()
- nome_locadora=(
-  (((tenant.nome_fantasia if tenant else '') or '').strip())
-  or (((tenant.nome if tenant else '') or '').strip())
-  or 'Locadora'
- )
  template_parameters=[
   item.driver.nome or '',
-  nome_locadora,
   item.vehicle.marca_modelo or '',
   item.vehicle.placa or '',
   link,
  ]
- mensagem=(f'Olá, {item.driver.nome}. A locadora {nome_locadora} solicita uma vistoria do veículo '
+ mensagem=(f'Olá, {item.driver.nome}. A locadora solicita uma vistoria do veículo '
            f'{item.vehicle.marca_modelo}, placa {item.vehicle.placa}. '
            f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela.')
  fila=MessageQueue(
@@ -4397,6 +4390,7 @@ def aprovar_vistoria(id):
  item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  if not item.video_key:
   flash('A vistoria ainda não possui vídeo.','warning'); return redirect(url_for('vistorias'))
+ status_anterior=item.status
  item.status='Aprovada'
  tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
  if not tentativa and item.video_key:
@@ -4404,6 +4398,20 @@ def aprovar_vistoria(id):
   db.session.add(tentativa)
  if tentativa:
   tentativa.decision='Aprovada'; tentativa.decided_at=datetime.utcnow()
+ duracao_txt=f'{item.duration_seconds}s' if item.duration_seconds is not None else 'não informada'
+ km_txt=(f'{item.km_informada:,} km'.replace(',','.') if item.km_informada is not None else 'não informada')
+ descricao=f'Vistoria em vídeo aprovada pela locadora; duração {duracao_txt}; foto do painel anexada; KM registrada: {km_txt}.'
+ db.session.add(VehicleEvent(
+  tenant_id=item.tenant_id,
+  vehicle_id=item.vehicle_id,
+  contract_id=item.contract_id,
+  driver_id=item.driver_id,
+  user_id=current_user.id,
+  evento='Vistoria em vídeo aprovada',
+  descricao=descricao,
+  status_anterior=status_anterior,
+  status_novo='Aprovada'
+ ))
  db.session.commit()
  flash('Vistoria aprovada.','success'); return redirect(url_for('vistorias'))
 
