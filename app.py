@@ -3227,7 +3227,47 @@ def cobrancas():
  for audit in auditoria:
   if not audit.receipt_token: garantir_token_comprovante(audit); alterou=True
  if alterou: db.session.commit()
- return render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant)
+ rendered_html=render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant)
+ # Hotfix seguro: apenas expõe a baixa manual para BillingAudit já existente.
+ # Não cria cobrança, não envia WhatsApp e não altera a regra de cálculo.
+ pendentes_baixa=[a for a in auditoria if (a.payment_status or 'PENDENTE')!='PAGO']
+ if pendentes_baixa:
+  linhas=[]
+  for a in pendentes_baixa:
+   total='R$ {:,.2f}'.format(float(a.total_amount or 0)).replace(',', 'X').replace('.', ',').replace('X', '.')
+   data_ref=a.billing_date.strftime('%d/%m/%Y') if a.billing_date else '-'
+   form_action=url_for('marcar_cobranca_paga',id=a.id)
+   linha=(
+    '<tr>'
+    '<td>'+str(a.id)+'</td>'
+    '<td>'+html.escape(a.driver_name or '-')+'</td>'
+    '<td>'+html.escape(a.vehicle_label or '-')+'</td>'
+    '<td>'+html.escape(a.plate or '-')+'</td>'
+    '<td>'+data_ref+'</td>'
+    '<td>'+total+'</td>'
+    '<td><form method="post" action="'+form_action+'" style="margin:0">'
+    '<input type="hidden" name="payment_method" value="Baixa manual">'
+    '<input type="hidden" name="payment_notes" value="Pagamento confirmado manualmente pela locadora.">'
+    '<button type="submit" class="btn btn-success btn-sm" onclick="return confirm(\'Confirmar pagamento desta cobrança?\')">✓ Marcar como pago</button>'
+    '</form></td>'
+    '</tr>'
+   )
+   linhas.append(linha)
+  painel=(
+   '<div class="container-fluid mt-4"><div class="card shadow-sm"><div class="card-body">'
+   '<h5 class="card-title mb-1">Baixa manual de cobranças existentes</h5>'
+   '<p class="text-muted small">Marca como paga uma cobrança que já existe na auditoria, sem enviar mensagem e sem exigir comprovante.</p>'
+   '<div class="table-responsive"><table class="table table-sm align-middle">'
+   '<thead><tr><th>ID</th><th>Motorista</th><th>Veículo</th><th>Placa</th><th>Data</th><th>Total</th><th>Ação</th></tr></thead>'
+   '<tbody>'+''.join(linhas)+'</tbody></table></div></div></div></div>'
+  )
+  if '</main>' in rendered_html:
+   rendered_html=rendered_html.replace('</main>',painel+'</main>',1)
+  elif '</body>' in rendered_html:
+   rendered_html=rendered_html.replace('</body>',painel+'</body>',1)
+  else:
+   rendered_html=rendered_html+painel
+ return rendered_html
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
 @login_required
