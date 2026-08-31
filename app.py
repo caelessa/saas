@@ -3267,6 +3267,71 @@ def cobrancas():
    rendered_html=rendered_html.replace('</body>',painel+'</body>',1)
   else:
    rendered_html=rendered_html+painel
+
+ # Contratos vigentes sem BillingAudit da semana atual. Permite criar a competência
+ # diretamente como PAGA, sem gerar mensagem, link de comprovante ou fila WhatsApp.
+ agora_local=datetime.now(_tenant_zone(tid()))
+ inicio_semana=agora_local.date()-timedelta(days=agora_local.weekday())
+ fim_semana=inicio_semana+timedelta(days=6)
+ contratos_sem_auditoria=[]
+ for item in items:
+  c=item['contract']
+  # Se existe cobrança pendente de qualquer data, ela já aparece no quadro acima.
+  pendente_existente=BillingAudit.query.filter(
+   BillingAudit.tenant_id==tid(),
+   BillingAudit.contract_id==c.id,
+   BillingAudit.payment_status!='PAGO'
+  ).first()
+  if pendente_existente:
+   continue
+  auditoria_semana=BillingAudit.query.filter(
+   BillingAudit.tenant_id==tid(),
+   BillingAudit.contract_id==c.id,
+   BillingAudit.billing_date>=inicio_semana,
+   BillingAudit.billing_date<=fim_semana
+  ).first()
+  if auditoria_semana:
+   continue
+  contratos_sem_auditoria.append(item)
+
+ if contratos_sem_auditoria:
+  linhas_sem=[]
+  for item in contratos_sem_auditoria:
+   c=item['contract']
+   info=item['info']
+   total='R$ {:,.2f}'.format(float(info.get('total') or 0)).replace(',', 'X').replace('.', ',').replace('X', '.')
+   motorista=c.driver.nome if c.driver else '-'
+   veiculo=c.vehicle.marca_modelo if c.vehicle else '-'
+   placa=c.vehicle.placa if c.vehicle else '-'
+   form_action=url_for('criar_baixa_manual_cobranca',id=c.id)
+   linha=(
+    '<tr>'
+    '<td>'+str(c.id)+'</td>'
+    '<td>'+html.escape(motorista or '-')+'</td>'
+    '<td>'+html.escape(veiculo or '-')+'</td>'
+    '<td>'+html.escape(placa or '-')+'</td>'
+    '<td>'+total+'</td>'
+    '<td><form method="post" action="'+form_action+'" style="margin:0">'
+    '<button type="submit" class="btn btn-primary btn-sm" onclick="return confirm(\'Criar esta cobrança e marcar como paga, sem enviar mensagem?\')">✓ Criar e marcar como pago</button>'
+    '</form></td>'
+    '</tr>'
+   )
+   linhas_sem.append(linha)
+  periodo_semana=inicio_semana.strftime('%d/%m/%Y')+' a '+fim_semana.strftime('%d/%m/%Y')
+  painel_sem=(
+   '<div class="container-fluid mt-4"><div class="card shadow-sm"><div class="card-body">'
+   '<h5 class="card-title mb-1">Contratos sem cobrança nesta semana</h5>'
+   '<p class="text-muted small">Período '+periodo_semana+'. Cria a cobrança e já registra o pagamento, sem WhatsApp e sem comprovante.</p>'
+   '<div class="table-responsive"><table class="table table-sm align-middle">'
+   '<thead><tr><th>Contrato</th><th>Motorista</th><th>Veículo</th><th>Placa</th><th>Total</th><th>Ação</th></tr></thead>'
+   '<tbody>'+''.join(linhas_sem)+'</tbody></table></div></div></div></div>'
+  )
+  if '</main>' in rendered_html:
+   rendered_html=rendered_html.replace('</main>',painel_sem+'</main>',1)
+  elif '</body>' in rendered_html:
+   rendered_html=rendered_html.replace('</body>',painel_sem+'</body>',1)
+  else:
+   rendered_html=rendered_html+painel_sem
  return rendered_html
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
@@ -5421,6 +5486,87 @@ def marcar_cobranca_paga(id):
  audit.payment_notes=(request.form.get('payment_notes') or '').strip() or None
  audit.closed_at=audit.paid_at
  db.session.commit(); flash('Pagamento baixado. Os lembretes desta cobrança foram interrompidos.','success')
+ return redirect(url_for('cobrancas'))
+
+@app.route('/cobrancas/<int:id>/baixa-manual-criar',methods=['POST'])
+@login_required
+def criar_baixa_manual_cobranca(id):
+ c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ if c.status not in ('Assinado','Ativo'):
+  flash('Somente contratos vigentes podem receber baixa manual.','warning')
+  return redirect(url_for('cobrancas'))
+ periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
+ if periodicidade and 'seman' not in periodicidade:
+  flash('A baixa manual rápida desta tela está disponível para contratos semanais.','warning')
+  return redirect(url_for('cobrancas'))
+
+ agora_local=datetime.now(_tenant_zone(c.tenant_id))
+ hoje=agora_local.date()
+ inicio_semana=hoje-timedelta(days=hoje.weekday())
+ fim_semana=inicio_semana+timedelta(days=6)
+
+ # Nunca duplica uma pendência existente: se houver, baixa o próprio registro.
+ audit=BillingAudit.query.filter(
+  BillingAudit.tenant_id==c.tenant_id,
+  BillingAudit.contract_id==c.id,
+  BillingAudit.payment_status!='PAGO'
+ ).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).first()
+ if audit:
+  audit.payment_status='PAGO'
+  audit.paid_at=agora_sao_paulo_naive()
+  audit.paid_by_id=current_user.id
+  audit.payment_method='Baixa manual'
+  audit.payment_notes='Pagamento confirmado manualmente pela locadora, sem comprovante no Frota Fácil.'
+  audit.closed_at=audit.paid_at
+  db.session.commit()
+  flash('Cobrança pendente existente marcada como paga. Nenhuma mensagem foi enviada.','success')
+  return redirect(url_for('cobrancas'))
+
+ # Se já existe uma cobrança desta semana, não cria outra competência.
+ audit_semana=BillingAudit.query.filter(
+  BillingAudit.tenant_id==c.tenant_id,
+  BillingAudit.contract_id==c.id,
+  BillingAudit.billing_date>=inicio_semana,
+  BillingAudit.billing_date<=fim_semana
+ ).order_by(BillingAudit.id.desc()).first()
+ if audit_semana:
+  if (audit_semana.payment_status or 'PENDENTE')=='PAGO':
+   flash('Este contrato já possui cobrança paga nesta semana.','info')
+  else:
+   flash('Este contrato já possui cobrança nesta semana. Use a baixa da cobrança existente.','warning')
+  return redirect(url_for('cobrancas'))
+
+ info=calcular_cobranca_semanal(c)
+ pago_em=agora_sao_paulo_naive()
+ audit=BillingAudit(
+  tenant_id=c.tenant_id,
+  contract_id=c.id,
+  driver_name=c.driver.nome if c.driver else None,
+  vehicle_label=c.vehicle.marca_modelo if c.vehicle else None,
+  plate=c.vehicle.placa if c.vehicle else None,
+  billing_date=hoje,
+  base_amount=info['valor_base'],
+  km_period=info.get('km_periodo'),
+  km_limit=info.get('limite_km'),
+  km_excess=info.get('km_excedente') or 0,
+  excess_rate=c.valor_km_excedente or 0,
+  excess_amount=info.get('valor_excesso') or 0,
+  total_amount=info['total'],
+  body='Baixa manual criada pela locadora sem envio de mensagem.',
+  template_name=None,
+  provider='manual',
+  status='BAIXA_MANUAL',
+  payment_status='PAGO',
+  paid_at=pago_em,
+  paid_by_id=current_user.id,
+  payment_method='Baixa manual',
+  payment_notes='Pagamento confirmado manualmente pela locadora, sem comprovante no Frota Fácil.',
+  closed_at=pago_em,
+  created_at=pago_em
+ )
+ db.session.add(audit)
+ db.session.commit()
+ flash('Cobrança criada e marcada como paga. Nenhuma mensagem foi enviada.','success')
  return redirect(url_for('cobrancas'))
 
 @app.route('/cobrancas/auditoria/<int:id>/reabrir',methods=['POST'])
