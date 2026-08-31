@@ -55,18 +55,47 @@ META_APP_SECRET=(os.getenv('META_APP_SECRET') or '').strip()
 META_WHATSAPP_CONFIG_ID=(os.getenv('META_WHATSAPP_CONFIG_ID') or '').strip()
 META_GRAPH_VERSION=(os.getenv('META_GRAPH_VERSION') or 'v23.0').strip()
 
-def _as_sao_paulo(value):
+def _tenant_timezone_name(tenant_id=None):
+ try:
+  if tenant_id is None:
+   if current_user.is_authenticated:
+    tenant_id=getattr(current_user,'tenant_id',None)
+   if tenant_id is None:
+    tenant_id=session.get('owner_tenant_id') or session.get('driver_portal_tenant_id')
+  TenantModel=globals().get('Tenant')
+  if tenant_id and TenantModel:
+   tenant=TenantModel.query.get(int(tenant_id))
+   nome=((getattr(tenant,'timezone_name',None) if tenant else None) or 'America/Sao_Paulo').strip()
+   try:
+    ZoneInfo(nome)
+    return nome
+   except Exception:
+    pass
+ except Exception:
+  pass
+ return 'America/Sao_Paulo'
+
+def _tenant_zone(tenant_id=None):
+ try:
+  return ZoneInfo(_tenant_timezone_name(tenant_id))
+ except Exception:
+  return SAO_PAULO_TZ
+
+def _as_tenant_time(value,tenant_id=None):
  if not value:
   return None
  if isinstance(value,date) and not isinstance(value,datetime):
   return value
  if value.tzinfo is None:
   value=value.replace(tzinfo=timezone.utc)
- return value.astimezone(SAO_PAULO_TZ)
+ return value.astimezone(_tenant_zone(tenant_id))
+
+def _as_sao_paulo(value):
+ return _as_tenant_time(value,None)
 
 @app.template_filter('sp_datetime')
 def sp_datetime(value,fmt='%d/%m/%Y %H:%M'):
- local=_as_sao_paulo(value)
+ local=_as_tenant_time(value,None)
  return local.strftime(fmt) if local else '-'
 
 @app.template_filter('brl')
@@ -80,7 +109,7 @@ def brl(value):
 
 class Tenant(db.Model):
  id=db.Column(db.Integer,primary_key=True); nome=db.Column(db.String(120),nullable=False); cnpj=db.Column(db.String(18)); ativo=db.Column(db.Boolean,default=True); conferir_km_motorista=db.Column(db.Boolean,default=False); cobrar_km_excedente=db.Column(db.Boolean,default=False)
- razao_social=db.Column(db.String(180)); nome_fantasia=db.Column(db.String(150)); inscricao_estadual=db.Column(db.String(30)); inscricao_municipal=db.Column(db.String(30)); telefone=db.Column(db.String(30)); email=db.Column(db.String(150)); responsavel_legal=db.Column(db.String(150)); logradouro=db.Column(db.String(180)); numero_endereco=db.Column(db.String(30)); complemento=db.Column(db.String(100)); bairro=db.Column(db.String(100)); cidade=db.Column(db.String(100)); uf=db.Column(db.String(2)); cep=db.Column(db.String(10)); logo_key=db.Column(db.String(255)); favicon_key=db.Column(db.String(255)); cor_primaria=db.Column(db.String(7)); cor_secundaria=db.Column(db.String(7))
+ razao_social=db.Column(db.String(180)); nome_fantasia=db.Column(db.String(150)); inscricao_estadual=db.Column(db.String(30)); inscricao_municipal=db.Column(db.String(30)); telefone=db.Column(db.String(30)); email=db.Column(db.String(150)); responsavel_legal=db.Column(db.String(150)); logradouro=db.Column(db.String(180)); numero_endereco=db.Column(db.String(30)); complemento=db.Column(db.String(100)); bairro=db.Column(db.String(100)); cidade=db.Column(db.String(100)); uf=db.Column(db.String(2)); cep=db.Column(db.String(10)); logo_key=db.Column(db.String(255)); favicon_key=db.Column(db.String(255)); cor_primaria=db.Column(db.String(7)); cor_secundaria=db.Column(db.String(7)); timezone_name=db.Column(db.String(80),default='America/Sao_Paulo')
 class User(UserMixin,db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,db.ForeignKey('tenant.id'),nullable=False); nome=db.Column(db.String(100)); email=db.Column(db.String(120),unique=True,nullable=False); senha=db.Column(db.String(255)); perfil=db.Column(db.String(30),default='admin'); tenant=db.relationship('Tenant')
 class Driver(db.Model):
@@ -740,7 +769,7 @@ def recalcular_alertas(tenant_id):
 
 def migrate_schema():
  additions={
-  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE'),('razao_social','VARCHAR(180)'),('nome_fantasia','VARCHAR(150)'),('inscricao_estadual','VARCHAR(30)'),('inscricao_municipal','VARCHAR(30)'),('telefone','VARCHAR(30)'),('email','VARCHAR(150)'),('responsavel_legal','VARCHAR(150)'),('logradouro','VARCHAR(180)'),('numero_endereco','VARCHAR(30)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)'),('logo_key','VARCHAR(255)'),('favicon_key','VARCHAR(255)'),('cor_primaria','VARCHAR(7)'),('cor_secundaria','VARCHAR(7)')],
+  'tenant':[('conferir_km_motorista','BOOLEAN DEFAULT FALSE'),('cobrar_km_excedente','BOOLEAN DEFAULT FALSE'),('razao_social','VARCHAR(180)'),('nome_fantasia','VARCHAR(150)'),('inscricao_estadual','VARCHAR(30)'),('inscricao_municipal','VARCHAR(30)'),('telefone','VARCHAR(30)'),('email','VARCHAR(150)'),('responsavel_legal','VARCHAR(150)'),('logradouro','VARCHAR(180)'),('numero_endereco','VARCHAR(30)'),('complemento','VARCHAR(100)'),('bairro','VARCHAR(100)'),('cidade','VARCHAR(100)'),('uf','VARCHAR(2)'),('cep','VARCHAR(10)'),('logo_key','VARCHAR(255)'),('favicon_key','VARCHAR(255)'),('cor_primaria','VARCHAR(7)'),('cor_secundaria','VARCHAR(7)'),('timezone_name',"VARCHAR(80) DEFAULT 'America/Sao_Paulo'")],
   'vehicle':[
    ('controlar_oleo','BOOLEAN DEFAULT FALSE'),('ultima_troca_oleo_km','INTEGER'),
    ('intervalo_oleo_km','INTEGER DEFAULT 10000'),('alerta_oleo_km','INTEGER DEFAULT 100'),
@@ -4539,6 +4568,14 @@ def vistorias():
   flash(msg_envio,'success' if ok_envio else 'warning')
   return redirect(url_for('vistorias'))
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
+ # O template legado usa strftime diretamente. Localizamos apenas a cópia em memória
+ # para exibição; o banco continua preservando requested_at em UTC.
+ from sqlalchemy.orm.attributes import set_committed_value
+ for _item in items:
+  if _item.requested_at:
+   _local=_as_tenant_time(_item.requested_at,_item.tenant_id)
+   if _local:
+    set_committed_value(_item,'requested_at',_local.replace(tzinfo=None))
  veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
  return render_template('vistorias.html',items=items,veiculos=veiculos)
 
@@ -5037,7 +5074,7 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  integration,cfg=_automation_cfg(contract.tenant_id)
  provider=(cfg.get('provider') or 'web').lower()
  template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
- hoje=datetime.now(SAO_PAULO).date()
+ hoje=datetime.now(_tenant_zone(contract.tenant_id)).date()
 
  # Reenvio da cobrança do mesmo contrato no mesmo dia deve reutilizar a mesma
  # auditoria. Antes, cada clique manual criava outra BillingAudit e, se ambas
@@ -5073,11 +5110,11 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  return fila,audit,redirect_url,err
 
 def processar_cobrancas_automaticas(tenant_id=None):
- agora=datetime.now(SAO_PAULO); hoje=agora.date()
  q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
  if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
  enviados=0
  for c in q.all():
+  agora=datetime.now(_tenant_zone(c.tenant_id)); hoje=agora.date()
   periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
   if periodicidade and 'seman' not in periodicidade: continue
   integration,cfg=_automation_cfg(c.tenant_id)
@@ -5100,11 +5137,13 @@ def processar_cobrancas_automaticas(tenant_id=None):
  db.session.commit(); return enviados
 
 def processar_km_automatico(tenant_id=None):
- agora=datetime.now(SAO_PAULO)
  q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
  if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
- enviados=0; inicio=datetime.combine(agora.date(),datetime.min.time())
+ enviados=0
  for c in q.all():
+  agora=datetime.now(_tenant_zone(c.tenant_id))
+  inicio_local=datetime.combine(agora.date(),datetime.min.time(),tzinfo=_tenant_zone(c.tenant_id))
+  inicio=inicio_local.astimezone(timezone.utc).replace(tzinfo=None)
   if not c.driver or not c.vehicle: continue
   integration,cfg=_automation_cfg(c.tenant_id)
   if not cfg.get('km_automation_enabled',cfg.get('automatic_km_enabled',False)) or not _automation_window_open(cfg,'km',agora): continue
@@ -5116,8 +5155,8 @@ def processar_km_automatico(tenant_id=None):
    MileageRequest.submitted_at.isnot(None),
   ).order_by(MileageRequest.submitted_at.desc()).first()
   if ultima_respondida and ultima_respondida.submitted_at:
-   submitted_sp=ultima_respondida.submitted_at.replace(tzinfo=timezone.utc).astimezone(SAO_PAULO)
-   if submitted_sp.date()==agora.date():
+   submitted_local=ultima_respondida.submitted_at.replace(tzinfo=timezone.utc).astimezone(_tenant_zone(c.tenant_id))
+   if submitted_local.date()==agora.date():
     continue
 
   req=MileageRequest.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
@@ -5134,47 +5173,62 @@ def processar_km_automatico(tenant_id=None):
  db.session.commit(); return enviados
 
 def processar_vistorias_automaticas(tenant_id=None):
- """Cria uma vistoria semanal por veículo e reenvia o mesmo link enquanto estiver pendente.
+ """Cria uma vistoria semanal por contrato/veículo e reenvia o mesmo link enquanto estiver pendente.
 
- A vistoria só é criada para contrato ativo/assinado com motorista e veículo. Enquanto existir
- uma vistoria Pendente para o veículo, ela é reutilizada, inclusive se atravessar a semana.
- Assim que for recebida, aprovada ou rejeitada, os reenvios automáticos daquela solicitação param.
+ Usa o fuso do tenant e impede criação duplicada do mesmo pedido.
  """
- agora=datetime.now(SAO_PAULO)
  q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
  if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
  enviados=0
- # Segunda-feira 00:00 da semana corrente em horário de São Paulo, convertida para UTC naive
- inicio_semana_sp=(agora-timedelta(days=agora.weekday())).replace(hour=0,minute=0,second=0,microsecond=0)
- inicio_semana_utc=inicio_semana_sp.astimezone(timezone.utc).replace(tzinfo=None)
- for c in q.all():
-  if not c.driver or not c.vehicle: continue
+
+ for contrato_ref in q.all():
+  if not contrato_ref.driver or not contrato_ref.vehicle: continue
+
+  # Serializa a decisão por contrato para evitar duas execuções simultâneas do cron.
+  try:
+   db.session.execute(text('SELECT pg_advisory_xact_lock(:chave)'),{'chave':int(contrato_ref.id)})
+  except Exception:
+   pass
+
+  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(
+   id=contrato_ref.id,tenant_id=contrato_ref.tenant_id
+  ).first()
+  if not c or not c.driver or not c.vehicle: continue
+
+  agora_local=datetime.now(_tenant_zone(c.tenant_id))
   integration,cfg=_automation_cfg(c.tenant_id)
-  if not cfg.get('inspection_automation_enabled',False) or not _automation_window_open(cfg,'inspection',agora): continue
+  if not cfg.get('inspection_automation_enabled',False) or not _automation_window_open(cfg,'inspection',agora_local): continue
   if (cfg.get('provider') or 'web').lower()!='business': continue
 
-  # Se já existe uma vistoria pendente, nunca criamos outra: reutilizamos o mesmo token/link.
-  item=Inspection.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,status='Pendente').order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
+  # Se existe pendente deste contrato/veículo, reutiliza sempre o mesmo token.
+  item=Inspection.query.filter_by(
+   tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,contract_id=c.id,status='Pendente'
+  ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
+
   if not item:
-   # Proteção adicional contra duplicidade da mesma competência semanal.
-   existente_semana=Inspection.query.filter(
+   # Depois que a vistoria foi recebida/aprovada, não cria outra dentro da mesma semana.
+   limite_recente=datetime.utcnow()-timedelta(days=7)
+   recente=Inspection.query.filter(
     Inspection.tenant_id==c.tenant_id,
     Inspection.vehicle_id==c.vehicle.id,
-    Inspection.requested_at>=inicio_semana_utc,
+    Inspection.contract_id==c.id,
+    Inspection.requested_at>=limite_recente,
    ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
-   if existente_semana:
+   if recente:
     continue
+
    try: validade=max(24,min(168,int(cfg.get('inspection_expiry_hours',168) or 168)))
    except Exception: validade=168
    item=Inspection(
     tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,contract_id=c.id,
-    token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',tipo_vistoria=((cfg.get('inspection_automation_type') or 'simples') if (cfg.get('inspection_automation_type') or 'simples') in ('simples','guiada') else 'simples'),
+    token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',
+    tipo_vistoria=((cfg.get('inspection_automation_type') or 'simples') if (cfg.get('inspection_automation_type') or 'simples') in ('simples','guiada') else 'simples'),
+    requested_at=datetime.utcnow(),
     expires_at=datetime.utcnow()+timedelta(hours=validade),
    )
    db.session.add(item); db.session.flush()
   else:
-   # Mantém motorista/contrato atuais e preserva o mesmo link.
-   item.driver_id=c.driver.id; item.contract_id=c.id
+   item.driver_id=c.driver.id
    try: validade=max(24,min(168,int(cfg.get('inspection_expiry_hours',168) or 168)))
    except Exception: validade=168
    if not item.expires_at or item.expires_at<=datetime.utcnow()+timedelta(hours=1):
@@ -5186,8 +5240,10 @@ def processar_vistorias_automaticas(tenant_id=None):
   ).order_by(MessageQueue.created_at.desc(),MessageQueue.id.desc()).first()
   if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo):
    continue
+
   ok,_=enviar_vistoria_whatsapp_automatico(item)
   if ok: enviados+=1
+
  db.session.commit()
  return enviados
 
