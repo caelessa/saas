@@ -4751,6 +4751,23 @@ def vistoria_upload(token):
   db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem='Vistoria em vídeo'))
  if km >= km_anterior:
   veiculo.km_atual=km
+
+ # A vistoria completa substitui o pedido separado de KM:
+ # usa a mesma foto do painel e a KM digitada, sem criar outro Odometer.
+ tenant_km=Tenant.query.get(item.tenant_id)
+ km_pendentes=MileageRequest.query.filter_by(
+  tenant_id=item.tenant_id,
+  vehicle_id=item.vehicle_id,
+  driver_id=item.driver_id,
+  status='Pendente',
+ ).all()
+ for _req in km_pendentes:
+  _req.km=km
+  _req.photo=painel_chave
+  _req.submitted_at=item.submitted_at
+  _req.notes='Atendida automaticamente pela vistoria em vídeo.'
+  _req.status='Aguardando conferência' if (tenant_km and tenant_km.conferir_km_motorista) else 'Concluído'
+
  descricao=f'Vistoria em vídeo recebida; duração {duracao}s; foto do painel anexada; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
  db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=descricao))
  db.session.commit()
@@ -5146,6 +5163,13 @@ def processar_km_automatico(tenant_id=None):
   inicio=inicio_local.astimezone(timezone.utc).replace(tzinfo=None)
   if not c.driver or not c.vehicle: continue
   integration,cfg=_automation_cfg(c.tenant_id)
+
+  # A vistoria já solicita vídeo + foto do painel + KM digitada.
+  # Quando a automação de vistoria está ativa ela é a fonte principal e
+  # bloqueia o envio automático redundante do link exclusivo de KM.
+  if cfg.get('inspection_automation_enabled',False):
+   continue
+
   if not cfg.get('km_automation_enabled',cfg.get('automatic_km_enabled',False)) or not _automation_window_open(cfg,'km',agora): continue
   if (cfg.get('provider') or 'web').lower()!='business': continue
   # Se a foto/KM já foi recebida hoje, encerra a automação desse veículo no dia.
@@ -5233,6 +5257,19 @@ def processar_vistorias_automaticas(tenant_id=None):
    except Exception: validade=168
    if not item.expires_at or item.expires_at<=datetime.utcnow()+timedelta(hours=1):
     item.expires_at=datetime.utcnow()+timedelta(hours=validade)
+
+  # Se já existe uma vistoria pendente para este contrato/veículo,
+  # o link separado de KM deixa de ser necessário. Encerramos pendências
+  # antigas para que não apareçam simultaneamente no Portal do Motorista.
+  km_pendentes=MileageRequest.query.filter_by(
+   tenant_id=c.tenant_id,
+   vehicle_id=c.vehicle.id,
+   driver_id=c.driver.id,
+   status='Pendente',
+  ).all()
+  for _req in km_pendentes:
+   _req.status='Cancelado'
+   _req.notes='Substituída pela vistoria completa (vídeo + painel + KM).'
 
   intervalo=_reminder_interval(cfg,'inspection')
   ultimo=MessageQueue.query.filter_by(
