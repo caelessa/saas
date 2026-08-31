@@ -1810,18 +1810,52 @@ def portal_motorista():
  current_vehicle=Vehicle.query.filter_by(tenant_id=tenant_id,current_driver_id=driver_id).first()
  if not current_vehicle:
   active=next((c for c in active_contracts if c.vehicle_id),None); current_vehicle=active.vehicle if active else None
- audits=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(contract_ids)).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).all() if contract_ids else []
- # KPIs e pendências representam somente a situação atual. O histórico completo permanece abaixo.
+ audits_raw=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(contract_ids)).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).all() if contract_ids else []
+ contract_map={c.id:c for c in contracts}
+
+ # Consolida registros antigos criados pelo bug de cobrança diária.
+ # Para contratos semanais, cada semana é uma única competência financeira.
+ # Para outras periodicidades, mantém uma cobrança por data.
+ # Prioridade: PAGO > COMPROVANTE_RECEBIDO > demais; em empate, registro mais recente.
+ def _portal_billing_key(audit):
+  c=contract_map.get(audit.contract_id)
+  periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower() if c else ''
+  d=audit.billing_date
+  if d and 'seman' in periodicidade:
+   iso=d.isocalendar()
+   return (audit.contract_id,'semana',iso.year,iso.week)
+  return (audit.contract_id,'data',d)
+
+ def _portal_billing_rank(audit):
+  status=(audit.payment_status or '').upper()
+  if status=='PAGO': return 3
+  if status=='COMPROVANTE_RECEBIDO': return 2
+  return 1
+
+ audits_por_competencia={}
+ for audit in audits_raw:
+  chave=_portal_billing_key(audit)
+  atual=audits_por_competencia.get(chave)
+  if atual is None or _portal_billing_rank(audit)>_portal_billing_rank(atual) or (_portal_billing_rank(audit)==_portal_billing_rank(atual) and (audit.id or 0)>(atual.id or 0)):
+   audits_por_competencia[chave]=audit
+
+ audits=sorted(audits_por_competencia.values(),key=lambda a:(a.billing_date or date.min,a.id or 0),reverse=True)
+
+ # Situação atual: somente contratos ativos. Comprovante já enviado não é mais
+ # uma ação pendente do motorista; aguarda apenas validação da locadora.
  current_audits=[a for a in audits if a.contract_id in active_contract_ids]
  pagos=sum(Decimal(str(a.total_amount or 0)) for a in current_audits if (a.payment_status or '').upper()=='PAGO')
  pendentes=sum(Decimal(str(a.total_amount or 0)) for a in current_audits if (a.payment_status or '').upper()!='PAGO')
  km_requests=MileageRequest.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(MileageRequest.sent_at.desc()).limit(30).all()
  inspections=Inspection.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Inspection.requested_at.desc()).limit(30).all()
  maintenances=Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(list(vehicle_ids))).order_by(Maintenance.id.desc()).limit(30).all() if vehicle_ids else []
- contract_map={c.id:c for c in contracts}
  audit_context={}
  for a in audits:
   c=contract_map.get(a.contract_id); v=c.vehicle if c else None
+  if c:
+   partes=[(v.placa if v else (a.plate or '')),(v.marca_modelo if v else (a.vehicle_label or 'Veículo')),(c.numero_contrato or f'Contrato #{c.id}')]
+   if c.id not in active_contract_ids: partes.append('Histórico')
+   a.vehicle_label=' · '.join(x for x in partes if x)
   audit_context[a.id]={
    'contrato':(c.numero_contrato if c else f'Contrato #{a.contract_id}'),
    'placa':(v.placa if v else (a.plate or '')),
@@ -1830,7 +1864,8 @@ def portal_motorista():
   }
  pendencias=[]
  for a in current_audits:
-  if (a.payment_status or '').upper()!='PAGO':
+  status_pag=(a.payment_status or '').upper()
+  if status_pag not in {'PAGO','COMPROVANTE_RECEBIDO'}:
    ctx=audit_context.get(a.id,{})
    ident=' · '.join(x for x in [ctx.get('placa'),ctx.get('veiculo'),ctx.get('contrato')] if x)
    pendencias.append({'tipo':'Pagamento','texto':f'{ident} — R$ {brl(a.total_amount)}','url':url_for('enviar_comprovante_pagamento',token=a.receipt_token) if a.receipt_token else None})
@@ -4367,7 +4402,7 @@ def enviar_vistoria_whatsapp_automatico(item):
  """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
 
  Parâmetros do template:
- 1 motorista, 2 veículo, 3 placa, 4 link da vistoria.
+ 1 motorista, 2 locadora, 3 veículo, 4 placa, 5 link da vistoria.
  A criação/regravação da vistoria nunca é desfeita se o WhatsApp falhar.
  """
  if not item or not item.driver or not item.vehicle:
@@ -4383,13 +4418,20 @@ def enviar_vistoria_whatsapp_automatico(item):
  if not template_name:
   return False,'Vistoria criada, mas o template de vistoria do WhatsApp não está configurado.'
  link=url_for('vistoria_publica',token=item.token,_external=True)
+ tenant=Tenant.query.filter_by(id=item.tenant_id).first()
+ nome_locadora=(
+  (((tenant.nome_fantasia if tenant else '') or '').strip())
+  or (((tenant.nome if tenant else '') or '').strip())
+  or 'Locadora'
+ )
  template_parameters=[
   item.driver.nome or '',
+  nome_locadora,
   item.vehicle.marca_modelo or '',
   item.vehicle.placa or '',
   link,
  ]
- mensagem=(f'Olá, {item.driver.nome}. A locadora solicita uma vistoria do veículo '
+ mensagem=(f'Olá, {item.driver.nome}. A locadora {nome_locadora} solicita uma vistoria do veículo '
            f'{item.vehicle.marca_modelo}, placa {item.vehicle.placa}. '
            f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela.')
  fila=MessageQueue(
@@ -5000,7 +5042,13 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  # Reenvio da cobrança do mesmo contrato no mesmo dia deve reutilizar a mesma
  # auditoria. Antes, cada clique manual criava outra BillingAudit e, se ambas
  # fossem baixadas como pagas, o portal do proprietário somava em duplicidade.
- audit=BillingAudit.query.filter_by(tenant_id=contract.tenant_id,contract_id=contract.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
+ audit=BillingAudit.query.filter(
+  BillingAudit.tenant_id==contract.tenant_id,
+  BillingAudit.contract_id==contract.id,
+  BillingAudit.payment_status!='PAGO',
+ ).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).first()
+ if not audit:
+  audit=BillingAudit.query.filter_by(tenant_id=contract.tenant_id,contract_id=contract.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
  if audit:
   # Mantém o registro já pago intacto. Para pendentes, atualiza a fotografia da
   # cobrança antes do reenvio, sem criar uma segunda competência financeira.
@@ -5036,7 +5084,13 @@ def processar_cobrancas_automaticas(tenant_id=None):
   if not cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) or not _automation_window_open(cfg,'billing',agora): continue
   # Envio realmente automático só é possível pela Business Platform. No Web, o botão manual continua disponível.
   if (cfg.get('provider') or 'web').lower()!='business': continue
-  audit=BillingAudit.query.filter_by(tenant_id=c.tenant_id,contract_id=c.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
+  audit=BillingAudit.query.filter(
+   BillingAudit.tenant_id==c.tenant_id,
+   BillingAudit.contract_id==c.id,
+   BillingAudit.payment_status!='PAGO',
+  ).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).first()
+  if not audit:
+   audit=BillingAudit.query.filter_by(tenant_id=c.tenant_id,contract_id=c.id,billing_date=hoje).order_by(BillingAudit.id.desc()).first()
   if audit and (audit.payment_status or 'PENDENTE')=='PAGO': continue
   if not audit:
    gerar_e_enviar_cobranca(c,automatico=True); enviados+=1; continue
