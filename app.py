@@ -1,5 +1,5 @@
 import mimetypes
-import os, uuid, re, json, hashlib, unicodedata, base64, binascii, html
+import os, uuid, re, json, hashlib, unicodedata, base64, binascii, html, tempfile, subprocess
 import requests
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
@@ -297,6 +297,10 @@ class Inspection(db.Model):
  km_informada=db.Column(db.Integer)
  brightness_avg=db.Column(db.Numeric(8,2))
  brightness_status=db.Column(db.String(30))
+ damage_analysis_status=db.Column(db.String(30),default='NAO_ANALISADA',index=True)
+ damage_analysis_level=db.Column(db.String(30))
+ damage_analysis_summary=db.Column(db.Text)
+ damage_analysis_at=db.Column(db.DateTime)
  notes=db.Column(db.Text)
  vehicle=db.relationship('Vehicle',foreign_keys=[vehicle_id])
  driver=db.relationship('Driver',foreign_keys=[driver_id])
@@ -751,7 +755,7 @@ def migrate_schema():
   ],
   'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('proxima_hora','VARCHAR(5)'),('notificar_motorista','BOOLEAN DEFAULT FALSE'),('lembrete_um_dia','BOOLEAN DEFAULT TRUE'),('notificacao_agendamento_id','INTEGER'),('notificacao_lembrete_id','INTEGER'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
-  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
+  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER'),('damage_analysis_status',"VARCHAR(30) DEFAULT 'NAO_ANALISADA'"),('damage_analysis_level','VARCHAR(30)'),('damage_analysis_summary','TEXT'),('damage_analysis_at','TIMESTAMP')],
   'inspection_attempt':[('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
   'message_queue':[('template_parameters','TEXT')],
   'billing_audit':[
@@ -1059,20 +1063,9 @@ def motoristas():
    app.logger.exception('Falha ao cadastrar motorista e armazenar CNH')
    flash('Não foi possível concluir o cadastro e armazenar a CNH. Tente novamente.','danger')
    return redirect(url_for('motoristas'))
-  try:
-   integration=Integration.query.filter_by(tenant_id=tid(),tipo='whatsapp').first()
-   cfg=CommunicationService.parse_config(integration)
-   if bool(cfg.get('driver_portal_auto_invite_enabled',False)):
-    ok_convite,msg_convite=enviar_acesso_portal_motorista_whatsapp(d)
-    if not ok_convite:
-     flash('Motorista cadastrado, mas o convite do portal não foi enviado: '+msg_convite,'warning')
-    else:
-     flash('Motorista cadastrado e convite do Portal do Motorista enviado pelo WhatsApp.','success')
-   else:
-    flash('Motorista cadastrado e CNH armazenada automaticamente.','success')
-  except Exception as exc:
-   app.logger.exception('Falha ao enviar convite automático do Portal do Motorista')
-   flash('Motorista cadastrado, mas o convite automático do portal não pôde ser enviado.','warning')
+  # O Portal do Motorista pertence ao motorista, mas o convite automático só é
+  # disparado após uma assinatura real de contrato. O envio manual continua disponível.
+  flash('Motorista cadastrado e CNH armazenada automaticamente.','success')
   return redirect(url_for('motoristas'))
  q=(request.args.get('q') or '').strip()
  query=Driver.query.filter_by(tenant_id=tid())
@@ -1808,24 +1801,48 @@ def portal_motorista_sair():
 @driver_portal_required
 def portal_motorista():
  tenant_id=int(session['driver_portal_tenant_id']); driver_id=int(session['driver_portal_driver_id']); driver=Driver.query.filter_by(id=driver_id,tenant_id=tenant_id).first_or_404(); tenant=Tenant.query.get(tenant_id)
- contracts=Contract.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Contract.id.desc()).all(); contract_ids=[c.id for c in contracts]
- vehicle_ids={c.vehicle_id for c in contracts if c.vehicle_id}; vehicles=Vehicle.query.filter(Vehicle.tenant_id==tenant_id,Vehicle.id.in_(vehicle_ids)).all() if vehicle_ids else []
+ contracts=Contract.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Contract.id.desc()).all()
+ contract_ids=[c.id for c in contracts]
+ active_contracts=[c for c in contracts if (c.status or '').strip() in {'Assinado','Ativo'}]
+ active_contract_ids={c.id for c in active_contracts}
+ active_vehicle_ids={c.vehicle_id for c in active_contracts if c.vehicle_id}
+ vehicle_ids={c.vehicle_id for c in contracts if c.vehicle_id}
  current_vehicle=Vehicle.query.filter_by(tenant_id=tenant_id,current_driver_id=driver_id).first()
  if not current_vehicle:
-  active=next((c for c in contracts if (c.status or '') in {'Assinado','Ativo'} and c.vehicle_id),None); current_vehicle=active.vehicle if active else None
+  active=next((c for c in active_contracts if c.vehicle_id),None); current_vehicle=active.vehicle if active else None
  audits=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(contract_ids)).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).all() if contract_ids else []
- pagos=sum(Decimal(str(a.total_amount or 0)) for a in audits if (a.payment_status or '').upper()=='PAGO'); pendentes=sum(Decimal(str(a.total_amount or 0)) for a in audits if (a.payment_status or '').upper()!='PAGO')
+ # KPIs e pendências representam somente a situação atual. O histórico completo permanece abaixo.
+ current_audits=[a for a in audits if a.contract_id in active_contract_ids]
+ pagos=sum(Decimal(str(a.total_amount or 0)) for a in current_audits if (a.payment_status or '').upper()=='PAGO')
+ pendentes=sum(Decimal(str(a.total_amount or 0)) for a in current_audits if (a.payment_status or '').upper()!='PAGO')
  km_requests=MileageRequest.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(MileageRequest.sent_at.desc()).limit(30).all()
  inspections=Inspection.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Inspection.requested_at.desc()).limit(30).all()
  maintenances=Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(list(vehicle_ids))).order_by(Maintenance.id.desc()).limit(30).all() if vehicle_ids else []
- pendencias=[]
+ contract_map={c.id:c for c in contracts}
+ audit_context={}
  for a in audits:
-  if (a.payment_status or '').upper()!='PAGO': pendencias.append({'tipo':'Pagamento','texto':f'{a.vehicle_label or a.plate or "Veículo"} — R$ {brl(a.total_amount)}','url':url_for('enviar_comprovante_pagamento',token=a.receipt_token) if a.receipt_token else None})
+  c=contract_map.get(a.contract_id); v=c.vehicle if c else None
+  audit_context[a.id]={
+   'contrato':(c.numero_contrato if c else f'Contrato #{a.contract_id}'),
+   'placa':(v.placa if v else (a.plate or '')),
+   'veiculo':(v.marca_modelo if v else (a.vehicle_label or 'Veículo')),
+   'atual':bool(c and c.id in active_contract_ids),
+  }
+ pendencias=[]
+ for a in current_audits:
+  if (a.payment_status or '').upper()!='PAGO':
+   ctx=audit_context.get(a.id,{})
+   ident=' · '.join(x for x in [ctx.get('placa'),ctx.get('veiculo'),ctx.get('contrato')] if x)
+   pendencias.append({'tipo':'Pagamento','texto':f'{ident} — R$ {brl(a.total_amount)}','url':url_for('enviar_comprovante_pagamento',token=a.receipt_token) if a.receipt_token else None})
  for r in km_requests:
-  if (r.status or '').lower()=='pendente' and (not r.expires_at or r.expires_at>=datetime.utcnow()): pendencias.append({'tipo':'Quilometragem','texto':f'{r.vehicle.marca_modelo} — {r.vehicle.placa}','url':url_for('registrar_quilometragem_publica',token=r.token)})
+  if r.vehicle_id in active_vehicle_ids and (r.status or '').lower()=='pendente' and (not r.expires_at or r.expires_at>=datetime.utcnow()):
+   c=next((x for x in active_contracts if x.vehicle_id==r.vehicle_id),None); numero=c.numero_contrato if c else ''
+   pendencias.append({'tipo':'Quilometragem','texto':f'{r.vehicle.placa} · {r.vehicle.marca_modelo}'+(f' · {numero}' if numero else ''),'url':url_for('registrar_quilometragem_publica',token=r.token)})
  for i in inspections:
-  if (i.status or '').lower()=='pendente' and (not i.expires_at or i.expires_at>=datetime.utcnow()): pendencias.append({'tipo':'Vistoria','texto':f'{i.vehicle.marca_modelo} — {i.vehicle.placa}','url':url_for('vistoria_publica',token=i.token)})
- return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,audits=audits,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias)
+  if i.contract_id in active_contract_ids and (i.status or '').lower()=='pendente' and (not i.expires_at or i.expires_at>=datetime.utcnow()):
+   c=contract_map.get(i.contract_id); numero=c.numero_contrato if c else ''
+   pendencias.append({'tipo':'Vistoria','texto':f'{i.vehicle.placa} · {i.vehicle.marca_modelo}'+(f' · {numero}' if numero else ''),'url':url_for('vistoria_publica',token=i.token)})
+ return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,active_contract_ids=active_contract_ids,audits=audits,audit_context=audit_context,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias)
 
 def _owner_activation_serializer():
  return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-activation-v1')
@@ -2796,6 +2813,9 @@ def configuracoes_automacoes():
   km_enabled=request.form.get('km_automation_enabled')=='1'
   billing_enabled=request.form.get('billing_automation_enabled')=='1'
   inspection_enabled=request.form.get('inspection_automation_enabled')=='1'
+  inspection_type=(request.form.get('inspection_automation_type') or cfg.get('inspection_automation_type') or 'simples').strip().lower()
+  if inspection_type not in ('simples','guiada'): inspection_type='simples'
+  damage_detection_enabled=request.form.get('inspection_damage_detection_enabled')=='1'
   km_days=_dias('km_automation_weekdays',cfg.get('km_automation_weekdays') or [old_weekday])
   billing_days=_dias('billing_automation_weekdays',cfg.get('billing_automation_weekdays') or [old_weekday])
   inspection_days=_dias('inspection_automation_weekdays',cfg.get('inspection_automation_weekdays') or [old_weekday])
@@ -2834,6 +2854,8 @@ def configuracoes_automacoes():
    'billing_automation_weekdays':billing_days,
    'billing_start_hour':billing_start,'billing_end_hour':billing_end,'billing_reminder_interval_hours':billing_interval,
    'inspection_automation_enabled':inspection_enabled,
+   'inspection_automation_type':inspection_type,
+   'inspection_damage_detection_enabled':damage_detection_enabled,
    'inspection_automation_weekdays':inspection_days,
    'inspection_start_hour':inspection_start,'inspection_end_hour':inspection_end,
    'inspection_reminder_interval_hours':inspection_interval,'inspection_expiry_hours':inspection_expiry,
@@ -3655,6 +3677,17 @@ def assinar_contrato_publico(codigo):
    evento='ASSINATURA_ELETRONICA',descricao=f'Contrato assinado eletronicamente por {nome}. IP registrado: {assinatura.ip or "não informado"}.',
    status_anterior='Visualizado',status_novo='Ativo').criado_em=now
   db.session.commit()
+  # Convite automático do Portal do Motorista: somente após assinatura eletrônica real.
+  # Se já houver DriverAccess ativo, o helper reutiliza o acesso e envia o link de login.
+  try:
+   integration=Integration.query.filter_by(tenant_id=c.tenant_id,tipo='whatsapp').first()
+   cfg_portal=CommunicationService.parse_config(integration)
+   if c.driver and bool(cfg_portal.get('driver_portal_auto_invite_enabled',False)):
+    ok_portal,msg_portal=enviar_acesso_portal_motorista_whatsapp(c.driver)
+    if not ok_portal:
+     app.logger.warning('Contrato %s assinado, mas convite do Portal do Motorista falhou: %s',c.id,msg_portal)
+  except Exception:
+   app.logger.exception('Contrato %s assinado, mas houve falha no convite automático do Portal do Motorista',c.id)
  except (SignatureValidationError,ContractStateError,VehicleStateError) as exc:
   db.session.rollback()
   try:
@@ -4398,6 +4431,51 @@ def enviar_vistoria_whatsapp_automatico(item):
   return False,'Vistoria criada, mas ocorreu uma falha inesperada no envio automático.'
 
 
+
+def _extrair_frames_vistoria(video_bytes,suffix='.webm',quantidade=6):
+ """Extrai poucos frames representativos sem guardar cópia permanente do vídeo."""
+ frames=[]
+ with tempfile.TemporaryDirectory(prefix='ff_vistoria_') as tmp:
+  origem=Path(tmp)/('video'+suffix); origem.write_bytes(video_bytes)
+  padrao=str(Path(tmp)/'frame-%02d.jpg')
+  cmd=['ffmpeg','-hide_banner','-loglevel','error','-i',str(origem),'-vf',f'fps=1/5,scale=960:-2','-frames:v',str(quantidade),'-q:v','4',padrao]
+  subprocess.run(cmd,check=True,timeout=25,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+  for arq in sorted(Path(tmp).glob('frame-*.jpg'))[:quantidade]: frames.append(arq.read_bytes())
+ return frames
+
+def analisar_avarias_vistoria(item):
+ """Triagem assistida. Não aprova/reprova a vistoria e nunca substitui a revisão da locadora."""
+ integration=Integration.query.filter_by(tenant_id=item.tenant_id,tipo='whatsapp').first()
+ cfg=CommunicationService.parse_config(integration)
+ if not cfg.get('inspection_damage_detection_enabled',False):
+  item.damage_analysis_status='DESATIVADA'; return False
+ api_key=(os.getenv('OPENAI_API_KEY') or '').strip()
+ if not api_key:
+  item.damage_analysis_status='AGUARDANDO_CONFIGURACAO'; item.damage_analysis_summary='Detecção de avarias ativada, mas o provedor de visão ainda não possui credencial configurada.'; return False
+ try:
+  video_bytes=storage.download(item.video_key)
+  suffix=Path(item.video_key or '').suffix.lower() or '.webm'
+  frames=_extrair_frames_vistoria(video_bytes,suffix=suffix,quantidade=6)
+  if not frames: raise RuntimeError('Nenhum frame pôde ser extraído do vídeo.')
+  content=[{'type':'input_text','text':('Você faz triagem visual de vistorias de veículos. Analise os frames do MESMO vídeo e procure apenas indícios visíveis de avaria externa: amassado, risco relevante, peça quebrada, trinca, desalinhamento ou dano em roda/para-choque/farol. Não invente dano quando a imagem não permitir concluir. Responda SOMENTE JSON válido com level igual a SEM_INDICIOS, POSSIVEL_AVARIA ou REVISAO_RECOMENDADA e summary em português, curto, citando a região suspeita. A decisão final é humana.')}]
+  for frame in frames:
+   content.append({'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(frame).decode('ascii')})
+  payload={'model':(os.getenv('FROTA_FACIL_VISION_MODEL') or 'gpt-5.6-luna').strip(),'input':[{'role':'user','content':content}], 'max_output_tokens':350}
+  resp=requests.post('https://api.openai.com/v1/responses',headers={'Authorization':f'Bearer {api_key}','Content-Type':'application/json'},json=payload,timeout=35)
+  resp.raise_for_status(); data=resp.json(); texto=''
+  for out in data.get('output',[]):
+   for c in out.get('content',[]):
+    if c.get('type')=='output_text': texto+=c.get('text','')
+  texto=texto.strip().removeprefix('```json').removesuffix('```').strip(); result=json.loads(texto)
+  level=str(result.get('level') or 'REVISAO_RECOMENDADA').upper()
+  if level not in {'SEM_INDICIOS','POSSIVEL_AVARIA','REVISAO_RECOMENDADA'}: level='REVISAO_RECOMENDADA'
+  item.damage_analysis_status='CONCLUIDA'; item.damage_analysis_level=level; item.damage_analysis_summary=str(result.get('summary') or '')[:1500]; item.damage_analysis_at=datetime.utcnow()
+  return True
+ except Exception as exc:
+  app.logger.exception('Falha na triagem assistida de avarias da vistoria %s',item.id)
+  item.damage_analysis_status='FALHA'; item.damage_analysis_level='REVISAO_RECOMENDADA'; item.damage_analysis_summary='A análise automática não pôde ser concluída. Faça a revisão visual do vídeo.'; item.damage_analysis_at=datetime.utcnow()
+  return False
+
 @app.route('/vistorias',methods=['GET','POST'])
 @login_required
 def vistorias():
@@ -4597,6 +4675,11 @@ def vistoria_upload(token):
  descricao=f'Vistoria em vídeo recebida; duração {duracao}s; foto do painel anexada; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
  db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=descricao))
  db.session.commit()
+ # A triagem de avarias é assistiva e isolada: uma falha de IA nunca invalida o envio da vistoria.
+ try:
+  analisar_avarias_vistoria(item); db.session.commit()
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha ao persistir análise de avarias da vistoria %s',item.id)
  try: recalcular_alertas(item.tenant_id)
  except Exception: app.logger.exception('Falha ao recalcular alertas após KM da vistoria %s',item.id)
  return {'ok':True,'message':'Vistoria, foto do painel e quilometragem enviadas com sucesso.'}
@@ -5031,7 +5114,7 @@ def processar_vistorias_automaticas(tenant_id=None):
    except Exception: validade=168
    item=Inspection(
     tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,contract_id=c.id,
-    token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',tipo_vistoria='guiada',
+    token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',tipo_vistoria=((cfg.get('inspection_automation_type') or 'simples') if (cfg.get('inspection_automation_type') or 'simples') in ('simples','guiada') else 'simples'),
     expires_at=datetime.utcnow()+timedelta(hours=validade),
    )
    db.session.add(item); db.session.flush()
