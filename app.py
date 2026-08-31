@@ -1356,6 +1356,7 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
  periodo_meses=max(Decimal('1'),Decimal(str(max(1,(fim-inicio).days+1)))/Decimal('30.4375'))
 
  total_receita=total_repasse=total_pago=total_repasse_pago=total_custos=total_aberto=Decimal('0')
+ total_capital_proprio=Decimal('0')
  vehicle_rows=[]
  for v in vehicles:
   row=rows[v.id]
@@ -1365,6 +1366,8 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
   if inv:
    capital=Decimal(str(inv.capital_proprio or 0))
    aquisicao=Decimal(str(inv.valor_aquisicao or 0))
+   if capital>0:
+    total_capital_proprio+=capital
    if capital>0:
     row['roi_periodo']=(row['resultado_real']/capital)*Decimal('100')
     row['rentabilidade_mensal']=row['roi_periodo']/periodo_meses
@@ -1409,10 +1412,35 @@ def resumo_portal_proprietario(tenant_id, investor_id, inicio, fim, vehicle_id=N
   months.append({'label':cursor.strftime('%m/%Y'),'repasse':float(item['repasse']),'pago':float(item['pago']),'custos':float(item['custos']),'resultado':float(result)})
   cursor=date(cursor.year+1,1,1) if cursor.month==12 else date(cursor.year,cursor.month+1,1)
 
+ total_resultado_real=total_repasse_pago-total_custos
+ total_roi_periodo=None
+ total_rentabilidade_mensal=None
+ total_payback_meses=None
+ if total_capital_proprio>0:
+  total_roi_periodo=(total_resultado_real/total_capital_proprio)*Decimal('100')
+  total_rentabilidade_mensal=total_roi_periodo/periodo_meses
+  if total_resultado_real>0:
+   total_media_mensal=total_resultado_real/periodo_meses
+   if total_media_mensal>0:
+    total_payback_meses=total_capital_proprio/total_media_mensal
+
  return {
   'investor':investor,'vehicles':vehicle_rows,'months':months,
   'ranking':ranked,
-  'totals':{'receita':total_receita,'repasse':total_repasse,'pago':total_pago,'repasse_pago':total_repasse_pago,'custos':total_custos,'resultado':total_repasse-total_custos,'resultado_real':total_repasse_pago-total_custos,'aberto':total_aberto}
+  'totals':{
+   'receita':total_receita,
+   'repasse':total_repasse,
+   'pago':total_pago,
+   'repasse_pago':total_repasse_pago,
+   'custos':total_custos,
+   'resultado':total_repasse-total_custos,
+   'resultado_real':total_resultado_real,
+   'aberto':total_aberto,
+   'capital_proprio':total_capital_proprio,
+   'roi_periodo':total_roi_periodo,
+   'rentabilidade_mensal':total_rentabilidade_mensal,
+   'payback_meses':total_payback_meses,
+  }
  }
 
 
@@ -2200,7 +2228,41 @@ def portal_proprietario():
   vehicle_id=None
  data=resumo_portal_proprietario(tenant_id,investor_id,inicio,fim,vehicle_id=vehicle_id,placa=placa)
  tenant=Tenant.query.get(tenant_id)
- return render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),vehicle_id=vehicle_id,placa=placa,available_vehicles=available_vehicles,**data)
+ html=render_template('portal_proprietario.html',tenant=tenant,inicio=inicio.isoformat(),fim=fim.isoformat(),vehicle_id=vehicle_id,placa=placa,available_vehicles=available_vehicles,**data)
+
+ # Compatibilidade com o template já publicado: substitui apenas o rodapé da
+ # tabela de rentabilidade, permitindo distribuir a correção somente no app.py.
+ totals=data.get('totals') or {}
+ def _fmt_total(valor):
+  try:
+   return brl(valor)
+  except Exception:
+   return '0,00'
+ def _fmt_pct(valor):
+  if valor is None: return '—'
+  try: return f"{Decimal(str(valor)):.2f}%".replace('.',',')
+  except Exception: return '—'
+ def _fmt_payback(valor):
+  if valor is None: return '—'
+  try: return f"{Decimal(str(valor)):.1f} meses".replace('.',',')
+  except Exception: return '—'
+
+ footer_totalizadores=(
+  '<tfoot><tr>'
+  '<td colspan="3"><strong>Totais do período</strong></td>'
+  f'<td class="money"><strong>R$ {_fmt_total(totals.get("receita"))}</strong></td>'
+  f'<td class="money"><strong>R$ {_fmt_total(totals.get("repasse_pago"))}</strong></td>'
+  f'<td class="money"><strong>R$ {_fmt_total(totals.get("custos"))}</strong></td>'
+  f'<td class="money"><strong>R$ {_fmt_total(totals.get("resultado_real"))}</strong></td>'
+  f'<td class="money"><strong>R$ {_fmt_total(totals.get("capital_proprio"))}</strong></td>'
+  f'<td class="money"><strong>{_fmt_pct(totals.get("roi_periodo"))}</strong></td>'
+  f'<td class="money"><strong>{_fmt_pct(totals.get("rentabilidade_mensal"))}</strong></td>'
+  f'<td class="money"><strong>{_fmt_payback(totals.get("payback_meses"))}</strong></td>'
+  '<td>—</td><td></td>'
+  '</tr></tfoot>'
+ )
+ html=re.sub(r'<tfoot>.*?</tfoot>',footer_totalizadores,html,count=1,flags=re.S)
+ return html
 
 
 def _decimal_portal(valor):
