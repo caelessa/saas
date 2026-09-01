@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block title %}Suporte · Frota Fácil{% endblock %}
+{% block heading %}Suporte{% endblock %}
+{% block subheading %}Abra uma solicitação e acompanhe o atendimento pelo próprio sistema.{% endblock %}
+{% block content %}
+<style>.support-grid{display:grid;grid-template-columns:minmax(300px,440px) 1fr;gap:20px}.support-box{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px}.support-box input,.support-box textarea,.support-box select{width:100%;box-sizing:border-box;margin:5px 0 12px;padding:10px;border:1px solid #cbd5e1;border-radius:8px}.support-box textarea{min-height:140px}.support-list{width:100%;border-collapse:collapse}.support-list th,.support-list td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:14px}.status{font-weight:700;font-size:12px}.ABERTO{color:#b45309}.EM_ANALISE{color:#1d4ed8}.RESOLVIDO{color:#15803d}@media(max-width:900px){.support-grid{grid-template-columns:1fr}}</style>
+<div class="support-grid">
+ <div class="support-box"><h3>Nova solicitação</h3><form method="post">
+  <label>Assunto</label><input name="titulo" maxlength="180" required placeholder="Ex.: Cobrança aparece duplicada">
+  <label>Categoria</label><select name="categoria"><option>Duvida</option><option>Problema</option><option>Sugestao</option><option>Financeiro</option><option>Integracao</option><option>Outro</option></select>
+  <label>Prioridade</label><select name="prioridade"><option>Baixa</option><option selected>Normal</option><option>Alta</option><option>Urgente</option></select>
+  <label>Descreva o que aconteceu</label><textarea name="descricao" required placeholder="Explique o que estava fazendo, o que esperava acontecer e o que ocorreu."></textarea>
+  <input type="hidden" name="pagina_origem" value="{{origem}}">
+  {% if origem %}<small>Página de origem registrada: {{origem}}</small>{% endif %}
+  <p><button type="submit">Enviar solicitação</button></p>
+ </form></div>
+ <div class="support-box"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h3>Minhas solicitações</h3>{% if support_admin %}<a href="{{url_for('suporte_central')}}">Central administrativa</a>{% endif %}</div>
+ {% if tickets %}<div style="overflow:auto"><table class="support-list"><thead><tr><th>#</th><th>Assunto</th><th>Categoria</th><th>Prioridade</th><th>Status</th><th>Aberta em</th></tr></thead><tbody>{% for t in tickets %}<tr><td><a href="{{url_for('suporte_ticket',ticket_id=t.id)}}">#{{t.id}}</a></td><td><a href="{{url_for('suporte_ticket',ticket_id=t.id)}}">{{t.titulo}}</a></td><td>{{t.categoria}}</td><td>{{t.prioridade}}</td><td class="status {{t.status}}">{{t.status.replace('_',' ')}}</td><td>{{t.criado_em|sp_datetime('%d/%m/%Y %H:%M')}}</td></tr>{% endfor %}</tbody></table></div>{% else %}<p>Nenhuma solicitação aberta até agora.</p>{% endif %}
+ </div>
+</div>
+{% endblock %}
