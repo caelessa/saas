@@ -1,0 +1,27 @@
+FROTA FÁCIL — RC AJUDA, MANUAL E SUPORTE
+
+Base: app.py mais recente com persistência do tipo de vistoria por fotos.
+
+Arquivos deste pacote:
+- app.py
+- templates/base.html
+- templates/ajuda.html
+- templates/manual_usuario.html
+- templates/suporte.html
+- templates/suporte_ticket.html
+- templates/suporte_central.html
+
+Implementado:
+1. Menu "Ajuda e Suporte".
+2. Manual pesquisável dentro do sistema.
+3. Abertura e acompanhamento de solicitações por tenant.
+4. Registro de assunto, categoria, prioridade, descrição, usuário e página de origem.
+5. Status ABERTO / EM_ANALISE / RESOLVIDO.
+6. Central administrativa de suporte preparada para perfil superadmin/suporte ou e-mails configurados em FROTA_FACIL_SUPPORT_ADMIN_EMAILS.
+7. Nova tabela support_ticket criada automaticamente por db.create_all().
+
+Observação:
+A Central administrativa global não é liberada para administradores comuns da locadora. Para liberar temporariamente a um usuário específico, configure no Render:
+FROTA_FACIL_SUPPORT_ADMIN_EMAILS=email1@dominio.com,email2@dominio.com
+
+A primeira versão não envia notificações externas de novo chamado; o acompanhamento é interno no Frota Fácil.

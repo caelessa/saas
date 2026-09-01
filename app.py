@@ -456,6 +456,26 @@ class BillingAudit(db.Model):
  receipt_uploaded_at=db.Column(db.DateTime,index=True)
  created_at=db.Column(db.DateTime,default=datetime.utcnow,index=True)
  message=db.relationship('MessageQueue')
+
+
+class SupportTicket(db.Model):
+ __tablename__='support_ticket'
+ id=db.Column(db.Integer,primary_key=True)
+ tenant_id=db.Column(db.Integer,index=True,nullable=False)
+ user_id=db.Column(db.Integer,db.ForeignKey('user.id'),nullable=False,index=True)
+ titulo=db.Column(db.String(180),nullable=False)
+ categoria=db.Column(db.String(50),nullable=False,default='Duvida')
+ prioridade=db.Column(db.String(20),nullable=False,default='Normal')
+ descricao=db.Column(db.Text,nullable=False)
+ pagina_origem=db.Column(db.String(255))
+ status=db.Column(db.String(30),nullable=False,default='ABERTO',index=True)
+ resposta=db.Column(db.Text)
+ respondido_por_id=db.Column(db.Integer,db.ForeignKey('user.id'))
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+ atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow,index=True)
+ resolvido_em=db.Column(db.DateTime)
+ user=db.relationship('User',foreign_keys=[user_id])
+ respondido_por=db.relationship('User',foreign_keys=[respondido_por_id])
 @login.user_loader
 def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
@@ -479,7 +499,7 @@ def model_rows(model, tenant_id):
 
 def tenant_backup_payload(tenant_id):
  tenant=Tenant.query.get(tenant_id)
- models=[Driver,Investor,InvestorAccess,InvestorVehicleRule,VehicleInvestment,VehicleInvestmentHistory,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit]
+ models=[Driver,Investor,InvestorAccess,InvestorVehicleRule,VehicleInvestment,VehicleInvestmentHistory,Vehicle,Odometer,MileageRequest,ContractTemplate,Contract,ContractEvent,Document,Maintenance,Inspection,Alert,Integration,MessageQueue,MessageEvent,BillingAudit,SupportTicket]
  return {
   'formato':'frota-facil-tenant-backup-v1',
   'gerado_em_utc':datetime.now(timezone.utc).isoformat(),
@@ -2943,6 +2963,91 @@ def registrar_quilometragem_publica(token):
   recalcular_alertas(req.tenant_id)
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
+
+def _support_admin():
+ perfil=(getattr(current_user,'perfil','') or '').strip().lower()
+ if perfil in ('superadmin','suporte','support'):
+  return True
+ permitidos={x.strip().lower() for x in (os.getenv('FROTA_FACIL_SUPPORT_ADMIN_EMAILS') or '').split(',') if x.strip()}
+ return bool((current_user.email or '').strip().lower() in permitidos)
+
+@app.route('/ajuda')
+@login_required
+def ajuda():
+ abertos=SupportTicket.query.filter_by(tenant_id=tid()).filter(SupportTicket.status.in_(['ABERTO','EM_ANALISE'])).count()
+ return render_template('ajuda.html',abertos=abertos,support_admin=_support_admin())
+
+@app.route('/ajuda/manual')
+@login_required
+def manual_usuario():
+ return render_template('manual_usuario.html')
+
+@app.route('/ajuda/suporte',methods=['GET','POST'])
+@login_required
+def suporte():
+ if request.method=='POST':
+  titulo=(request.form.get('titulo') or '').strip()
+  descricao=(request.form.get('descricao') or '').strip()
+  categoria=(request.form.get('categoria') or 'Duvida').strip()
+  prioridade=(request.form.get('prioridade') or 'Normal').strip()
+  pagina=(request.form.get('pagina_origem') or '').strip()[:255] or None
+  categorias={'Duvida','Problema','Sugestao','Financeiro','Integracao','Outro'}
+  prioridades={'Baixa','Normal','Alta','Urgente'}
+  if categoria not in categorias: categoria='Outro'
+  if prioridade not in prioridades: prioridade='Normal'
+  if not titulo or not descricao:
+   flash('Informe o assunto e descreva a solicitação.','danger')
+  else:
+   ticket=SupportTicket(tenant_id=tid(),user_id=current_user.id,titulo=titulo[:180],categoria=categoria,prioridade=prioridade,descricao=descricao,pagina_origem=pagina,status='ABERTO')
+   db.session.add(ticket); db.session.commit()
+   flash(f'Solicitação #{ticket.id} aberta com sucesso.','success')
+   return redirect(url_for('suporte_ticket',ticket_id=ticket.id))
+ tickets=SupportTicket.query.filter_by(tenant_id=tid()).order_by(SupportTicket.criado_em.desc()).limit(100).all()
+ return render_template('suporte.html',tickets=tickets,origem=(request.args.get('origem') or '').strip()[:255],support_admin=_support_admin())
+
+@app.route('/ajuda/suporte/<int:ticket_id>')
+@login_required
+def suporte_ticket(ticket_id):
+ ticket=SupportTicket.query.filter_by(id=ticket_id,tenant_id=tid()).first_or_404()
+ return render_template('suporte_ticket.html',ticket=ticket,support_admin=_support_admin())
+
+@app.route('/ajuda/suporte/<int:ticket_id>/encerrar',methods=['POST'])
+@login_required
+def suporte_ticket_encerrar(ticket_id):
+ ticket=SupportTicket.query.filter_by(id=ticket_id,tenant_id=tid()).first_or_404()
+ if ticket.status!='RESOLVIDO':
+  ticket.status='RESOLVIDO'; ticket.resolvido_em=datetime.utcnow(); ticket.atualizado_em=datetime.utcnow(); db.session.commit()
+  flash('Solicitação marcada como resolvida.','success')
+ return redirect(url_for('suporte_ticket',ticket_id=ticket.id))
+
+@app.route('/ajuda/suporte-central')
+@login_required
+def suporte_central():
+ if not _support_admin(): abort(403)
+ status=(request.args.get('status') or '').strip().upper()
+ q=SupportTicket.query
+ if status in ('ABERTO','EM_ANALISE','RESOLVIDO'): q=q.filter_by(status=status)
+ tickets=q.order_by(SupportTicket.criado_em.desc()).limit(300).all()
+ tenants={t.id:t for t in Tenant.query.filter(Tenant.id.in_({x.tenant_id for x in tickets})).all()} if tickets else {}
+ return render_template('suporte_central.html',tickets=tickets,tenants=tenants,status_filtro=status)
+
+@app.route('/ajuda/suporte-central/<int:ticket_id>/responder',methods=['POST'])
+@login_required
+def suporte_central_responder(ticket_id):
+ if not _support_admin(): abort(403)
+ ticket=SupportTicket.query.get_or_404(ticket_id)
+ resposta=(request.form.get('resposta') or '').strip()
+ status=(request.form.get('status') or 'EM_ANALISE').strip().upper()
+ if status not in ('ABERTO','EM_ANALISE','RESOLVIDO'): status='EM_ANALISE'
+ ticket.status=status
+ if resposta:
+  ticket.resposta=resposta
+  ticket.respondido_por_id=current_user.id
+ if status=='RESOLVIDO': ticket.resolvido_em=datetime.utcnow()
+ elif ticket.resolvido_em: ticket.resolvido_em=None
+ ticket.atualizado_em=datetime.utcnow(); db.session.commit()
+ flash(f'Solicitação #{ticket.id} atualizada.','success')
+ return redirect(url_for('suporte_central'))
 
 @app.route('/configuracoes')
 @login_required
