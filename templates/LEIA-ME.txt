@@ -1,0 +1,13 @@
+FROTA FÁCIL - RC AJUDA, MANUAL E SUPORTE v2
+
+Alterações desta versão:
+- Terminologia de interface: "tenant" foi substituído por "locadora" onde era exibido ao usuário.
+- Manual do Usuário atualizado e completo disponível para download em PDF e DOCX.
+- Botões de download na Central de Ajuda e dentro do manual online.
+- Mantém a Central de Suporte e todas as correções acumuladas da base anterior.
+
+Arquivos novos em static/:
+- Manual_Frota_Facil_Usuario.pdf
+- Manual_Frota_Facil_Usuario.docx
+
+Atualizar o pacote completo no deploy.
