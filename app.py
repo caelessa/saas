@@ -3077,7 +3077,7 @@ def configuracoes_automacoes():
   billing_enabled=request.form.get('billing_automation_enabled')=='1'
   inspection_enabled=request.form.get('inspection_automation_enabled')=='1'
   inspection_type=(request.form.get('inspection_automation_type') or cfg.get('inspection_automation_type') or 'fotos').strip().lower()
-  if inspection_type not in ('simples','guiada'): inspection_type='simples'
+  if inspection_type not in ('fotos','simples','guiada'): inspection_type='fotos'
   damage_detection_enabled=request.form.get('inspection_damage_detection_enabled')=='1'
   km_days=_dias('km_automation_weekdays',cfg.get('km_automation_weekdays') or [old_weekday])
   billing_days=_dias('billing_automation_weekdays',cfg.get('billing_automation_weekdays') or [old_weekday])
