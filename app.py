@@ -1919,6 +1919,24 @@ def portal_motorista():
  km_requests=MileageRequest.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(MileageRequest.sent_at.desc()).limit(30).all()
  inspections=Inspection.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Inspection.requested_at.desc()).limit(30).all()
  maintenances=Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(list(vehicle_ids))).order_by(Maintenance.id.desc()).limit(30).all() if vehicle_ids else []
+
+ # CRLV-e: somente documentos ativos dos veículos vinculados a contratos atuais
+ # do motorista. Mantemos apenas o CRLV mais recente por veículo.
+ crlv_by_vehicle={}
+ if active_vehicle_ids:
+  crlv_docs=Document.query.filter(
+   Document.tenant_id==tenant_id,
+   Document.entidade_id.in_(list(active_vehicle_ids)),
+   Document.status=='Ativo',
+   Document.tipo.ilike('%CRLV%'),
+  ).order_by(Document.criado_em.desc(),Document.id.desc()).all()
+  for doc in crlv_docs:
+   entidade_norm=unicodedata.normalize('NFKD',str(doc.entidade or '')).encode('ascii','ignore').decode('ascii').lower()
+   if entidade_norm!='veiculo':
+    continue
+   if doc.entidade_id not in crlv_by_vehicle:
+    crlv_by_vehicle[doc.entidade_id]=doc
+
  audit_context={}
  for a in audits:
   c=contract_map.get(a.contract_id); v=c.vehicle if c else None
@@ -1947,7 +1965,53 @@ def portal_motorista():
   if i.contract_id in active_contract_ids and (i.status or '').lower()=='pendente' and (not i.expires_at or i.expires_at>=datetime.utcnow()):
    c=contract_map.get(i.contract_id); numero=c.numero_contrato if c else ''
    pendencias.append({'tipo':'Vistoria','texto':f'{i.vehicle.placa} · {i.vehicle.marca_modelo}'+(f' · {numero}' if numero else ''),'url':url_for('vistoria_publica',token=i.token)})
- return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,active_contract_ids=active_contract_ids,audits=audits,audit_context=audit_context,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias)
+ return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,active_contract_ids=active_contract_ids,audits=audits,audit_context=audit_context,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias,crlv_by_vehicle=crlv_by_vehicle)
+
+def _portal_motorista_crlv_autorizado(document_id):
+ tenant_id=int(session['driver_portal_tenant_id'])
+ driver_id=int(session['driver_portal_driver_id'])
+ doc=Document.query.filter_by(id=document_id,tenant_id=tenant_id,status='Ativo').first_or_404()
+ entidade_norm=unicodedata.normalize('NFKD',str(doc.entidade or '')).encode('ascii','ignore').decode('ascii').lower()
+ tipo_norm=unicodedata.normalize('NFKD',str(doc.tipo or '')).encode('ascii','ignore').decode('ascii').upper()
+ if entidade_norm!='veiculo' or 'CRLV' not in tipo_norm or not doc.entidade_id:
+  abort(404)
+ autorizado=Contract.query.filter(
+  Contract.tenant_id==tenant_id,
+  Contract.driver_id==driver_id,
+  Contract.vehicle_id==doc.entidade_id,
+  Contract.status.in_(['Assinado','Ativo']),
+ ).first()
+ if not autorizado:
+  abort(404)
+ return doc
+
+@app.route('/portal-motorista/documentos/<int:document_id>/crlv')
+@driver_portal_required
+def portal_motorista_visualizar_crlv(document_id):
+ doc=_portal_motorista_crlv_autorizado(document_id)
+ try:
+  conteudo=storage.download(doc.arquivo)
+ except StorageNotFoundError:
+  abort(404)
+ except Exception:
+  app.logger.exception('Falha ao visualizar CRLV %s no Portal do Motorista',doc.id)
+  abort(503)
+ mimetype=mimetypes.guess_type(doc.nome_original or '')[0] or 'application/octet-stream'
+ return send_file(BytesIO(conteudo),as_attachment=False,download_name=doc.nome_original or 'CRLV.pdf',mimetype=mimetype)
+
+@app.route('/portal-motorista/documentos/<int:document_id>/crlv/baixar')
+@driver_portal_required
+def portal_motorista_baixar_crlv(document_id):
+ doc=_portal_motorista_crlv_autorizado(document_id)
+ try:
+  conteudo=storage.download(doc.arquivo)
+ except StorageNotFoundError:
+  abort(404)
+ except Exception:
+  app.logger.exception('Falha ao baixar CRLV %s no Portal do Motorista',doc.id)
+  abort(503)
+ mimetype=mimetypes.guess_type(doc.nome_original or '')[0] or 'application/octet-stream'
+ return send_file(BytesIO(conteudo),as_attachment=True,download_name=doc.nome_original or 'CRLV.pdf',mimetype=mimetype)
 
 def _owner_activation_serializer():
  return URLSafeTimedSerializer(app.config['SECRET_KEY'],salt='frota-facil-owner-activation-v1')
