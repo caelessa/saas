@@ -1,93 +1,55 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vistoria em vídeo — Frota Fácil</title><link rel="stylesheet" href="{{url_for('static',filename='style.css')}}"></head>
-<body class="inspection-public"><main class="inspection-shell">
-  <div class="brand public-brand">Frota Fácil</div>
-  <section class="card inspection-card">
-  {% if expired %}<h1>Link expirado</h1><p>Esta solicitação de vistoria expirou. Entre em contato com a locadora para receber um novo link.</p>
-  {% elif done %}<h1>Vistoria recebida ✓</h1><p>O vídeo, a foto do painel e a quilometragem deste veículo já foram enviados para a locadora.</p>{% if item.km_informada is not none %}<p><b>KM informada:</b> {{'{:,}'.format(item.km_informada).replace(',','.')}} km</p>{% endif %}
-  {% else %}
-    {% set modo=(item.tipo_vistoria or 'guiada') %}
-    {% if modo == 'simples' %}
-      <h1>Vistoria em vídeo</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
-      <div class="inspection-warning">Grave um vídeo contínuo do veículo agora. Mostre frente, laterais, traseira, rodas/pneus e interior. Depois do vídeo, você irá tirar uma foto do painel e informar a quilometragem.</div>
-      <div id="instruction" class="inspection-instruction">Toque em “Ativar câmera”, permita acesso à câmera e ao microfone e depois toque em “Iniciar gravação”.</div>
-      <video id="preview" autoplay muted playsinline></video>
-      <div class="inspection-controls">
-        <button id="cameraBtn" type="button">Ativar câmera</button>
-        <button id="startBtn" type="button" disabled>Iniciar gravação</button>
-        <button id="finishBtn" type="button" disabled>Concluir vídeo</button>
-      </div>
-      <div id="timer" class="muted"></div><div id="status" class="inspection-status"></div>
-    {% else %}
-      <h1>Vistoria guiada</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
-      <div class="inspection-warning">O vídeo deve ser <b>gravado agora</b>. Depois das etapas, você irá tirar uma foto do painel e informar a quilometragem.</div>
-      <div class="inspection-progress"><span id="stepCount">Preparação</span><div class="progress-track"><div id="progressBar"></div></div></div>
-      <div id="instruction" class="inspection-instruction">Toque em “Ativar câmera” e permita acesso à câmera e ao microfone.</div>
-      <video id="preview" autoplay muted playsinline></video>
-      <div class="inspection-controls">
-        <button id="cameraBtn" type="button">Ativar câmera</button>
-        <button id="startBtn" type="button" disabled>Iniciar vistoria</button>
-        <button id="nextBtn" type="button" disabled>Próxima etapa</button>
-        <button id="finishBtn" type="button" disabled>Concluir vídeo</button>
-      </div>
-      <div id="timer" class="muted"></div><div id="status" class="inspection-status"></div>
-    {% endif %}
-
-    <section id="panelStep" style="display:none;margin-top:22px;border-top:1px solid #e5e7eb;padding-top:20px">
-      <h2>Foto do painel</h2>
-      <div id="panelCameraStage">
-        <p class="muted">Toque no botão abaixo. A câmera do celular será aberta para fotografar o painel.</p>
-        <label for="panelPhotoInput" class="button" style="display:block;width:100%;box-sizing:border-box;text-align:center;margin-top:12px;cursor:pointer">📷 Tirar foto do painel</label>
-        <input id="panelPhotoInput" type="file" accept="image/*" capture="environment" style="display:none">
-      </div>
-      <div id="panelConfirmStage" style="display:none">
-        <p class="muted"><b>Confira se a quilometragem está legível.</b></p>
-        <img id="panelPreview" alt="Foto do painel" style="display:block;max-width:100%;border-radius:10px">
-        <div class="inspection-controls" style="margin-top:12px">
-          <button id="usePhotoBtn" type="button">Usar esta foto</button>
-          <button id="retakeBtn" type="button" class="secondary">Tirar novamente</button>
-        </div>
-      </div>
-      <div id="kmStage" style="display:none">
-        <h2 style="margin-top:18px">Quilometragem atual</h2>
-        <p class="muted">Digite exatamente o valor mostrado no painel.</p>
-        <label style="display:block"><b>KM atual</b><input id="kmInput" type="number" min="0" inputmode="numeric" placeholder="Ex.: 85432" style="width:100%;margin-top:6px" required></label>
-        <button id="submitBtn" type="button" disabled style="width:100%;margin-top:14px">Finalizar vistoria</button>
-      </div>
-      <div id="panelStatus" class="inspection-status"></div>
-    </section>
-  {% endif %}
-  </section>
-</main>
-{% if not expired and not done %}
-<script>
-const inspectionMode={{ (item.tipo_vistoria or 'guiada')|tojson }};
-const steps=[
- 'Comece mostrando toda a frente do veículo. Aproxime-se devagar e registre para-choque, faróis e para-brisa.',
- 'Agora caminhe pela lateral direita. Mostre portas, retrovisor, rodas e pneus.',
- 'Mostre toda a traseira do veículo. Registre para-choque, lanternas, tampa e vidro traseiro.',
- 'Continue pela lateral esquerda. Mostre portas, retrovisor, rodas e pneus.',
- 'Aproxime a câmera dos pneus e rodas. Registre rapidamente o estado de cada um.',
- 'Abra o veículo e mostre o interior: bancos, painel, console e estado geral.',
- 'Faça uma visão geral final do veículo. Na próxima tela você irá fotografar o painel e informar a quilometragem.'
-];
-let stream,recorder,chunks=[],videoBlob=null,panelBlob=null,step=-1,startedAt=0,duration=0,timerId;
-const preview=document.getElementById('preview'),cameraBtn=document.getElementById('cameraBtn'),startBtn=document.getElementById('startBtn'),finishBtn=document.getElementById('finishBtn'),instruction=document.getElementById('instruction'),statusBox=document.getElementById('status'),nextBtn=document.getElementById('nextBtn');
-const panelStep=document.getElementById('panelStep'),panelCameraStage=document.getElementById('panelCameraStage'),panelConfirmStage=document.getElementById('panelConfirmStage'),kmStage=document.getElementById('kmStage'),panelPhotoInput=document.getElementById('panelPhotoInput'),usePhotoBtn=document.getElementById('usePhotoBtn'),retakeBtn=document.getElementById('retakeBtn'),panelPreview=document.getElementById('panelPreview'),kmInput=document.getElementById('kmInput'),submitBtn=document.getElementById('submitBtn'),panelStatus=document.getElementById('panelStatus');
-function speak(text){if(inspectionMode!=='guiada')return;try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='pt-BR';u.rate=.95;speechSynthesis.speak(u);}catch(e){}}
-function showStep(){if(inspectionMode!=='guiada')return;instruction.textContent=steps[step];document.getElementById('stepCount').textContent=`Etapa ${step+1} de ${steps.length}`;document.getElementById('progressBar').style.width=`${((step+1)/steps.length)*100}%`;speak(steps[step]);nextBtn.disabled=step>=steps.length-1;finishBtn.disabled=step<steps.length-1;}
-async function enableCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:true});preview.srcObject=stream;cameraBtn.disabled=true;startBtn.disabled=false;instruction.textContent=inspectionMode==='simples'?'Câmera pronta. Toque em Iniciar gravação e mostre todo o veículo em um único vídeo.':'Câmera pronta. Toque em Iniciar vistoria para começar as etapas.';}catch(e){statusBox.textContent='Não foi possível acessar câmera/microfone. Verifique as permissões do navegador.';statusBox.className='inspection-status danger';}}
-cameraBtn.onclick=enableCamera;
-startBtn.onclick=()=>{chunks=[];videoBlob=null;panelBlob=null;let opts={};if(MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus'))opts={mimeType:'video/webm;codecs=vp8,opus'};recorder=new MediaRecorder(stream,opts);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.start(1000);startedAt=Date.now();startBtn.disabled=true;finishBtn.disabled=inspectionMode==='guiada';if(inspectionMode==='guiada'){step=0;showStep();nextBtn.disabled=false;}else{finishBtn.disabled=false;instruction.textContent='Gravando. Mostre frente, laterais, traseira, rodas/pneus e interior. O vídeo deve ter pelo menos 15 segundos.';}timerId=setInterval(()=>{document.getElementById('timer').textContent=`Gravando: ${Math.floor((Date.now()-startedAt)/1000)} s`},1000);};
-if(nextBtn)nextBtn.onclick=()=>{if(step<steps.length-1){step++;showStep();}};
-finishBtn.onclick=()=>{duration=Math.floor((Date.now()-startedAt)/1000);if(duration<15){statusBox.textContent='Grave por pelo menos 15 segundos antes de concluir o vídeo.';statusBox.className='inspection-status danger';return;}finishBtn.disabled=true;if(nextBtn)nextBtn.disabled=true;clearInterval(timerId);recorder.onstop=preparePanelStep;recorder.stop();};
-function preparePanelStep(){videoBlob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});preview.style.display='none';cameraBtn.style.display='none';startBtn.style.display='none';finishBtn.style.display='none';if(nextBtn)nextBtn.style.display='none';if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}panelStep.style.display='block';instruction.textContent='Vídeo concluído. Agora tire uma foto do painel.';statusBox.textContent='Vídeo concluído ✓';statusBox.className='inspection-status ok';panelStep.scrollIntoView({behavior:'smooth',block:'start'});}
-panelPhotoInput.addEventListener('change',()=>{const file=panelPhotoInput.files&&panelPhotoInput.files[0];if(!file)return;if(!file.type.startsWith('image/')){panelStatus.textContent='Selecione uma imagem do painel.';panelStatus.className='inspection-status danger';panelPhotoInput.value='';return;}panelBlob=file;panelPreview.src=URL.createObjectURL(file);panelCameraStage.style.display='none';panelConfirmStage.style.display='block';panelStatus.textContent='';});
-usePhotoBtn.onclick=()=>{panelConfirmStage.style.display='none';kmStage.style.display='block';panelStatus.textContent='Foto confirmada ✓';panelStatus.className='inspection-status ok';kmInput.focus();validatePanel();};
-retakeBtn.onclick=()=>{panelBlob=null;panelPreview.removeAttribute('src');panelPhotoInput.value='';panelConfirmStage.style.display='none';kmStage.style.display='none';panelCameraStage.style.display='block';panelStatus.textContent='Toque em Tirar foto do painel para abrir a câmera novamente.';panelStatus.className='inspection-status';};
-kmInput.addEventListener('input',validatePanel);
-function validatePanel(){submitBtn.disabled=!(panelBlob && kmInput.value && Number(kmInput.value)>=0);}
-submitBtn.onclick=uploadInspection;
-async function uploadInspection(){if(!videoBlob||!panelBlob||!kmInput.value){panelStatus.textContent='Tire a foto do painel e informe a quilometragem.';panelStatus.className='inspection-status danger';return;}submitBtn.disabled=true;const fd=new FormData();fd.append('video',videoBlob,'vistoria.webm');fd.append('painel_photo',panelBlob,'painel.jpg');fd.append('km',kmInput.value);fd.append('duration_seconds',duration);panelStatus.textContent='Enviando vídeo, foto e quilometragem… mantenha esta tela aberta.';panelStatus.className='inspection-status';try{const r=await fetch('{{url_for('vistoria_upload',token=item.token)}}',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw new Error(j.error||'Falha no envio');panelStatus.textContent='Vistoria completa enviada com sucesso ✓';panelStatus.className='inspection-status ok';if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}setTimeout(()=>location.reload(),1200);}catch(e){panelStatus.textContent=e.message;panelStatus.className='inspection-status danger';submitBtn.disabled=false;}}
-</script>
-{% endif %}
-</body></html>
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vistoria — Frota Fácil</title><link rel="stylesheet" href="{{url_for('static',filename='style.css')}}"><style>
+.photo-step{margin-top:18px}.photo-guide{font-size:1.06rem;line-height:1.45;padding:14px;border-radius:12px;background:#f5f7fb}.camera-box{margin-top:12px;overflow:hidden;border-radius:14px;background:#111}.camera-box video{width:100%;display:block;max-height:58vh;object-fit:cover}.photo-preview{width:100%;display:none;border-radius:14px;margin-top:12px}.photo-progress{display:flex;gap:6px;margin:14px 0}.photo-dot{height:7px;flex:1;background:#ddd;border-radius:8px}.photo-dot.done{background:#26a269}.photo-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}.photo-actions button{flex:1;min-width:140px}.success-box{padding:18px;border-radius:14px;background:#eefbf3;border:1px solid #b9ebc9}.success-list{line-height:1.8;margin-top:10px}.km-box{margin-top:16px}.km-box input{width:100%;font-size:1.2rem;padding:12px;margin-top:6px}.privacy-note{font-size:.9rem;color:#666;margin-top:10px}
+</style></head>
+<body class="inspection-public"><main class="inspection-shell"><div class="brand public-brand">Frota Fácil</div><section class="card inspection-card">
+{% if expired %}<h1>Link expirado</h1><p>Esta solicitação de vistoria expirou. Entre em contato com a locadora para receber um novo link.</p>
+{% elif done %}<div class="success-box"><h1>✅ Vistoria enviada com sucesso!</h1><p>Recebemos as evidências deste veículo.</p><div class="success-list">{% if (item.tipo_vistoria or '') == 'fotos' %}📷 Frente recebida<br>📷 Lateral direita recebida<br>📷 Traseira recebida<br>📷 Lateral esquerda recebida<br>{% else %}🎥 Vídeo recebido<br>{% endif %}📸 Foto do painel recebida{% if item.km_informada is not none %}<br>🚗 Quilometragem registrada: <b>{{'{:,}'.format(item.km_informada).replace(',','.')}} km</b>{% endif %}</div><p>A vistoria foi encaminhada para análise da locadora.</p><p><b>Você já pode fechar esta página.</b></p></div>
+{% else %}
+{% set modo=(item.tipo_vistoria or 'fotos') %}
+{% if modo == 'fotos' %}
+<h1>Vistoria por fotos</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
+<div class="inspection-warning"><b>É rápido:</b> vamos tirar 5 fotos agora. A página usa a câmera do celular e não oferece escolha de foto da galeria.</div>
+<div class="photo-progress"><span class="photo-dot" id="dot0"></span><span class="photo-dot" id="dot1"></span><span class="photo-dot" id="dot2"></span><span class="photo-dot" id="dot3"></span><span class="photo-dot" id="dot4"></span></div>
+<div id="guide" class="photo-guide">Toque em <b>Ativar câmera</b>. Depois, siga uma instrução por vez.</div>
+<div class="camera-box"><video id="preview" autoplay muted playsinline></video></div><img id="capturedPreview" class="photo-preview" alt="Foto capturada">
+<div class="photo-actions"><button id="cameraBtn" type="button">Ativar câmera</button><button id="captureBtn" type="button" disabled>📷 Tirar foto</button><button id="nextBtn" type="button" disabled>Próxima foto</button></div>
+<div id="status" class="inspection-status"></div>
+<div id="kmSection" class="km-box" style="display:none"><h2>Quilometragem</h2><p>Confira a foto do painel e digite exatamente a quilometragem mostrada.</p><label><b>KM atual</b><input id="kmInput" type="number" min="0" inputmode="numeric" placeholder="Ex.: 85432"></label><button id="submitBtn" type="button" disabled style="margin-top:12px;width:100%">Enviar vistoria</button><div id="submitStatus" class="inspection-status"></div></div>
+<p class="privacy-note">Dica: fotografe o veículo inteiro, com boa luz e sem cortar para-choques, rodas ou laterais.</p>
+{% else %}
+<h1>{% if modo=='simples' %}Vistoria em vídeo{% else %}Vistoria guiada em vídeo{% endif %}</h1><p><b>{{item.vehicle.placa}}</b> — {{item.vehicle.marca_modelo or 'Veículo'}}</p>
+<div class="inspection-warning">Este link está configurado para vistoria em vídeo. Grave o veículo agora e, ao final, fotografe o painel e informe a quilometragem.</div>
+<div id="instruction" class="inspection-instruction">Toque em “Ativar câmera” e permita acesso à câmera e ao microfone.</div><video id="preview" autoplay muted playsinline></video>
+<div class="inspection-controls"><button id="cameraBtn" type="button">Ativar câmera</button><button id="startBtn" type="button" disabled>Iniciar gravação</button><button id="finishBtn" type="button" disabled>Concluir vídeo</button></div><div id="timer" class="muted"></div><div id="status" class="inspection-status"></div>
+<section id="panelStep" style="display:none;margin-top:22px;border-top:1px solid #e5e7eb;padding-top:20px"><h2>Foto do painel e quilometragem</h2><button id="panelCaptureBtn" type="button">📷 Tirar foto do painel</button><img id="panelPreview" class="photo-preview" alt="Foto do painel"><label style="display:block;margin-top:14px"><b>Quilometragem atual</b><input id="kmInput" type="number" min="0" inputmode="numeric" placeholder="Ex.: 85432" style="width:100%;margin-top:6px"></label><button id="submitBtn" type="button" disabled style="margin-top:14px">Enviar vistoria</button><div id="submitStatus" class="inspection-status"></div></section>
+{% endif %}{% endif %}</section></main>
+{% if not expired and not done %}<script>
+const mode={{ (item.tipo_vistoria or 'fotos')|tojson }};
+let stream=null;const preview=document.getElementById('preview');const cameraBtn=document.getElementById('cameraBtn');const statusBox=document.getElementById('status');
+async function enableCamera(audio){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1600},height:{ideal:1200}},audio:!!audio});preview.srcObject=stream;cameraBtn.disabled=true;return true;}catch(e){statusBox.textContent='Não foi possível abrir a câmera. Verifique a permissão do navegador.';statusBox.className='inspection-status danger';return false;}}
+function canvasPhoto(){const c=document.createElement('canvas');c.width=preview.videoWidth||1280;c.height=preview.videoHeight||960;c.getContext('2d').drawImage(preview,0,0,c.width,c.height);return new Promise(resolve=>c.toBlob(resolve,'image/jpeg',0.9));}
+if(mode==='fotos'){
+ const instructions=[
+  {key:'front_photo',title:'1 de 5 — Frente do veículo',text:'Afaste-se o suficiente para mostrar a frente inteira. Inclua para-choque, faróis, capô e para-brisa.'},
+  {key:'right_photo',title:'2 de 5 — Lateral direita',text:'Mostre a lateral direita inteira, de preferência pegando as duas rodas, portas e retrovisor.'},
+  {key:'rear_photo',title:'3 de 5 — Traseira do veículo',text:'Mostre a traseira inteira. Inclua para-choque, lanternas, tampa e vidro traseiro.'},
+  {key:'left_photo',title:'4 de 5 — Lateral esquerda',text:'Mostre a lateral esquerda inteira, incluindo as duas rodas, portas e retrovisor.'},
+  {key:'painel_photo',title:'5 de 5 — Painel',text:'Entre no veículo, ligue o painel e aproxime a câmera até a quilometragem ficar nítida e legível.'}
+ ];
+ let index=0,photos={};const guide=document.getElementById('guide'),captureBtn=document.getElementById('captureBtn'),nextBtn=document.getElementById('nextBtn'),capturedPreview=document.getElementById('capturedPreview'),kmSection=document.getElementById('kmSection'),kmInput=document.getElementById('kmInput'),submitBtn=document.getElementById('submitBtn'),submitStatus=document.getElementById('submitStatus');
+ function renderGuide(){const s=instructions[index];guide.innerHTML='<b>'+s.title+'</b><br>'+s.text;captureBtn.textContent=photos[s.key]?'📷 Refazer foto':'📷 Tirar foto';nextBtn.textContent=index===instructions.length-1?'Continuar':'Próxima foto';for(let i=0;i<instructions.length;i++)document.getElementById('dot'+i).classList.toggle('done',!!photos[instructions[i].key]);}
+ cameraBtn.onclick=async()=>{if(await enableCamera(false)){captureBtn.disabled=false;renderGuide();}};
+ captureBtn.onclick=async()=>{const blob=await canvasPhoto();if(!blob){statusBox.textContent='Não foi possível capturar a foto. Tente novamente.';return;}photos[instructions[index].key]=blob;capturedPreview.src=URL.createObjectURL(blob);capturedPreview.style.display='block';statusBox.textContent='Foto capturada ✓. Confira e, se estiver boa, avance.';statusBox.className='inspection-status ok';nextBtn.disabled=false;renderGuide();};
+ nextBtn.onclick=()=>{if(!photos[instructions[index].key])return;if(index<instructions.length-1){index++;capturedPreview.style.display='none';nextBtn.disabled=true;statusBox.textContent='';renderGuide();window.scrollTo({top:0,behavior:'smooth'});}else{kmSection.style.display='block';captureBtn.disabled=true;nextBtn.disabled=true;guide.innerHTML='<b>Fotos concluídas ✓</b><br>Agora digite a quilometragem mostrada no painel.';kmSection.scrollIntoView({behavior:'smooth',block:'start'});}};
+ kmInput.addEventListener('input',()=>{submitBtn.disabled=!(Object.keys(photos).length===5 && kmInput.value && Number(kmInput.value)>=0);});
+ submitBtn.onclick=async()=>{submitBtn.disabled=true;const fd=new FormData();for(const s of instructions)fd.append(s.key,photos[s.key],s.key+'.jpg');fd.append('km',kmInput.value);submitStatus.textContent='Enviando as fotos e a quilometragem… mantenha esta tela aberta.';try{const r=await fetch('{{url_for('vistoria_upload',token=item.token)}}',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw new Error(j.error||'Falha no envio');submitStatus.textContent='Vistoria enviada com sucesso ✓';submitStatus.className='inspection-status ok';if(stream)stream.getTracks().forEach(t=>t.stop());setTimeout(()=>location.reload(),900);}catch(e){submitStatus.textContent=e.message;submitStatus.className='inspection-status danger';submitBtn.disabled=false;}};
+ renderGuide();
+}else{
+ let recorder,chunks=[],videoBlob=null,panelBlob=null,startedAt=0,duration=0,timerId;const startBtn=document.getElementById('startBtn'),finishBtn=document.getElementById('finishBtn'),instruction=document.getElementById('instruction'),panelStep=document.getElementById('panelStep'),panelCaptureBtn=document.getElementById('panelCaptureBtn'),panelPreview=document.getElementById('panelPreview'),kmInput=document.getElementById('kmInput'),submitBtn=document.getElementById('submitBtn'),submitStatus=document.getElementById('submitStatus');
+ cameraBtn.onclick=async()=>{if(await enableCamera(true)){startBtn.disabled=false;instruction.textContent='Câmera pronta. Grave o veículo inteiro por pelo menos 15 segundos.';}};
+ startBtn.onclick=()=>{chunks=[];let opts={};if(MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus'))opts={mimeType:'video/webm;codecs=vp8,opus'};recorder=new MediaRecorder(stream,opts);recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};recorder.start(1000);startedAt=Date.now();startBtn.disabled=true;finishBtn.disabled=false;timerId=setInterval(()=>document.getElementById('timer').textContent='Gravando: '+Math.floor((Date.now()-startedAt)/1000)+' s',1000);};
+ finishBtn.onclick=()=>{duration=Math.floor((Date.now()-startedAt)/1000);if(duration<15){statusBox.textContent='Grave por pelo menos 15 segundos.';statusBox.className='inspection-status danger';return;}clearInterval(timerId);finishBtn.disabled=true;recorder.onstop=()=>{videoBlob=new Blob(chunks,{type:recorder.mimeType||'video/webm'});statusBox.textContent='Vídeo concluído ✓';panelStep.style.display='block';panelStep.scrollIntoView({behavior:'smooth'});};recorder.stop();};
+ panelCaptureBtn.onclick=async()=>{panelBlob=await canvasPhoto();panelPreview.src=URL.createObjectURL(panelBlob);panelPreview.style.display='block';validate();};kmInput.addEventListener('input',validate);function validate(){submitBtn.disabled=!(videoBlob&&panelBlob&&kmInput.value&&Number(kmInput.value)>=0);}
+ submitBtn.onclick=async()=>{submitBtn.disabled=true;const fd=new FormData();fd.append('video',videoBlob,'vistoria.webm');fd.append('painel_photo',panelBlob,'painel.jpg');fd.append('km',kmInput.value);fd.append('duration_seconds',duration);submitStatus.textContent='Enviando vistoria…';try{const r=await fetch('{{url_for('vistoria_upload',token=item.token)}}',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw new Error(j.error||'Falha no envio');submitStatus.textContent='Vistoria enviada com sucesso ✓';submitStatus.className='inspection-status ok';stream.getTracks().forEach(t=>t.stop());setTimeout(()=>location.reload(),900);}catch(e){submitStatus.textContent=e.message;submitStatus.className='inspection-status danger';submitBtn.disabled=false;}};
+}
+</script>{% endif %}</body></html>

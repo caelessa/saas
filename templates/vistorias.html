@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
 {% block heading %}Vistorias{% endblock %}
-{% block subheading %}Solicite vistorias em vídeo no modo guiado ou simples. O mesmo fluxo registra foto do painel e quilometragem atual.{% endblock %}
+{% block subheading %}Solicite vistorias fotográficas guiadas ou, quando necessário, em vídeo. O fluxo registra evidências do veículo, painel e quilometragem atual.{% endblock %}
 {% block content %}
 <section class="card">
-  <h2>Nova vistoria em vídeo</h2>
+  <h2>Nova vistoria</h2>
   <form method="post" class="form-grid">
     <label>Veículo
       <select name="vehicle_id" required>
@@ -12,39 +12,47 @@
     </label>
     <label>Tipo de vistoria
       <select name="tipo_vistoria" required>
-        <option value="simples" selected>Vídeo simples</option>
-        <option value="guiada">Vistoria guiada</option>
+        <option value="fotos" selected>Fotos guiadas — 4 lados + painel</option>
+        <option value="simples">Vídeo simples</option>
+        <option value="guiada">Vistoria guiada em vídeo</option>
       </select>
-      <small class="muted">Vídeo simples: o motorista grava o veículo livremente. Guiada: o sistema conduz por etapas.</small>
+      <small class="muted">Fotos guiadas é o modo recomendado para maior adesão: frente, direita, traseira, esquerda e painel, sempre capturados pela câmera na hora.</small>
     </label>
     <label>Validade do link
       <select name="expira_horas"><option value="24">24 horas</option><option value="48" selected>48 horas</option><option value="72">72 horas</option></select>
     </label>
     <button type="submit">Gerar link de vistoria</button>
   </form>
-  <p class="muted">O veículo precisa estar vinculado a um motorista por contrato vigente. Nos dois modos o vídeo é gravado pela câmera dentro do link. Ao concluir, o motorista fotografa o painel e informa a KM; o valor é registrado automaticamente no histórico do veículo.</p>
+  <p class="muted">O veículo precisa estar vinculado a um motorista por contrato vigente. No modo Fotos guiadas não há upload da galeria: a página abre a câmera e conduz o motorista pelas 5 fotos. Ao final, ele informa a KM, que é registrada automaticamente no histórico do veículo.</p>
 </section>
 
 <section class="card">
   <h2>Solicitações</h2>
   <div class="table-wrap"><table>
-    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Vídeo</th><th>Painel / KM</th><th>Ações</th></tr>
+    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Evidências</th><th>Painel / KM</th><th>Ações</th></tr>
     {% for x in items %}
     <tr>
       <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
       <td>{{x.driver.nome if x.driver else '-'}}</td>
-      <td>{% if (x.tipo_vistoria or 'guiada') == 'simples' %}<span class="alert-status info">Vídeo simples</span>{% else %}<span class="alert-status info">Guiada</span>{% endif %}</td>
+      <td>{% if (x.tipo_vistoria or '') == 'fotos' %}<span class="alert-status ok">Fotos guiadas</span>{% elif (x.tipo_vistoria or 'guiada') == 'simples' %}<span class="alert-status info">Vídeo simples</span>{% else %}<span class="alert-status info">Vídeo guiado</span>{% endif %}</td>
       <td><span class="alert-status {% if x.status=='Aprovada' %}ok{% elif x.status in ['Regravar'] %}danger{% elif x.status=='Recebida' %}warning{% else %}info{% endif %}">{{x.status}}</span></td>
       <td>{{x.requested_at.strftime('%d/%m/%Y %H:%M') if x.requested_at else '-'}}</td>
-      <td>{% if x.video_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_video',id=x.id)}}">▶ Ver vídeo</a>{% else %}-{% endif %}</td>
-      <td>{% if x.painel_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_painel',id=x.id)}}">📷 Ver painel</a><br>{% endif %}{% if x.km_informada is not none %}<b>{{'{:,}'.format(x.km_informada).replace(',','.')}} km</b>{% elif not x.painel_photo_key %}-{% endif %}</td>
+      <td>{% if (x.tipo_vistoria or '') == 'fotos' %}
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          {% if x.front_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='frente')}}">📷 Frente</a>{% endif %}
+          {% if x.right_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='direita')}}">📷 Direita</a>{% endif %}
+          {% if x.rear_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='traseira')}}">📷 Traseira</a>{% endif %}
+          {% if x.left_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='esquerda')}}">📷 Esquerda</a>{% endif %}
+        </div>
+        {% elif x.video_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_video',id=x.id)}}">▶ Ver vídeo</a>{% else %}-{% endif %}</td>
+      <td>{% if x.painel_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='painel')}}">📷 Ver painel</a><br>{% endif %}{% if x.km_informada is not none %}<b>{{'{:,}'.format(x.km_informada).replace(',','.')}} km</b>{% elif not x.painel_photo_key %}-{% endif %}</td>
       <td class="inspection-actions">
         {% set link=url_for('vistoria_publica',token=x.token,_external=True) %}
         <button type="button" class="button secondary" onclick="navigator.clipboard.writeText('{{link}}');this.textContent='Link copiado ✓'">Copiar link</button>
-        {% if x.driver and x.driver.telefone %}<a class="button secondary" target="_blank" href="https://wa.me/{{x.driver.telefone|replace('+','')|replace(' ','')|replace('-','')|replace('(','')|replace(')','')}}?text={{('Olá, '+x.driver.nome+'! Faça a vistoria em vídeo do veículo '+x.vehicle.placa+' pelo link: '+link)|urlencode}}">WhatsApp</a>{% endif %}
+        {% if x.driver and x.driver.telefone %}<a class="button secondary" target="_blank" href="https://wa.me/{{x.driver.telefone|replace('+','')|replace(' ','')|replace('-','')|replace('(','')|replace(')','')}}?text={{('Olá, '+x.driver.nome+'! Faça a vistoria do veículo '+x.vehicle.placa+' pelo link: '+link)|urlencode}}">WhatsApp</a>{% endif %}
         {% if x.status=='Recebida' %}
         <form method="post" action="{{url_for('aprovar_vistoria',id=x.id)}}" class="inline"><button>Aprovar</button></form>
-        <details><summary class="button danger">Pedir nova gravação</summary><form method="post" action="{{url_for('rejeitar_vistoria',id=x.id)}}"><input name="motivo" placeholder="Motivo (ex.: lateral não mostrada)"><button class="danger">Confirmar</button></form></details>
+        <details><summary class="button danger">Pedir nova vistoria</summary><form method="post" action="{{url_for('rejeitar_vistoria',id=x.id)}}"><input name="motivo" placeholder="Motivo (ex.: foto da lateral não ficou clara)"><button class="danger">Confirmar</button></form></details>
         {% endif %}
         {% if x.status=='Regravar' and x.notes %}<small class="muted">{{x.notes}}</small>{% endif %}
       </td>
