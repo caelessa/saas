@@ -3032,6 +3032,49 @@ def ajuda():
  abertos=SupportTicket.query.filter_by(tenant_id=tid()).filter(SupportTicket.status.in_(['ABERTO','EM_ANALISE'])).count()
  return render_template('ajuda.html',abertos=abertos,support_admin=False)
 
+@app.route('/ajuda/assistente',methods=['GET','POST'])
+@login_required
+def ajuda_assistente():
+ pergunta=''; resposta=''; erro=''
+ if request.method=='POST':
+  pergunta=(request.form.get('pergunta') or '').strip()[:1200]
+  if not pergunta: erro='Digite uma pergunta sobre o Frota Fácil.'
+  else:
+   api_key=(os.getenv('OPENAI_API_KEY') or '').strip()
+   if not api_key: erro='O assistente ainda não está configurado. Abra uma solicitação de suporte.'
+   else:
+    try:
+     base=(
+      'FROTA FÁCIL - BASE DO ASSISTENTE DE AJUDA.\n'
+      'O Frota Fácil é uma plataforma de gestão e automação para locadoras e frotas.\n'
+      'Motoristas: cadastro e gestão; o Portal do Motorista mostra pendências e informações dos contratos atuais.\n'
+      'Veículos: cadastro, situação, quilometragem, histórico, documentos, contratos, vistorias e manutenções.\n'
+      'Proprietários: cadastro, veículos vinculados, Portal do Proprietário e acompanhamento financeiro conforme regras configuradas.\n'
+      'Contratos: criação e acompanhamento; o convite do Portal do Motorista pode ser enviado após assinatura quando habilitado.\n'
+      'Cobranças: acompanhamento semanal, comprovantes e baixa manual. Cobrança paga não deve continuar recebendo lembretes da mesma competência. A automação pode ser desabilitada.\n'
+      'Quilometragem: solicitações podem pedir foto do painel e KM digitada. A vistoria automática pode ser o fluxo principal para evitar solicitação redundante de KM.\n'
+      'Vistorias: a locadora escolhe o tipo padrão. O modo recomendado Fotos guiadas - 4 lados + painel pede frente, lateral direita, traseira, lateral esquerda, painel e KM digitada, com captura guiada no momento. Também existem modos em vídeo.\n'
+      'Análise de avarias: quando habilitada, analisa as quatro fotos externas. Sem vistoria anterior procura possíveis avarias visíveis sem afirmar que são novas; com histórico pode comparar posições equivalentes. A decisão final é humana.\n'
+      'Manutenções: cadastro e acompanhamento de manutenções e alertas.\n'
+      'Documentos: CRLV-e pode ser visualizado e baixado no Portal do Motorista para veículos de contratos atuais aos quais o motorista está vinculado.\n'
+      'WhatsApp e automações: configurações de cobrança, KM e vistoria são independentes.\n'
+      'Fuso horário: cada locadora pode ter seu próprio fuso configurado e as telas devem respeitá-lo.\n'
+      'Ajuda e Suporte: o usuário pode consultar o Manual, perguntar ao assistente e abrir solicitação. A administração dos chamados usa conta administrativa Frota Fácil separada.\n'
+      'REGRA: responda somente sobre uso e funcionalidades do Frota Fácil com base nesta base. Se faltar informação, diga que não encontrou na base e recomende abrir suporte. Não invente telas, botões ou regras. Não forneça dados de outras locadoras. Responda em português do Brasil, de forma curta e prática.'
+     )
+     payload={'model':(os.getenv('FROTA_FACIL_HELP_MODEL') or 'gpt-5.6-luna').strip(),'input':[{'role':'system','content':[{'type':'input_text','text':base}]},{'role':'user','content':[{'type':'input_text','text':pergunta}]}],'max_output_tokens':600}
+     resp=requests.post('https://api.openai.com/v1/responses',headers={'Authorization':f'Bearer {api_key}','Content-Type':'application/json'},json=payload,timeout=45)
+     if resp.status_code>=400: raise RuntimeError('HTTP %s' % resp.status_code)
+     partes=[]
+     for out in resp.json().get('output',[]):
+      for c in out.get('content',[]):
+       if c.get('type')=='output_text' and c.get('text'): partes.append(c.get('text').strip())
+     resposta='\n'.join(partes).strip()
+     if not resposta: erro='Não consegui gerar uma resposta agora. Você pode abrir uma solicitação de suporte.'
+    except Exception as exc:
+     print('Assististente de ajuda:',repr(exc)); erro='O assistente está temporariamente indisponível. Você pode abrir uma solicitação de suporte.'
+ return render_template('ajuda_assistente.html',pergunta=pergunta,resposta=resposta,erro=erro)
+
 @app.route('/ajuda/manual')
 @login_required
 def manual_usuario():

@@ -1,0 +1,33 @@
+FROTA FÁCIL — RC CONTA ADMINISTRATIVA DE SUPORTE
+
+Objetivo
+- Separar a Central de Suporte das contas das locadoras.
+- Locadoras continuam abrindo e acompanhando chamados em Ajuda e Suporte.
+- A equipe Frota Fácil usa uma autenticação administrativa independente.
+
+NOVO ACESSO ADMINISTRATIVO
+- Login: /admin-frota/entrar
+- Central: /admin-frota/suporte
+
+CONFIGURAÇÃO NO RENDER (Environment)
+Crie estas variáveis antes/reinicie o serviço:
+
+FROTA_FACIL_ADMIN_EMAIL=seu-email-administrativo
+FROTA_FACIL_ADMIN_PASSWORD=sua-senha-forte
+FROTA_FACIL_ADMIN_NAME=Seu nome
+
+No primeiro startup após definir as variáveis, se ainda não existir uma conta com esse e-mail,
+o sistema cria automaticamente o primeiro FrotaAdmin com a senha armazenada em hash.
+
+IMPORTANTE
+- Essa conta NÃO pertence a tenant/locadora.
+- Ela não utiliza o painel operacional das locadoras.
+- Ela acessa somente a Central Administrativa de Suporte criada nesta RC.
+- O endereço antigo /ajuda/suporte-central deixa de expor chamados dentro de contas de locadoras.
+- Chamados existentes são preservados.
+- A tabela frota_admin é criada automaticamente.
+- support_ticket recebe os campos respondido_por_admin_id e respondido_por_nome automaticamente.
+
+RECOMENDAÇÃO
+Use um e-mail administrativo exclusivo e uma senha forte. Depois do primeiro acesso, mantenha as
+variáveis de ambiente protegidas no Render.
