@@ -4862,18 +4862,106 @@ def _extrair_frames_vistoria(video_bytes,suffix='.webm',quantidade=6):
   for arq in sorted(Path(tmp).glob('frame-*.jpg'))[:quantidade]: frames.append(arq.read_bytes())
  return frames
 
+def _imagem_vistoria_para_data_url(key,mime=None):
+ """Baixa uma evidência da vistoria e devolve data URL para análise visual."""
+ conteudo=storage.download(key)
+ tipo=(mime or '').strip().lower()
+ if tipo not in ('image/jpeg','image/png','image/webp'):
+  ext=Path(key or '').suffix.lower()
+  tipo='image/png' if ext=='.png' else ('image/webp' if ext=='.webp' else 'image/jpeg')
+ return 'data:'+tipo+';base64,'+base64.b64encode(conteudo).decode('ascii')
+
+def _vistoria_fotografica_anterior(item):
+ """Retorna a vistoria fotográfica anterior do mesmo veículo, quando houver evidências completas."""
+ return (Inspection.query
+  .filter(Inspection.tenant_id==item.tenant_id,
+          Inspection.vehicle_id==item.vehicle_id,
+          Inspection.id < item.id,
+          Inspection.tipo_vistoria=='fotos',
+          Inspection.front_photo_key.isnot(None),
+          Inspection.right_photo_key.isnot(None),
+          Inspection.rear_photo_key.isnot(None),
+          Inspection.left_photo_key.isnot(None))
+  .order_by(Inspection.id.desc())
+  .first())
+
+def _resultado_json_responses(data):
+ texto=''
+ for out in data.get('output',[]):
+  for c in out.get('content',[]):
+   if c.get('type')=='output_text': texto+=c.get('text','')
+ texto=texto.strip()
+ if texto.startswith('```json'): texto=texto[7:]
+ elif texto.startswith('```'): texto=texto[3:]
+ if texto.endswith('```'): texto=texto[:-3]
+ return json.loads(texto.strip())
+
 def analisar_avarias_vistoria(item):
  """Triagem assistida. Não aprova/reprova a vistoria e nunca substitui a revisão da locadora."""
- if (item.tipo_vistoria or '')=='fotos':
-  item.damage_analysis_status='NAO_APLICAVEL'; item.damage_analysis_summary='Triagem de vídeo não aplicável à vistoria fotográfica.'; return False
  integration=Integration.query.filter_by(tenant_id=item.tenant_id,tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  if not cfg.get('inspection_damage_detection_enabled',False):
-  item.damage_analysis_status='DESATIVADA'; return False
+  item.damage_analysis_status='DESATIVADA'; item.damage_analysis_summary='Análise assistida de avarias desativada nas configurações.'; return False
  api_key=(os.getenv('OPENAI_API_KEY') or '').strip()
  if not api_key:
   item.damage_analysis_status='AGUARDANDO_CONFIGURACAO'; item.damage_analysis_summary='Detecção de avarias ativada, mas o provedor de visão ainda não possui credencial configurada.'; return False
  try:
+  modo=(item.tipo_vistoria or '').strip().lower()
+  if modo=='fotos':
+   atuais=[
+    ('FRENTE',item.front_photo_key,item.front_photo_mime),
+    ('LATERAL DIREITA',item.right_photo_key,item.right_photo_mime),
+    ('TRASEIRA',item.rear_photo_key,item.rear_photo_mime),
+    ('LATERAL ESQUERDA',item.left_photo_key,item.left_photo_mime),
+   ]
+   if not all(k for _,k,_ in atuais): raise RuntimeError('As quatro fotos externas não estão completas.')
+   anterior=_vistoria_fotografica_anterior(item)
+   content=[{'type':'input_text','text':(
+    'Você faz TRIAGEM VISUAL ASSISTIDA de vistoria veicular. A decisão final é humana. '
+    'Analise separadamente FRENTE, LATERAL DIREITA, TRASEIRA e LATERAL ESQUERDA. '
+    'Procure somente indícios visíveis de avaria externa como amassado, risco relevante, trinca, peça quebrada, desalinhamento, dano em roda, para-choque, farol ou lanterna. '
+    'Não invente danos e não trate reflexo, sujeira, sombra ou baixa qualidade como avaria confirmada. '
+    'Quando houver fotos ANTERIORES da mesma posição, compare anterior x atual e dê prioridade a POSSÍVEIS AVARIAS NOVAS. '
+    'Responda SOMENTE JSON válido no formato: '
+    '{"level":"SEM_INDICIOS|POSSIVEL_AVARIA|REVISAO_RECOMENDADA","summary":"resumo curto em português",'
+    '"sides":{"frente":{"level":"...","detail":"..."},"direita":{"level":"...","detail":"..."},"traseira":{"level":"...","detail":"..."},"esquerda":{"level":"...","detail":"..."}}}. '
+    'Use REVISAO_RECOMENDADA quando a imagem não permitir avaliação confiável.')}]
+   if anterior:
+    anteriores=[
+     ('FRENTE',anterior.front_photo_key,anterior.front_photo_mime),
+     ('LATERAL DIREITA',anterior.right_photo_key,anterior.right_photo_mime),
+     ('TRASEIRA',anterior.rear_photo_key,anterior.rear_photo_mime),
+     ('LATERAL ESQUERDA',anterior.left_photo_key,anterior.left_photo_mime),
+    ]
+    content.append({'type':'input_text','text':f'VISTORIA ANTERIOR de referência (ID {anterior.id}). As quatro imagens abaixo são ANTERIORES, na ordem indicada.'})
+    for rotulo,key,mime in anteriores:
+     content.append({'type':'input_text','text':'ANTERIOR — '+rotulo})
+     content.append({'type':'input_image','image_url':_imagem_vistoria_para_data_url(key,mime)})
+   else:
+    content.append({'type':'input_text','text':'Não existe vistoria fotográfica anterior completa. Faça análise isolada, sem afirmar que um dano é novo.'})
+   content.append({'type':'input_text','text':'VISTORIA ATUAL. As quatro imagens abaixo são ATUAIS, na ordem indicada.'})
+   for rotulo,key,mime in atuais:
+    content.append({'type':'input_text','text':'ATUAL — '+rotulo})
+    content.append({'type':'input_image','image_url':_imagem_vistoria_para_data_url(key,mime)})
+   payload={'model':(os.getenv('FROTA_FACIL_VISION_MODEL') or 'gpt-5.6-luna').strip(),'input':[{'role':'user','content':content}], 'max_output_tokens':700}
+   resp=requests.post('https://api.openai.com/v1/responses',headers={'Authorization':f'Bearer {api_key}','Content-Type':'application/json'},json=payload,timeout=55)
+   resp.raise_for_status(); result=_resultado_json_responses(resp.json())
+   level=str(result.get('level') or 'REVISAO_RECOMENDADA').upper()
+   if level not in {'SEM_INDICIOS','POSSIVEL_AVARIA','REVISAO_RECOMENDADA'}: level='REVISAO_RECOMENDADA'
+   sides=result.get('sides') if isinstance(result.get('sides'),dict) else {}
+   nomes=[('frente','Frente'),('direita','Direita'),('traseira','Traseira'),('esquerda','Esquerda')]
+   linhas=[]
+   resumo=str(result.get('summary') or '').strip()
+   if resumo: linhas.append(resumo)
+   for chave,nome in nomes:
+    dados=sides.get(chave) if isinstance(sides.get(chave),dict) else {}
+    detalhe=str(dados.get('detail') or '').strip()
+    nivel=str(dados.get('level') or '').upper().strip()
+    if detalhe: linhas.append(f'{nome}: {detalhe}' + (f' [{nivel}]' if nivel else ''))
+   linhas.append('Comparação com vistoria anterior: '+('sim (ID '+str(anterior.id)+').' if anterior else 'não havia referência fotográfica anterior completa.'))
+   item.damage_analysis_status='CONCLUIDA'; item.damage_analysis_level=level; item.damage_analysis_summary='\n'.join(linhas)[:4000]; item.damage_analysis_at=datetime.utcnow()
+   return True
+
   video_bytes=storage.download(item.video_key)
   suffix=Path(item.video_key or '').suffix.lower() or '.webm'
   frames=_extrair_frames_vistoria(video_bytes,suffix=suffix,quantidade=6)
@@ -4883,18 +4971,14 @@ def analisar_avarias_vistoria(item):
    content.append({'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(frame).decode('ascii')})
   payload={'model':(os.getenv('FROTA_FACIL_VISION_MODEL') or 'gpt-5.6-luna').strip(),'input':[{'role':'user','content':content}], 'max_output_tokens':350}
   resp=requests.post('https://api.openai.com/v1/responses',headers={'Authorization':f'Bearer {api_key}','Content-Type':'application/json'},json=payload,timeout=35)
-  resp.raise_for_status(); data=resp.json(); texto=''
-  for out in data.get('output',[]):
-   for c in out.get('content',[]):
-    if c.get('type')=='output_text': texto+=c.get('text','')
-  texto=texto.strip().removeprefix('```json').removesuffix('```').strip(); result=json.loads(texto)
+  resp.raise_for_status(); result=_resultado_json_responses(resp.json())
   level=str(result.get('level') or 'REVISAO_RECOMENDADA').upper()
   if level not in {'SEM_INDICIOS','POSSIVEL_AVARIA','REVISAO_RECOMENDADA'}: level='REVISAO_RECOMENDADA'
   item.damage_analysis_status='CONCLUIDA'; item.damage_analysis_level=level; item.damage_analysis_summary=str(result.get('summary') or '')[:1500]; item.damage_analysis_at=datetime.utcnow()
   return True
- except Exception as exc:
+ except Exception:
   app.logger.exception('Falha na triagem assistida de avarias da vistoria %s',item.id)
-  item.damage_analysis_status='FALHA'; item.damage_analysis_level='REVISAO_RECOMENDADA'; item.damage_analysis_summary='A análise automática não pôde ser concluída. Faça a revisão visual do vídeo.'; item.damage_analysis_at=datetime.utcnow()
+  item.damage_analysis_status='FALHA'; item.damage_analysis_level='REVISAO_RECOMENDADA'; item.damage_analysis_summary='A análise automática não pôde ser concluída. Faça a revisão visual das evidências da vistoria.'; item.damage_analysis_at=datetime.utcnow()
   return False
 
 @app.route('/vistorias',methods=['GET','POST'])
@@ -5152,13 +5236,10 @@ def vistoria_upload(token):
   _req.status='Aguardando conferência' if (tenant_km and tenant_km.conferir_km_motorista) else 'Concluído'
  db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento=evento_recebido,descricao=descricao))
  db.session.commit()
- if modo!='fotos':
-  try: analisar_avarias_vistoria(item); db.session.commit()
-  except Exception:
-   db.session.rollback(); app.logger.exception('Falha ao persistir análise de avarias da vistoria %s',item.id)
- else:
-  item.damage_analysis_status='NAO_APLICAVEL'; item.damage_analysis_summary='Triagem por frames de vídeo não executada na vistoria fotográfica.'
-  db.session.commit()
+ try:
+  analisar_avarias_vistoria(item); db.session.commit()
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha ao persistir análise de avarias da vistoria %s',item.id)
  try: recalcular_alertas(item.tenant_id)
  except Exception: app.logger.exception('Falha ao recalcular alertas após KM da vistoria %s',item.id)
  if modo=='fotos':
