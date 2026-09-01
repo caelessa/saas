@@ -344,6 +344,14 @@ class Inspection(db.Model):
  duration_seconds=db.Column(db.Integer)
  painel_photo_key=db.Column(db.String(255))
  painel_photo_mime=db.Column(db.String(80))
+ front_photo_key=db.Column(db.String(255))
+ front_photo_mime=db.Column(db.String(80))
+ right_photo_key=db.Column(db.String(255))
+ right_photo_mime=db.Column(db.String(80))
+ rear_photo_key=db.Column(db.String(255))
+ rear_photo_mime=db.Column(db.String(80))
+ left_photo_key=db.Column(db.String(255))
+ left_photo_mime=db.Column(db.String(80))
  km_informada=db.Column(db.Integer)
  brightness_avg=db.Column(db.Numeric(8,2))
  brightness_status=db.Column(db.String(30))
@@ -824,7 +832,7 @@ def migrate_schema():
   ],
   'maintenance':[('alerta_km_antes','INTEGER DEFAULT 500'),('alerta_dias_antes','INTEGER DEFAULT 7'),('status',"VARCHAR(20) DEFAULT 'Ativa'"),('oficina','VARCHAR(160)'),('proxima_hora','VARCHAR(5)'),('notificar_motorista','BOOLEAN DEFAULT FALSE'),('lembrete_um_dia','BOOLEAN DEFAULT TRUE'),('notificacao_agendamento_id','INTEGER'),('notificacao_lembrete_id','INTEGER'),('concluida_em','TIMESTAMP'),('concluida_por_id','INTEGER')],
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
-  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER'),('damage_analysis_status',"VARCHAR(30) DEFAULT 'NAO_ANALISADA'"),('damage_analysis_level','VARCHAR(30)'),('damage_analysis_summary','TEXT'),('damage_analysis_at','TIMESTAMP')],
+  'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('front_photo_key','VARCHAR(255)'),('front_photo_mime','VARCHAR(80)'),('right_photo_key','VARCHAR(255)'),('right_photo_mime','VARCHAR(80)'),('rear_photo_key','VARCHAR(255)'),('rear_photo_mime','VARCHAR(80)'),('left_photo_key','VARCHAR(255)'),('left_photo_mime','VARCHAR(80)'),('km_informada','INTEGER'),('damage_analysis_status',"VARCHAR(30) DEFAULT 'NAO_ANALISADA'"),('damage_analysis_level','VARCHAR(30)'),('damage_analysis_summary','TEXT'),('damage_analysis_at','TIMESTAMP')],
   'inspection_attempt':[('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
   'message_queue':[('template_parameters','TEXT')],
   'billing_audit':[
@@ -3068,7 +3076,7 @@ def configuracoes_automacoes():
   km_enabled=request.form.get('km_automation_enabled')=='1'
   billing_enabled=request.form.get('billing_automation_enabled')=='1'
   inspection_enabled=request.form.get('inspection_automation_enabled')=='1'
-  inspection_type=(request.form.get('inspection_automation_type') or cfg.get('inspection_automation_type') or 'simples').strip().lower()
+  inspection_type=(request.form.get('inspection_automation_type') or cfg.get('inspection_automation_type') or 'fotos').strip().lower()
   if inspection_type not in ('simples','guiada'): inspection_type='simples'
   damage_detection_enabled=request.form.get('inspection_damage_detection_enabled')=='1'
   km_days=_dias('km_automation_weekdays',cfg.get('km_automation_weekdays') or [old_weekday])
@@ -4856,6 +4864,8 @@ def _extrair_frames_vistoria(video_bytes,suffix='.webm',quantidade=6):
 
 def analisar_avarias_vistoria(item):
  """Triagem assistida. Não aprova/reprova a vistoria e nunca substitui a revisão da locadora."""
+ if (item.tipo_vistoria or '')=='fotos':
+  item.damage_analysis_status='NAO_APLICAVEL'; item.damage_analysis_summary='Triagem de vídeo não aplicável à vistoria fotográfica.'; return False
  integration=Integration.query.filter_by(tenant_id=item.tenant_id,tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  if not cfg.get('inspection_damage_detection_enabled',False):
@@ -4899,9 +4909,9 @@ def vistorias():
    return redirect(url_for('vistorias'))
   token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
   expira_horas=int(request.form.get('expira_horas') or 48)
-  tipo_vistoria=(request.form.get('tipo_vistoria') or 'guiada').strip().lower()
-  if tipo_vistoria not in ('guiada','simples'):
-   tipo_vistoria='guiada'
+  tipo_vistoria=(request.form.get('tipo_vistoria') or 'fotos').strip().lower()
+  if tipo_vistoria not in ('fotos','guiada','simples'):
+   tipo_vistoria='fotos'
   item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',tipo_vistoria=tipo_vistoria,expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
   db.session.add(item); db.session.commit()
   ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
@@ -4923,8 +4933,9 @@ def vistorias():
 @login_required
 def aprovar_vistoria(id):
  item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- if not item.video_key:
-  flash('A vistoria ainda não possui vídeo.','warning'); return redirect(url_for('vistorias'))
+ evidencia_fotos=((item.tipo_vistoria or '')=='fotos' and item.front_photo_key and item.right_photo_key and item.rear_photo_key and item.left_photo_key and item.painel_photo_key)
+ if not item.video_key and not evidencia_fotos:
+  flash('A vistoria ainda não possui todas as evidências obrigatórias.','warning'); return redirect(url_for('vistorias'))
  status_anterior=item.status
  item.status='Aprovada'
  tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
@@ -4935,7 +4946,7 @@ def aprovar_vistoria(id):
   tentativa.decision='Aprovada'; tentativa.decided_at=datetime.utcnow()
  duracao_txt=f'{item.duration_seconds}s' if item.duration_seconds is not None else 'não informada'
  km_txt=(f'{item.km_informada:,} km'.replace(',','.') if item.km_informada is not None else 'não informada')
- descricao=f'Vistoria em vídeo aprovada pela locadora; duração {duracao_txt}; foto do painel anexada; KM registrada: {km_txt}.'
+ descricao=(f'Vistoria fotográfica aprovada pela locadora; 4 lados e painel anexados; KM registrada: {km_txt}.' if (item.tipo_vistoria or '')=='fotos' else f'Vistoria em vídeo aprovada pela locadora; duração {duracao_txt}; foto do painel anexada; KM registrada: {km_txt}.')
  # Corrige também o evento de recebimento já gravado, para que o histórico não continue dizendo
  # 'Aguardando aprovação' depois que a vistoria foi decidida.
  evento_recebimento=VehicleEvent.query.filter_by(
@@ -4952,7 +4963,7 @@ def aprovar_vistoria(id):
   contract_id=item.contract_id,
   driver_id=item.driver_id,
   user_id=current_user.id,
-  evento='Vistoria em vídeo aprovada',
+  evento=('Vistoria fotográfica aprovada' if (item.tipo_vistoria or '')=='fotos' else 'Vistoria em vídeo aprovada'),
   descricao=descricao,
   status_anterior=status_anterior,
   status_novo='Aprovada'
@@ -4999,6 +5010,23 @@ def vistoria_painel(id):
  except StorageNotFoundError: abort(404)
  return send_file(BytesIO(conteudo),mimetype=item.painel_photo_mime or 'image/jpeg',download_name=f'vistoria-{item.id}-painel.jpg',conditional=True)
 
+@app.route('/vistorias/<int:id>/foto/<posicao>')
+@login_required
+def vistoria_foto(id,posicao):
+ item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
+ mapa={
+  'frente':('front_photo_key','front_photo_mime','frente'),
+  'direita':('right_photo_key','right_photo_mime','lateral-direita'),
+  'traseira':('rear_photo_key','rear_photo_mime','traseira'),
+  'esquerda':('left_photo_key','left_photo_mime','lateral-esquerda'),
+  'painel':('painel_photo_key','painel_photo_mime','painel'),
+ }
+ if posicao not in mapa: abort(404)
+ key_attr,mime_attr,nome=mapa[posicao]; chave=getattr(item,key_attr,None)
+ if not chave: abort(404)
+ conteudo=storage.download(chave)
+ return send_file(BytesIO(conteudo),mimetype=getattr(item,mime_attr,None) or 'image/jpeg',download_name=f'vistoria-{item.id}-{nome}.jpg',conditional=True)
+
 @app.route('/vistorias/<int:id>/tentativas/<int:attempt_id>/video')
 @login_required
 def vistoria_tentativa_video(id,attempt_id):
@@ -5013,7 +5041,8 @@ def vistoria_publica(token):
  item=Inspection.query.filter_by(token=token).first_or_404()
  if item.expires_at and item.expires_at < datetime.utcnow():
   return render_template('vistoria_publica.html',item=item,expired=True),410
- if item.status in ('Aprovada','Recebida') and item.video_key:
+ evidencia_ok=(item.video_key or ((item.tipo_vistoria or '')=='fotos' and item.front_photo_key and item.right_photo_key and item.rear_photo_key and item.left_photo_key and item.painel_photo_key))
+ if item.status in ('Aprovada','Recebida') and evidencia_ok:
   return render_template('vistoria_publica.html',item=item,done=True)
  return render_template('vistoria_publica.html',item=item)
 
@@ -5022,102 +5051,118 @@ def vistoria_upload(token):
  item=Inspection.query.filter_by(token=token).first_or_404()
  if item.expires_at and item.expires_at < datetime.utcnow():
   return {'ok':False,'error':'Link expirado.'},410
- video=request.files.get('video')
- painel=request.files.get('painel_photo')
- if not video:
-  return {'ok':False,'error':'Vídeo não recebido.'},400
- if not painel:
-  return {'ok':False,'error':'Tire uma foto do painel antes de finalizar a vistoria.'},400
+ modo=(item.tipo_vistoria or 'fotos').strip().lower()
+ veiculo=Vehicle.query.filter_by(id=item.vehicle_id,tenant_id=item.tenant_id).first()
+ if not veiculo:
+  return {'ok':False,'error':'Veículo da vistoria não encontrado.'},404
  try: km=int(str(request.form.get('km') or '').replace('.','').replace(',','').strip())
  except Exception:
   return {'ok':False,'error':'Informe a quilometragem atual mostrada no painel.'},400
  if km < 0:
   return {'ok':False,'error':'Quilometragem inválida.'},400
- veiculo=Vehicle.query.filter_by(id=item.vehicle_id,tenant_id=item.tenant_id).first()
- if not veiculo:
-  return {'ok':False,'error':'Veículo da vistoria não encontrado.'},404
  km_anterior=int(veiculo.km_atual or 0)
  if km < km_anterior:
   return {'ok':False,'error':f'A quilometragem informada ({km:,} km) é menor que a última registrada ({km_anterior:,} km). Confira o painel.'.replace(',','.')},400
- mime=(video.mimetype or '').lower()
- if not (mime.startswith('video/webm') or mime.startswith('video/mp4') or mime.startswith('video/quicktime')):
-  return {'ok':False,'error':'Formato de vídeo não suportado.'},400
- painel_mime=(painel.mimetype or '').lower()
- if painel_mime not in ('image/jpeg','image/png','image/webp'):
-  return {'ok':False,'error':'Formato da foto do painel não suportado. Use JPG, PNG ou WEBP.'},400
- try: brilho=float(request.form.get('brightness_avg') or 0)
- except Exception: brilho=0
- try: brilho_min=float(request.form.get('brightness_min') or brilho)
- except Exception: brilho_min=brilho
- try: dark_ratio=float(request.form.get('dark_ratio') or 0)
- except Exception: dark_ratio=0
- try: duracao=max(0,int(float(request.form.get('duration_seconds') or 0)))
- except Exception: duracao=0
- if duracao < 15:
-  msg_curta='A vistoria ficou muito curta. Grave pelo menos 15 segundos mostrando o veículo.' if (item.tipo_vistoria or 'guiada')=='simples' else 'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'
-  return {'ok':False,'error':msg_curta},400
- ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
- painel_ext='.png' if painel_mime=='image/png' else ('.webp' if painel_mime=='image/webp' else '.jpg')
- pasta=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}"
- chave=f"{pasta}/{uuid.uuid4().hex}{ext}"
- painel_chave=f"{pasta}/{uuid.uuid4().hex}-painel{painel_ext}"
- try:
-  storage.upload(video.stream,chave,mime)
-  storage.upload(painel.stream,painel_chave,painel_mime)
- except Exception:
-  app.logger.exception('Falha ao armazenar vídeo/foto da vistoria %s',item.id)
-  try: storage.delete(chave)
-  except Exception: pass
-  try: storage.delete(painel_chave)
-  except Exception: pass
-  return {'ok':False,'error':'Não foi possível armazenar o vídeo e a foto do painel. Tente novamente.'},503
+
+ if modo=='fotos':
+  campos=[
+   ('front_photo','frente','front_photo_key','front_photo_mime'),
+   ('right_photo','lateral direita','right_photo_key','right_photo_mime'),
+   ('rear_photo','traseira','rear_photo_key','rear_photo_mime'),
+   ('left_photo','lateral esquerda','left_photo_key','left_photo_mime'),
+   ('painel_photo','painel','painel_photo_key','painel_photo_mime'),
+  ]
+  arquivos=[]
+  for form_name,rotulo,key_attr,mime_attr in campos:
+   arq=request.files.get(form_name)
+   if not arq:
+    return {'ok':False,'error':f'Tire a foto da {rotulo} antes de finalizar a vistoria.'},400
+   mime=(arq.mimetype or '').lower()
+   if mime not in ('image/jpeg','image/png','image/webp'):
+    return {'ok':False,'error':f'Formato da foto da {rotulo} não suportado. Use a câmera da página.'},400
+   arquivos.append((arq,rotulo,key_attr,mime_attr,mime))
+  pasta=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}"
+  uploaded=[]
+  try:
+   for arq,rotulo,key_attr,mime_attr,mime in arquivos:
+    ext='.png' if mime=='image/png' else ('.webp' if mime=='image/webp' else '.jpg')
+    slug={'frente':'frente','lateral direita':'direita','traseira':'traseira','lateral esquerda':'esquerda','painel':'painel'}[rotulo]
+    chave=f"{pasta}/{uuid.uuid4().hex}-{slug}{ext}"
+    storage.upload(arq.stream,chave,mime)
+    uploaded.append(chave)
+    setattr(item,key_attr,chave); setattr(item,mime_attr,mime)
+  except Exception:
+   app.logger.exception('Falha ao armazenar fotos da vistoria %s',item.id)
+   for chave in uploaded:
+    try: storage.delete(chave)
+    except Exception: pass
+   return {'ok':False,'error':'Não foi possível armazenar todas as fotos. Tente novamente.'},503
+  item.video_key=None; item.video_mime=None; item.duration_seconds=None
+  origem_odo='Vistoria fotográfica'
+  evento_recebido='Vistoria fotográfica recebida'
+  descricao=f'Vistoria fotográfica recebida com 4 lados do veículo e foto do painel; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
+ else:
+  video=request.files.get('video'); painel=request.files.get('painel_photo')
+  if not video: return {'ok':False,'error':'Vídeo não recebido.'},400
+  if not painel: return {'ok':False,'error':'Tire uma foto do painel antes de finalizar a vistoria.'},400
+  mime=(video.mimetype or '').lower()
+  if not (mime.startswith('video/webm') or mime.startswith('video/mp4') or mime.startswith('video/quicktime')):
+   return {'ok':False,'error':'Formato de vídeo não suportado.'},400
+  painel_mime=(painel.mimetype or '').lower()
+  if painel_mime not in ('image/jpeg','image/png','image/webp'):
+   return {'ok':False,'error':'Formato da foto do painel não suportado. Use JPG, PNG ou WEBP.'},400
+  try: duracao=max(0,int(float(request.form.get('duration_seconds') or 0)))
+  except Exception: duracao=0
+  if duracao < 15:
+   msg_curta='A vistoria ficou muito curta. Grave pelo menos 15 segundos mostrando o veículo.' if modo=='simples' else 'A vistoria ficou muito curta. Grave o veículo seguindo todas as etapas.'
+   return {'ok':False,'error':msg_curta},400
+  ext='.mp4' if ('mp4' in mime or 'quicktime' in mime) else '.webm'
+  painel_ext='.png' if painel_mime=='image/png' else ('.webp' if painel_mime=='image/webp' else '.jpg')
+  pasta=f"{item.tenant_id}/vistorias/{item.vehicle_id}/{datetime.utcnow().strftime('%Y/%m')}"
+  chave=f"{pasta}/{uuid.uuid4().hex}{ext}"; painel_chave=f"{pasta}/{uuid.uuid4().hex}-painel{painel_ext}"
+  try:
+   storage.upload(video.stream,chave,mime); storage.upload(painel.stream,painel_chave,painel_mime)
+  except Exception:
+   app.logger.exception('Falha ao armazenar vídeo/foto da vistoria %s',item.id)
+   try: storage.delete(chave)
+   except Exception: pass
+   try: storage.delete(painel_chave)
+   except Exception: pass
+   return {'ok':False,'error':'Não foi possível armazenar o vídeo e a foto do painel. Tente novamente.'},503
+  item.video_key=chave; item.video_mime=mime; item.duration_seconds=duracao
+  item.painel_photo_key=painel_chave; item.painel_photo_mime=painel_mime
+  try: brilho=float(request.form.get('brightness_avg') or 0)
+  except Exception: brilho=0
+  item.brightness_avg=Decimal(str(round(brilho,2)))
+  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,painel_photo_key=painel_chave,painel_photo_mime=painel_mime,km_informada=km,brightness_avg=item.brightness_avg,submitted_at=datetime.utcnow(),decision='Pendente')
+  db.session.add(tentativa)
+  origem_odo='Vistoria em vídeo'; evento_recebido='Vistoria em vídeo recebida'
+  descricao=f'Vistoria em vídeo recebida; duração {duracao}s; foto do painel anexada; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
+
  km_anterior_vistoria=item.km_informada
- item.video_key=chave
- item.video_mime=mime
- item.duration_seconds=duracao
- item.painel_photo_key=painel_chave
- item.painel_photo_mime=painel_mime
- item.km_informada=km
- item.brightness_avg=Decimal(str(round(brilho,2)))
- item.brightness_status='Não avaliada'
- item.submitted_at=datetime.utcnow()
- item.status='Recebida'
- item.notes=None
- tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,painel_photo_key=painel_chave,painel_photo_mime=painel_mime,km_informada=km,brightness_avg=Decimal(str(round(brilho,2))),brightness_min=Decimal(str(round(brilho_min,2))),dark_ratio=Decimal(str(round(dark_ratio,4))),submitted_at=item.submitted_at,decision='Pendente')
- db.session.add(tentativa)
- # A KM da vistoria alimenta o histórico do veículo. Em uma regravação com a mesma KM,
- # não criamos um segundo registro idêntico.
+ item.km_informada=km; item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'; item.notes=None
  if km_anterior_vistoria != km:
-  db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem='Vistoria em vídeo'))
- if km >= km_anterior:
-  veiculo.km_atual=km
-
- # A vistoria completa substitui o pedido separado de KM:
- # usa a mesma foto do painel e a KM digitada, sem criar outro Odometer.
+  db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem=origem_odo))
+ if km >= km_anterior: veiculo.km_atual=km
  tenant_km=Tenant.query.get(item.tenant_id)
- km_pendentes=MileageRequest.query.filter_by(
-  tenant_id=item.tenant_id,
-  vehicle_id=item.vehicle_id,
-  driver_id=item.driver_id,
-  status='Pendente',
- ).all()
+ km_pendentes=MileageRequest.query.filter_by(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,driver_id=item.driver_id,status='Pendente').all()
  for _req in km_pendentes:
-  _req.km=km
-  _req.photo=painel_chave
-  _req.submitted_at=item.submitted_at
-  _req.notes='Atendida automaticamente pela vistoria em vídeo.'
+  _req.km=km; _req.photo=item.painel_photo_key; _req.submitted_at=item.submitted_at
+  _req.notes='Atendida automaticamente pela vistoria fotográfica.' if modo=='fotos' else 'Atendida automaticamente pela vistoria em vídeo.'
   _req.status='Aguardando conferência' if (tenant_km and tenant_km.conferir_km_motorista) else 'Concluído'
-
- descricao=f'Vistoria em vídeo recebida; duração {duracao}s; foto do painel anexada; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
- db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento='Vistoria em vídeo recebida',descricao=descricao))
+ db.session.add(VehicleEvent(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=item.contract_id,driver_id=item.driver_id,evento=evento_recebido,descricao=descricao))
  db.session.commit()
- # A triagem de avarias é assistiva e isolada: uma falha de IA nunca invalida o envio da vistoria.
- try:
-  analisar_avarias_vistoria(item); db.session.commit()
- except Exception:
-  db.session.rollback(); app.logger.exception('Falha ao persistir análise de avarias da vistoria %s',item.id)
+ if modo!='fotos':
+  try: analisar_avarias_vistoria(item); db.session.commit()
+  except Exception:
+   db.session.rollback(); app.logger.exception('Falha ao persistir análise de avarias da vistoria %s',item.id)
+ else:
+  item.damage_analysis_status='NAO_APLICAVEL'; item.damage_analysis_summary='Triagem por frames de vídeo não executada na vistoria fotográfica.'
+  db.session.commit()
  try: recalcular_alertas(item.tenant_id)
  except Exception: app.logger.exception('Falha ao recalcular alertas após KM da vistoria %s',item.id)
+ if modo=='fotos':
+  return {'ok':True,'message':'Vistoria enviada com sucesso: 4 lados, painel e quilometragem recebidos.'}
  return {'ok':True,'message':'Vistoria, foto do painel e quilometragem enviadas com sucesso.'}
 
 @app.route('/alertas')
@@ -5611,7 +5656,7 @@ def processar_vistorias_automaticas(tenant_id=None):
    item=Inspection(
     tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,contract_id=c.id,
     token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',
-    tipo_vistoria=((cfg.get('inspection_automation_type') or 'simples') if (cfg.get('inspection_automation_type') or 'simples') in ('simples','guiada') else 'simples'),
+    tipo_vistoria=((cfg.get('inspection_automation_type') or 'fotos') if (cfg.get('inspection_automation_type') or 'fotos') in ('fotos','simples','guiada') else 'fotos'),
     requested_at=datetime.utcnow(),
     expires_at=datetime.utcnow()+timedelta(hours=validade),
    )
@@ -5634,7 +5679,7 @@ def processar_vistorias_automaticas(tenant_id=None):
   ).all()
   for _req in km_pendentes:
    _req.status='Cancelado'
-   _req.notes='Substituída pela vistoria completa (vídeo + painel + KM).'
+   _req.notes='Substituída pela vistoria completa (fotos externas + painel + KM).'
 
   intervalo=_reminder_interval(cfg,'inspection')
   ultimo=MessageQueue.query.filter_by(
