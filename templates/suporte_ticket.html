@@ -6,6 +6,6 @@
 <style>.ticket{max-width:850px;background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:20px}.meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}.pill{background:#f1f5f9;border-radius:999px;padding:5px 9px;font-size:12px}.msg{white-space:pre-wrap;background:#f8fafc;border-radius:10px;padding:14px;line-height:1.5}.answer{background:#eff6ff;border-left:4px solid #3b82f6}.muted{color:#64748b}</style>
 <div class="ticket"><div class="meta"><span class="pill">{{ticket.categoria}}</span><span class="pill">Prioridade: {{ticket.prioridade}}</span><span class="pill">Status: {{ticket.status.replace('_',' ')}}</span><span class="pill">{{ticket.criado_em|sp_datetime('%d/%m/%Y %H:%M')}}</span></div>
 <h3>Solicitação</h3><div class="msg">{{ticket.descricao}}</div>{% if ticket.pagina_origem %}<p class="muted">Página informada: {{ticket.pagina_origem}}</p>{% endif %}
-{% if ticket.resposta %}<h3>Resposta do suporte</h3><div class="msg answer">{{ticket.resposta}}</div>{% endif %}
+{% if ticket.resposta %}<h3>Resposta do suporte</h3><div class="msg answer">{{ticket.resposta}}</div>{% if ticket.respondido_por_nome %}<p class="muted">Respondido por {{ticket.respondido_por_nome}}</p>{% endif %}{% endif %}
 <p><a href="{{url_for('suporte')}}">← Voltar</a>{% if ticket.status!='RESOLVIDO' %} &nbsp; <form method="post" action="{{url_for('suporte_ticket_encerrar',ticket_id=ticket.id)}}" style="display:inline"><button type="submit" class="secondary">Marcar como resolvida</button></form>{% endif %}</p></div>
 {% endblock %}
