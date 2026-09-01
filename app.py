@@ -458,6 +458,17 @@ class BillingAudit(db.Model):
  message=db.relationship('MessageQueue')
 
 
+class FrotaAdmin(db.Model):
+ __tablename__='frota_admin'
+ id=db.Column(db.Integer,primary_key=True)
+ nome=db.Column(db.String(120),nullable=False)
+ email=db.Column(db.String(150),nullable=False,unique=True,index=True)
+ senha=db.Column(db.String(255),nullable=False)
+ ativo=db.Column(db.Boolean,default=True,index=True)
+ perfil=db.Column(db.String(30),default='SUPORTE')
+ ultimo_acesso_em=db.Column(db.DateTime)
+ criado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
+
 class SupportTicket(db.Model):
  __tablename__='support_ticket'
  id=db.Column(db.Integer,primary_key=True)
@@ -471,11 +482,14 @@ class SupportTicket(db.Model):
  status=db.Column(db.String(30),nullable=False,default='ABERTO',index=True)
  resposta=db.Column(db.Text)
  respondido_por_id=db.Column(db.Integer,db.ForeignKey('user.id'))
+ respondido_por_admin_id=db.Column(db.Integer,db.ForeignKey('frota_admin.id'))
+ respondido_por_nome=db.Column(db.String(120))
  criado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
  atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow,index=True)
  resolvido_em=db.Column(db.DateTime)
  user=db.relationship('User',foreign_keys=[user_id])
  respondido_por=db.relationship('User',foreign_keys=[respondido_por_id])
+ respondido_por_admin=db.relationship('FrotaAdmin',foreign_keys=[respondido_por_admin_id])
 @login.user_loader
 def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
@@ -855,6 +869,7 @@ def migrate_schema():
   'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('front_photo_key','VARCHAR(255)'),('front_photo_mime','VARCHAR(80)'),('right_photo_key','VARCHAR(255)'),('right_photo_mime','VARCHAR(80)'),('rear_photo_key','VARCHAR(255)'),('rear_photo_mime','VARCHAR(80)'),('left_photo_key','VARCHAR(255)'),('left_photo_mime','VARCHAR(80)'),('km_informada','INTEGER'),('damage_analysis_status',"VARCHAR(30) DEFAULT 'NAO_ANALISADA'"),('damage_analysis_level','VARCHAR(30)'),('damage_analysis_summary','TEXT'),('damage_analysis_at','TIMESTAMP')],
   'inspection_attempt':[('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
   'message_queue':[('template_parameters','TEXT')],
+  'support_ticket':[('respondido_por_admin_id','INTEGER'),('respondido_por_nome','VARCHAR(120)')],
   'billing_audit':[
    ('payment_status',"VARCHAR(20) DEFAULT 'PENDENTE'"),('paid_at','TIMESTAMP'),('paid_by_id','INTEGER'),
    ('payment_method','VARCHAR(50)'),('payment_notes','TEXT'),('reminder_count','INTEGER DEFAULT 0'),
@@ -1061,6 +1076,13 @@ def seed():
  # Instala automaticamente a minuta completa v2 para todos os tenants.
  for tenant in Tenant.query.all():
   ensure_locadrivers_template(tenant.id)
+ # Conta administrativa Frota Fácil independente das locadoras.
+ # É criada somente quando as variáveis de ambiente são informadas e ainda não existe admin.
+ admin_email=(os.getenv('FROTA_FACIL_ADMIN_EMAIL') or '').strip().lower()
+ admin_password=os.getenv('FROTA_FACIL_ADMIN_PASSWORD') or ''
+ admin_name=(os.getenv('FROTA_FACIL_ADMIN_NAME') or 'Administrador Frota Fácil').strip()
+ if admin_email and admin_password and not FrotaAdmin.query.filter_by(email=admin_email).first():
+  db.session.add(FrotaAdmin(nome=admin_name,email=admin_email,senha=generate_password_hash(admin_password),ativo=True,perfil='SUPORTE'))
  db.session.commit()
 
 
@@ -2964,18 +2986,51 @@ def registrar_quilometragem_publica(token):
   return redirect(url_for('registrar_quilometragem_publica',token=token))
  return render_template('quilometragem_publica.html',req=req,expirado=False)
 
-def _support_admin():
- perfil=(getattr(current_user,'perfil','') or '').strip().lower()
- if perfil in ('superadmin','suporte','support'):
-  return True
- permitidos={x.strip().lower() for x in (os.getenv('FROTA_FACIL_SUPPORT_ADMIN_EMAILS') or '').split(',') if x.strip()}
- return bool((current_user.email or '').strip().lower() in permitidos)
+def _frota_admin_atual():
+ admin_id=session.get('frota_admin_id')
+ if not admin_id:
+  return None
+ try:
+  return FrotaAdmin.query.filter_by(id=int(admin_id),ativo=True).first()
+ except Exception:
+  return None
+
+def frota_admin_required(view):
+ @wraps(view)
+ def wrapped(*args,**kwargs):
+  admin=_frota_admin_atual()
+  if not admin:
+   session.pop('frota_admin_id',None)
+   return redirect(url_for('frota_admin_entrar',next=request.path))
+  return view(*args,**kwargs)
+ return wrapped
+
+@app.route('/admin-frota/entrar',methods=['GET','POST'])
+def frota_admin_entrar():
+ if _frota_admin_atual():
+  return redirect(url_for('frota_admin_suporte'))
+ if request.method=='POST':
+  email=(request.form.get('email') or '').strip().lower()
+  senha=request.form.get('senha') or ''
+  admin=FrotaAdmin.query.filter_by(email=email,ativo=True).first()
+  if admin and check_password_hash(admin.senha,senha):
+   session['frota_admin_id']=admin.id
+   admin.ultimo_acesso_em=datetime.utcnow(); db.session.commit()
+   return redirect(url_for('frota_admin_suporte'))
+  flash('E-mail ou senha administrativos inválidos.','danger')
+ return render_template('admin_frota_login.html')
+
+@app.route('/admin-frota/sair')
+def frota_admin_sair():
+ session.pop('frota_admin_id',None)
+ flash('Sessão administrativa encerrada.','success')
+ return redirect(url_for('frota_admin_entrar'))
 
 @app.route('/ajuda')
 @login_required
 def ajuda():
  abertos=SupportTicket.query.filter_by(tenant_id=tid()).filter(SupportTicket.status.in_(['ABERTO','EM_ANALISE'])).count()
- return render_template('ajuda.html',abertos=abertos,support_admin=_support_admin())
+ return render_template('ajuda.html',abertos=abertos,support_admin=False)
 
 @app.route('/ajuda/manual')
 @login_required
@@ -3013,13 +3068,13 @@ def suporte():
    flash(f'Solicitação #{ticket.id} aberta com sucesso.','success')
    return redirect(url_for('suporte_ticket',ticket_id=ticket.id))
  tickets=SupportTicket.query.filter_by(tenant_id=tid()).order_by(SupportTicket.criado_em.desc()).limit(100).all()
- return render_template('suporte.html',tickets=tickets,origem=(request.args.get('origem') or '').strip()[:255],support_admin=_support_admin())
+ return render_template('suporte.html',tickets=tickets,origem=(request.args.get('origem') or '').strip()[:255],support_admin=False)
 
 @app.route('/ajuda/suporte/<int:ticket_id>')
 @login_required
 def suporte_ticket(ticket_id):
  ticket=SupportTicket.query.filter_by(id=ticket_id,tenant_id=tid()).first_or_404()
- return render_template('suporte_ticket.html',ticket=ticket,support_admin=_support_admin())
+ return render_template('suporte_ticket.html',ticket=ticket,support_admin=False)
 
 @app.route('/ajuda/suporte/<int:ticket_id>/encerrar',methods=['POST'])
 @login_required
@@ -3030,34 +3085,72 @@ def suporte_ticket_encerrar(ticket_id):
   flash('Solicitação marcada como resolvida.','success')
  return redirect(url_for('suporte_ticket',ticket_id=ticket.id))
 
+# Compatibilidade: o endereço antigo não expõe mais a central dentro de contas de locadoras.
 @app.route('/ajuda/suporte-central')
 @login_required
-def suporte_central():
- if not _support_admin(): abort(403)
- status=(request.args.get('status') or '').strip().upper()
- q=SupportTicket.query
- if status in ('ABERTO','EM_ANALISE','RESOLVIDO'): q=q.filter_by(status=status)
- tickets=q.order_by(SupportTicket.criado_em.desc()).limit(300).all()
- tenants={t.id:t for t in Tenant.query.filter(Tenant.id.in_({x.tenant_id for x in tickets})).all()} if tickets else {}
- return render_template('suporte_central.html',tickets=tickets,tenants=tenants,status_filtro=status)
+def suporte_central_legado():
+ flash('A Central de Suporte agora utiliza uma conta administrativa Frota Fácil separada.','info')
+ return redirect(url_for('ajuda'))
 
-@app.route('/ajuda/suporte-central/<int:ticket_id>/responder',methods=['POST'])
-@login_required
-def suporte_central_responder(ticket_id):
- if not _support_admin(): abort(403)
+@app.route('/admin-frota/suporte')
+@frota_admin_required
+def frota_admin_suporte():
+ admin=_frota_admin_atual()
+ status=(request.args.get('status') or '').strip().upper()
+ tenant_id=request.args.get('locadora',type=int)
+ prioridade=(request.args.get('prioridade') or '').strip()
+ busca=(request.args.get('q') or '').strip()
+ q=SupportTicket.query
+ if status in ('ABERTO','EM_ANALISE','RESOLVIDO'):
+  q=q.filter_by(status=status)
+ if tenant_id:
+  q=q.filter_by(tenant_id=tenant_id)
+ if prioridade in ('Baixa','Normal','Alta','Urgente'):
+  q=q.filter_by(prioridade=prioridade)
+ if busca:
+  like=f'%{busca}%'
+  q=q.filter(or_(SupportTicket.titulo.ilike(like),SupportTicket.descricao.ilike(like)))
+ tickets=q.order_by(SupportTicket.criado_em.desc()).limit(500).all()
+ tenant_ids={x.tenant_id for x in tickets}
+ tenants={t.id:t for t in Tenant.query.filter(Tenant.id.in_(tenant_ids)).all()} if tenant_ids else {}
+ todas_locadoras=Tenant.query.order_by(Tenant.nome.asc()).all()
+ counts={
+  'ABERTO':SupportTicket.query.filter_by(status='ABERTO').count(),
+  'EM_ANALISE':SupportTicket.query.filter_by(status='EM_ANALISE').count(),
+  'RESOLVIDO':SupportTicket.query.filter_by(status='RESOLVIDO').count(),
+ }
+ return render_template('admin_frota_suporte.html',admin=admin,tickets=tickets,tenants=tenants,todas_locadoras=todas_locadoras,status_filtro=status,prioridade_filtro=prioridade,locadora_filtro=tenant_id,busca=busca,counts=counts)
+
+@app.route('/admin-frota/suporte/<int:ticket_id>')
+@frota_admin_required
+def frota_admin_ticket(ticket_id):
+ admin=_frota_admin_atual()
+ ticket=SupportTicket.query.get_or_404(ticket_id)
+ tenant=Tenant.query.get(ticket.tenant_id)
+ return render_template('admin_frota_ticket.html',admin=admin,ticket=ticket,tenant=tenant)
+
+@app.route('/admin-frota/suporte/<int:ticket_id>/responder',methods=['POST'])
+@frota_admin_required
+def frota_admin_responder(ticket_id):
+ admin=_frota_admin_atual()
  ticket=SupportTicket.query.get_or_404(ticket_id)
  resposta=(request.form.get('resposta') or '').strip()
  status=(request.form.get('status') or 'EM_ANALISE').strip().upper()
- if status not in ('ABERTO','EM_ANALISE','RESOLVIDO'): status='EM_ANALISE'
+ if status not in ('ABERTO','EM_ANALISE','RESOLVIDO'):
+  status='EM_ANALISE'
  ticket.status=status
  if resposta:
   ticket.resposta=resposta
-  ticket.respondido_por_id=current_user.id
- if status=='RESOLVIDO': ticket.resolvido_em=datetime.utcnow()
- elif ticket.resolvido_em: ticket.resolvido_em=None
+  ticket.respondido_por_admin_id=admin.id
+  ticket.respondido_por_nome=admin.nome
+  ticket.respondido_por_id=None
+ if status=='RESOLVIDO':
+  ticket.resolvido_em=datetime.utcnow()
+ elif ticket.resolvido_em:
+  ticket.resolvido_em=None
  ticket.atualizado_em=datetime.utcnow(); db.session.commit()
  flash(f'Solicitação #{ticket.id} atualizada.','success')
- return redirect(url_for('suporte_central'))
+ return redirect(url_for('frota_admin_ticket',ticket_id=ticket.id))
 
 @app.route('/configuracoes')
 @login_required
