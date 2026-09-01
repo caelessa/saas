@@ -29,7 +29,7 @@
 <section class="card">
   <h2>Solicitações</h2>
   <div class="table-wrap"><table>
-    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Evidências</th><th>Painel / KM</th><th>Ações</th></tr>
+    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Evidências</th><th>Painel / KM</th><th>Análise IA</th><th>Ações</th></tr>
     {% for x in items %}
     <tr>
       <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
@@ -46,6 +46,15 @@
         </div>
         {% elif x.video_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_video',id=x.id)}}">▶ Ver vídeo</a>{% else %}-{% endif %}</td>
       <td>{% if x.painel_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='painel')}}">📷 Ver painel</a><br>{% endif %}{% if x.km_informada is not none %}<b>{{'{:,}'.format(x.km_informada).replace(',','.')}} km</b>{% elif not x.painel_photo_key %}-{% endif %}</td>
+      <td style="min-width:220px">{% if x.damage_analysis_status == 'CONCLUIDA' %}
+        {% if x.damage_analysis_level == 'SEM_INDICIOS' %}<span class="alert-status ok">✓ Sem indícios</span>
+        {% elif x.damage_analysis_level == 'POSSIVEL_AVARIA' %}<span class="alert-status warning">⚠ Possível avaria</span>
+        {% else %}<span class="alert-status danger">🔎 Revisão recomendada</span>{% endif %}
+        {% if x.damage_analysis_summary %}<details style="margin-top:6px"><summary>Ver análise</summary><div class="muted" style="white-space:pre-line;margin-top:6px">{{x.damage_analysis_summary}}</div></details>{% endif %}
+        {% elif x.damage_analysis_status == 'DESATIVADA' %}<span class="muted">IA desativada</span>
+        {% elif x.damage_analysis_status == 'AGUARDANDO_CONFIGURACAO' %}<span class="alert-status warning">Configurar IA</span>
+        {% elif x.damage_analysis_status == 'FALHA' %}<span class="alert-status danger">Falha na análise</span>{% if x.damage_analysis_summary %}<br><small class="muted">{{x.damage_analysis_summary}}</small>{% endif %}
+        {% elif x.status in ['Recebida','Aprovada'] %}<span class="muted">Não analisada</span>{% else %}-{% endif %}</td>
       <td class="inspection-actions">
         {% set link=url_for('vistoria_publica',token=x.token,_external=True) %}
         <button type="button" class="button secondary" onclick="navigator.clipboard.writeText('{{link}}');this.textContent='Link copiado ✓'">Copiar link</button>
@@ -57,7 +66,7 @@
         {% if x.status=='Regravar' and x.notes %}<small class="muted">{{x.notes}}</small>{% endif %}
       </td>
     </tr>
-    {% else %}<tr><td colspan="8">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="9">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
   </table></div>
 </section>
 {% endblock %}
