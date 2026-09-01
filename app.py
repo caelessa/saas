@@ -2982,6 +2982,16 @@ def ajuda():
 def manual_usuario():
  return render_template('manual_usuario.html')
 
+@app.route('/ajuda/manual/download/pdf')
+@login_required
+def manual_usuario_download_pdf():
+ return send_from_directory(app.static_folder,'Manual_Frota_Facil_Usuario.pdf',as_attachment=True,download_name='Manual_Frota_Facil_Usuario.pdf')
+
+@app.route('/ajuda/manual/download/docx')
+@login_required
+def manual_usuario_download_docx():
+ return send_from_directory(app.static_folder,'Manual_Frota_Facil_Usuario.docx',as_attachment=True,download_name='Manual_Frota_Facil_Usuario.docx')
+
 @app.route('/ajuda/suporte',methods=['GET','POST'])
 @login_required
 def suporte():
