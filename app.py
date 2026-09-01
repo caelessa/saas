@@ -720,6 +720,12 @@ def processar_mensagens_agendadas(tenant_id=None, limit=100):
    or (fila.related_entity or '').strip().lower()=='cobranca'
   )
   billing_enabled=bool(cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)))
+  if eh_cobranca and fila.related_entity_id:
+   audit_pago=BillingAudit.query.filter_by(id=fila.related_entity_id,tenant_id=fila.tenant_id).first()
+   if audit_pago and (audit_pago.payment_status or 'PENDENTE').upper()=='PAGO':
+    fila.status='CANCELADA'; fila.updated_at=now
+    db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='CANCELADA',description='Cobrança agendada cancelada porque o pagamento já foi baixado.',created_at=now))
+    processed+=1; continue
   if eh_cobranca and not billing_enabled:
    fila.status='CANCELADA'; fila.updated_at=now
    db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='CANCELADA',description='Cobrança automática cancelada porque a automação de cobranças está desabilitada.',created_at=now))
@@ -3428,6 +3434,31 @@ def cobrancas():
    rendered_html=rendered_html.replace('</body>',painel_sem+'</body>',1)
   else:
    rendered_html=rendered_html+painel_sem
+ # Coerência visual: se a competência atual já foi paga, o botão de lembrete
+ # da tabela principal deixa de ser acionável. A proteção real continua no backend.
+ pagos_semana=BillingAudit.query.filter(
+  BillingAudit.tenant_id==tid(),
+  BillingAudit.contract_id.in_(contratos_vigentes_ids),
+  BillingAudit.billing_date>=inicio_semana,
+  BillingAudit.billing_date<=fim_semana,
+  BillingAudit.payment_status=='PAGO'
+ ).all() if contratos_vigentes_ids else []
+ contratos_pagos=sorted({a.contract_id for a in pagos_semana if a.contract_id})
+ if contratos_pagos:
+  ids_json=json.dumps(contratos_pagos)
+  script_pago=(
+   '<script>(function(){var pagos=new Set('+ids_json+');'
+   'document.querySelectorAll("form[action]").forEach(function(f){'
+   'var m=(f.getAttribute("action")||"").match(/\\/cobrancas\\/(\\d+)\\/whatsapp(?:$|\\?)/);'
+   'if(!m||!pagos.has(parseInt(m[1],10)))return;'
+   'var b=f.querySelector("button,input[type=submit]");'
+   'if(b){var span=document.createElement("span");span.className="badge bg-success";span.textContent="Pago nesta semana";b.replaceWith(span);}'
+   '});})();</script>'
+  )
+  if '</body>' in rendered_html:
+   rendered_html=rendered_html.replace('</body>',script_pago+'</body>',1)
+  else:
+   rendered_html+=script_pago
  return rendered_html
 
 @app.route('/cobrancas/<int:id>/whatsapp',methods=['POST'])
@@ -5337,6 +5368,8 @@ def _audit_info(audit):
  }
 
 def _enviar_cobranca_audit(contract,audit,cfg):
+ if not audit or (audit.payment_status or 'PENDENTE').upper()=='PAGO':
+  return None,None,'Esta cobrança já está baixada como paga.'
  info=_audit_info(audit)
  comprovante_url=url_comprovante_cobranca(audit)
  body=audit.body or mensagem_cobranca_semanal(contract,info,comprovante_url)
@@ -5359,6 +5392,16 @@ def gerar_e_enviar_cobranca(contract,automatico=False):
  provider=(cfg.get('provider') or 'web').lower()
  template_name=((cfg.get('payment_excess_template_name') if info.get('usa_excesso') else cfg.get('payment_template_name')) or '').strip() or None
  hoje=datetime.now(_tenant_zone(contract.tenant_id)).date()
+ inicio_semana,fim_semana=_periodo_semana_tenant(contract.tenant_id,hoje)
+ pago_semana=BillingAudit.query.filter(
+  BillingAudit.tenant_id==contract.tenant_id,
+  BillingAudit.contract_id==contract.id,
+  BillingAudit.billing_date>=inicio_semana,
+  BillingAudit.billing_date<=fim_semana,
+  BillingAudit.payment_status=='PAGO'
+ ).order_by(BillingAudit.id.desc()).first()
+ if pago_semana:
+  return None,pago_semana,None,'A cobrança desta semana já está baixada como paga.'
 
  # Reenvio da cobrança do mesmo contrato no mesmo dia deve reutilizar a mesma
  # auditoria. Antes, cada clique manual criava outra BillingAudit e, se ambas
@@ -5403,6 +5446,15 @@ def processar_cobrancas_automaticas(tenant_id=None):
   if periodicidade and 'seman' not in periodicidade: continue
   integration,cfg=_automation_cfg(c.tenant_id)
   if not cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) or not _automation_window_open(cfg,'billing',agora): continue
+  inicio_semana,fim_semana=_periodo_semana_tenant(c.tenant_id,hoje)
+  pago_semana=BillingAudit.query.filter(
+   BillingAudit.tenant_id==c.tenant_id,
+   BillingAudit.contract_id==c.id,
+   BillingAudit.billing_date>=inicio_semana,
+   BillingAudit.billing_date<=fim_semana,
+   BillingAudit.payment_status=='PAGO'
+  ).first()
+  if pago_semana: continue
   # Envio realmente automático só é possível pela Business Platform. No Web, o botão manual continua disponível.
   if (cfg.get('provider') or 'web').lower()!='business': continue
   audit=BillingAudit.query.filter(
@@ -5575,6 +5627,41 @@ def processar_alertas_automaticos(tenant_id=None):
   criar_mensagem_whatsapp(tenant_id=a.tenant_id,driver=d,body=body,message_type='alerta_automatico',related_entity='Alerta',related_entity_id=a.id,template_name=template_name,template_parameters=params); enviados+=1
  db.session.commit(); return enviados
 
+def _periodo_semana_tenant(tenant_id, referencia=None):
+ zone=_tenant_zone(tenant_id)
+ hoje=referencia or datetime.now(zone).date()
+ inicio=hoje-timedelta(days=hoje.weekday())
+ return inicio,inicio+timedelta(days=6)
+
+def _auditorias_semana_contrato(tenant_id, contract_id, referencia=None):
+ inicio,fim=_periodo_semana_tenant(tenant_id,referencia)
+ return BillingAudit.query.filter(
+  BillingAudit.tenant_id==tenant_id,
+  BillingAudit.contract_id==contract_id,
+  BillingAudit.billing_date>=inicio,
+  BillingAudit.billing_date<=fim
+ ).order_by(BillingAudit.id.desc()).all()
+
+def _cancelar_lembretes_cobranca_ids(tenant_id, audit_ids, motivo):
+ ids=[int(x) for x in audit_ids if x]
+ if not ids:
+  return 0
+ filas=MessageQueue.query.filter(
+  MessageQueue.tenant_id==tenant_id,
+  MessageQueue.related_entity=='Cobranca',
+  MessageQueue.related_entity_id.in_(ids),
+  MessageQueue.status.in_(['AGENDADA','PENDENTE','AGUARDANDO_MANUAL'])
+ ).all()
+ agora=agora_sao_paulo_naive()
+ for fila in filas:
+  fila.status='CANCELADA'
+  fila.updated_at=agora
+  db.session.add(MessageEvent(
+   tenant_id=tenant_id,message_id=fila.id,event='CANCELADA',
+   description=motivo,created_at=agora
+  ))
+ return len(filas)
+
 @app.route('/cobrancas/auditoria/<int:id>/pago',methods=['POST'])
 @login_required
 def marcar_cobranca_paga(id):
@@ -5583,13 +5670,25 @@ def marcar_cobranca_paga(id):
  if not contrato or contrato.status not in ('Assinado','Ativo'):
   flash('Esta cobrança pertence a um contrato que não está vigente e não pode receber baixa manual por esta tela.','warning')
   return redirect(url_for('cobrancas'))
- if (audit.payment_status or 'PENDENTE')=='PAGO':
+ if (audit.payment_status or 'PENDENTE').upper()=='PAGO':
   flash('Esta cobrança já estava marcada como paga.','info'); return redirect(url_for('cobrancas'))
  audit.payment_status='PAGO'; audit.paid_at=agora_sao_paulo_naive(); audit.paid_by_id=current_user.id
  audit.payment_method=(request.form.get('payment_method') or '').strip() or None
  audit.payment_notes=(request.form.get('payment_notes') or '').strip() or None
  audit.closed_at=audit.paid_at
- db.session.commit(); flash('Pagamento baixado. Os lembretes desta cobrança foram interrompidos.','success')
+ # Ao dar baixa, qualquer lembrete ainda pendente da mesma competência semanal
+ # deve morrer imediatamente. Isso cobre inclusive BillingAudit duplicada legada.
+ auditorias_semana=_auditorias_semana_contrato(audit.tenant_id,audit.contract_id,audit.billing_date)
+ ids_semana=[x.id for x in auditorias_semana]
+ canceladas=_cancelar_lembretes_cobranca_ids(
+  audit.tenant_id,ids_semana,
+  'Lembrete cancelado porque a cobrança da competência foi marcada como paga.'
+ )
+ db.session.commit()
+ msg='Pagamento baixado. Os lembretes desta cobrança foram interrompidos.'
+ if canceladas:
+  msg+=' {} mensagem(ns) pendente(s) cancelada(s).'.format(canceladas)
+ flash(msg,'success')
  return redirect(url_for('cobrancas'))
 
 @app.route('/cobrancas/<int:id>/baixa-manual-criar',methods=['POST'])
@@ -5627,8 +5726,10 @@ def criar_baixa_manual_cobranca(id):
    audit_semana.payment_method='Baixa manual'
    audit_semana.payment_notes='Pagamento confirmado manualmente pela locadora, sem comprovante no Frota Fácil.'
    audit_semana.closed_at=audit_semana.paid_at
+   auditorias_semana=_auditorias_semana_contrato(c.tenant_id,c.id,hoje)
+   _cancelar_lembretes_cobranca_ids(c.tenant_id,[x.id for x in auditorias_semana],'Lembrete cancelado porque a cobrança da competência foi marcada como paga.')
    db.session.commit()
-   flash('Cobrança desta semana marcada como paga. Nenhuma mensagem foi enviada.','success')
+   flash('Cobrança desta semana marcada como paga. Lembretes pendentes foram cancelados e nenhuma nova mensagem foi enviada.','success')
   return redirect(url_for('cobrancas'))
 
  info=calcular_cobranca_semanal(c)
@@ -5660,8 +5761,11 @@ def criar_baixa_manual_cobranca(id):
   created_at=pago_em
  )
  db.session.add(audit)
+ db.session.flush()
+ auditorias_semana=_auditorias_semana_contrato(c.tenant_id,c.id,hoje)
+ _cancelar_lembretes_cobranca_ids(c.tenant_id,[x.id for x in auditorias_semana],'Lembrete cancelado porque a cobrança da competência foi marcada como paga.')
  db.session.commit()
- flash('Cobrança criada e marcada como paga. Nenhuma mensagem foi enviada.','success')
+ flash('Cobrança criada e marcada como paga. Lembretes pendentes foram cancelados e nenhuma nova mensagem foi enviada.','success')
  return redirect(url_for('cobrancas'))
 
 @app.route('/cobrancas/auditoria/<int:id>/reabrir',methods=['POST'])
