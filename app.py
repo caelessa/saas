@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, send_file, abort, session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy import inspect, text, or_
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -92,6 +93,26 @@ def _as_tenant_time(value,tenant_id=None):
 
 def _as_sao_paulo(value):
  return _as_tenant_time(value,None)
+
+TENANT_TIMEZONE_OPTIONS=[
+ ('America/Sao_Paulo','Brasília / São Paulo (UTC−03:00)'),
+ ('America/Recife','Recife / Nordeste (UTC−03:00)'),
+ ('America/Fortaleza','Fortaleza (UTC−03:00)'),
+ ('America/Cuiaba','Cuiabá (UTC−04:00)'),
+ ('America/Manaus','Manaus (UTC−04:00)'),
+ ('America/Rio_Branco','Rio Branco / Acre (UTC−05:00)'),
+]
+TENANT_TIMEZONE_NAMES={name for name,_label in TENANT_TIMEZONE_OPTIONS}
+
+def _message_db_time_as_utc_naive(value):
+ # Compatibilidade: MessageQueue/MessageEvent usam horário local de São Paulo
+ # sem tzinfo. Convertemos somente para apresentação antes do filtro
+ # sp_datetime; nada é regravado no banco.
+ if not value:
+  return value
+ if value.tzinfo is not None:
+  return value.astimezone(timezone.utc).replace(tzinfo=None)
+ return value.replace(tzinfo=SAO_PAULO_TZ).astimezone(timezone.utc).replace(tzinfo=None)
 
 @app.template_filter('sp_datetime')
 def sp_datetime(value,fmt='%d/%m/%Y %H:%M'):
@@ -2925,6 +2946,14 @@ def configuracoes():
 def configuracoes_locadora():
  tenant=Tenant.query.get_or_404(tid())
  if request.method=='POST':
+  timezone_name=(request.form.get('timezone_name') or tenant.timezone_name or 'America/Sao_Paulo').strip()
+  if timezone_name not in TENANT_TIMEZONE_NAMES:
+   flash('Selecione um fuso horário válido.','danger'); return redirect(url_for('configuracoes_locadora'))
+  try:
+   ZoneInfo(timezone_name)
+  except Exception:
+   flash('O fuso horário selecionado não está disponível no servidor.','danger'); return redirect(url_for('configuracoes_locadora'))
+  tenant.timezone_name=timezone_name
   campos=['razao_social','nome_fantasia','cnpj','inscricao_estadual','inscricao_municipal','telefone','email','responsavel_legal','logradouro','numero_endereco','complemento','bairro','cidade','uf','cep','cor_primaria','cor_secundaria']
   for campo in campos:
    valor=(request.form.get(campo) or '').strip() or None
@@ -2946,7 +2975,24 @@ def configuracoes_locadora():
      try: storage.delete(old)
      except Exception: pass
   db.session.commit(); flash('Dados e identidade visual da locadora atualizados.','success'); return redirect(url_for('configuracoes_locadora'))
- return render_template('configuracoes_locadora.html',tenant=tenant)
+ html_config=render_template('configuracoes_locadora.html',tenant=tenant)
+ if 'name="timezone_name"' not in html_config:
+  options=[]
+  atual=(tenant.timezone_name or 'America/Sao_Paulo').strip()
+  for value,label in TENANT_TIMEZONE_OPTIONS:
+   selected=' selected' if value==atual else ''
+   options.append(f'<option value="{value}"{selected}>{label}</option>')
+  bloco=(
+   '<div class="mb-3">'
+   '<label class="form-label fw-semibold" for="timezone_name">Fuso horário da locadora</label>'
+   '<select class="form-select" id="timezone_name" name="timezone_name">'+''.join(options)+'</select>'
+   '<div class="form-text">Usado nos horários exibidos e nas automações deste tenant.</div>'
+   '</div>'
+  )
+  if '</form>' in html_config:
+   pos=html_config.rfind('</form>')
+   html_config=html_config[:pos]+bloco+html_config[pos:]
+ return html_config
 
 @app.route('/configuracoes/locadora/arquivo/<tipo>')
 @login_required
@@ -5976,6 +6022,11 @@ def integracoes():
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
  recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
+ for fila_recente in recentes:
+  for campo_data in ('created_at','updated_at','sent_at','scheduled_at'):
+   valor=getattr(fila_recente,campo_data,None)
+   if valor:
+    set_committed_value(fila_recente,campo_data,_message_db_time_as_utc_naive(valor))
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
 @app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
