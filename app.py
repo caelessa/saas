@@ -955,7 +955,10 @@ def moeda_br(value):
   n=Decimal('0')
  return f'{n:,.2f}'.replace(',','X').replace('.',',').replace('X','.')
 
+@app.template_filter('br_date')
 def data_br(value):
+ if isinstance(value,(datetime,date)):
+  return value.strftime('%d/%m/%Y')
  try:
   return datetime.strptime(value,'%Y-%m-%d').strftime('%d/%m/%Y')
  except Exception:

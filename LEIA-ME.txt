@@ -1,6 +1,8 @@
 FROTA FÁCIL - RC BASE DE CONHECIMENTO DO ASSISTENTE
 
 Alterações desta versão:
+- O Portal do Motorista passa a exibir, em cada manutenção, serviço, modelo e placa do veículo, data e hora agendadas e oficina/local.
+- Para manutenções já concluídas sem próximo agendamento, o portal exibe a data em que o serviço foi realizado.
 - Corrige o marcador {{data_atual}} nos modelos de contrato, preenchendo automaticamente a data corrente da locadora no formato DD/MM/AAAA.
 - Contratos ainda em Rascunho ou Gerado que ficaram com {{data_atual}} visível são corrigidos ao abrir os detalhes; o PDF não assinado é regenerado sem alterar contratos assinados ou enviados à Clicksign.
 - Corrige o cálculo de KM excedente quando a leitura é enviada pelo link da vistoria: a leitura agora fica vinculada ao contrato vigente e não é combinada com KM deixada por motorista ou contrato anterior.
