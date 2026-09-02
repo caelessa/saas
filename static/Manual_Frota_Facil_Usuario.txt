@@ -1,0 +1,727 @@
+[]
+
+MANUAL DO USUÁRIO
+
+Frota Fácil
+
+Operação, automações e respostas rápidas
+
+Versão atualizada - 02/09/2026
+
+  -----------------------------------------------------------------------
+  Objetivo deste manual: Explicar somente as funções disponíveis na
+  interface e oferecer passos objetivos para usuários e para o Assistente
+  Frota Fácil. Recursos futuros não são tratados como funções atuais.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+1. Visão geral
+
+O Frota Fácil centraliza a operação da locadora: motoristas, veículos,
+proprietários, contratos, cobranças, quilometragem, vistorias,
+manutenções, documentos, automações e portais de autoatendimento.
+
+-   Gestão para a locadora: rotina operacional e financeira em um único
+    sistema.
+
+-   Transparência para o proprietário: veículos, receitas, custos,
+    indicadores e histórico.
+
+-   Autonomia para o motorista: pendências, pagamentos, vistoria,
+    quilometragem e documentos autorizados.
+
+  -----------------------------------------------------------------------
+  Limite importante: O sistema reduz tarefas repetitivas, mas não
+  substitui a conferência administrativa. A análise de vistoria por IA é
+  assistiva; a decisão final permanece com a locadora.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+2. Primeiros passos
+
+  -----------------------------------------------------------------------
+  Para que serve                      Preparar a locadora para operar com
+                                      cadastros, mensagens e automações
+                                      coerentes.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Configurações, cadastros principais
+                                      e Dashboard.
+
+  -----------------------------------------------------------------------
+
+1. Acesse Configurações e complete os Dados da locadora.
+
+2. Defina o fuso horário correto.
+
+3. Cadastre proprietários, veículos e motoristas.
+
+4. Cadastre ou gere os contratos e mantenha os status atualizados.
+
+5. Conecte o WhatsApp e confira os templates aprovados pela Meta.
+
+6. Configure dias, horários e intervalos antes de ativar automações.
+
+7. Use Dashboard, Alertas e Central de Ajuda para acompanhar a operação.
+
+  -----------------------------------------------------------------------
+  Durante testes: Mantenha desativadas as automações que não devem enviar
+  mensagens reais a motoristas ou proprietários.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+3. Acesso e navegação
+
+  -----------------------------------------------------------------------
+  Para que serve                      Entrar no ambiente da locadora e
+                                      localizar as áreas de trabalho.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Tela de acesso e menu lateral.
+
+  -----------------------------------------------------------------------
+
+Entrar e sair
+
+1. Acesse o endereço do Frota Fácil da sua locadora.
+
+2. Informe e-mail e senha.
+
+3. Use o menu lateral para abrir o módulo desejado.
+
+4. Ao terminar, use Sair, principalmente em computador compartilhado.
+
+Quando não conseguir entrar
+
+-   Confira se está usando o endereço correto da locadora.
+
+-   Revise e-mail e senha.
+
+-   Se o acesso estiver bloqueado ou a recuperação não resolver, abra
+    uma solicitação de suporte.
+
+4. Motoristas e Portal do Motorista
+
+  -----------------------------------------------------------------------
+  Para que serve                      Cadastrar dados pessoais,
+                                      documentos e contato usados em
+                                      contratos e comunicações.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Motoristas.
+
+  Antes de começar                    Tenha identificação, contato, CNH e
+                                      endereço disponíveis.
+  -----------------------------------------------------------------------
+
+Cadastrar motorista
+
+1. Abra Motoristas.
+
+2. Escolha criar um novo cadastro.
+
+3. Preencha identificação, contato, CNH, endereço e demais campos
+disponíveis.
+
+4. Confira os dados e salve.
+
+Portal do Motorista
+
+O Portal do Motorista reúne as ações necessárias naquele momento. Uma
+pendência é uma ação que o motorista precisa realizar, e não qualquer
+situação administrativa ainda em análise.
+
+-   Contratos atuais e histórico.
+
+-   Pendências de quilometragem e vistoria.
+
+-   Situação dos pagamentos.
+
+-   CRLV-e do veículo vinculado a contrato atual, quando disponível e
+    autorizado.
+
+-   Acesso por convite e criação de senha própria.
+
+5. Veículos
+
+  -----------------------------------------------------------------------
+  Para que serve                      Manter o prontuário operacional de
+                                      cada veículo.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Veículos.
+
+  Antes de começar                    Tenha placa, RENAVAM, chassi,
+                                      marca/modelo, ano, cor,
+                                      quilometragem e proprietário.
+  -----------------------------------------------------------------------
+
+Cadastrar veículo
+
+1. Abra Veículos.
+
+2. Crie um novo cadastro.
+
+3. Preencha os dados do veículo e informe a quilometragem atual correta.
+
+4. Vincule o proprietário quando aplicável.
+
+5. Salve e confira o cadastro.
+
+O que aparece no histórico
+
+-   Contratos e motoristas vinculados.
+
+-   Registros de quilometragem.
+
+-   Vistorias e eventos.
+
+-   Manutenções, custos, documentos e comprovantes.
+
+  -----------------------------------------------------------------------
+  Cadastro duplicado: Antes de excluir um veículo antigo ou duplicado,
+  verifique vínculos com contratos, KM, vistorias, documentos e
+  manutenções. Quando disponível, prefira inativar ou alterar o status.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+6. Proprietários e Portal do Proprietário
+
+  -----------------------------------------------------------------------
+  Para que serve                      Vincular veículos, configurar
+                                      regras financeiras e oferecer
+                                      consulta direta ao proprietário.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Proprietários.
+
+  Antes de começar                    Cadastre nome, CPF/CNPJ, telefone e
+                                      e-mail; vincule pelo menos um
+                                      veículo quando aplicável.
+  -----------------------------------------------------------------------
+
+Cadastrar e configurar repasse
+
+1. Abra Proprietários e crie ou edite o cadastro.
+
+2. Preencha nome, CPF/CNPJ, telefone e e-mail.
+
+3. Em Valores e veículos, escolha o veículo.
+
+4. Informe os percentuais do proprietário e da locadora.
+
+5. Defina a data de início da regra e salve.
+
+Criar ou conferir acesso ao portal
+
+1. Abra Proprietários.
+
+2. Acesse Acesso ao portal.
+
+3. Configure as credenciais disponíveis no fluxo atual.
+
+4. Confirme se o acesso está ativo.
+
+5. Envie ao proprietário o link e as credenciais.
+
+6. Se necessário, bloqueie o acesso sem excluir o cadastro do
+proprietário.
+
+O que o proprietário acompanha
+
+-   Receita teórica e repasses pagos.
+
+-   Custos e resultado real.
+
+-   Capital próprio, ROI, rentabilidade e payback quando aplicáveis.
+
+-   Filtros por veículo e período.
+
+-   Situação do veículo, motorista, KM, contrato, manutenção e alertas.
+
+-   Histórico individual e informações de manutenção.
+
+  -----------------------------------------------------------------------
+  Se o proprietário não entrar: Abra Proprietários > Acesso ao portal e
+  confira credenciais e status. Se ele entrar, mas não visualizar um
+  veículo, confirme o vínculo do veículo com o proprietário correto.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+7. Contratos
+
+  -----------------------------------------------------------------------
+  Para que serve                      Vincular motorista, veículo,
+                                      valores e regras comerciais,
+                                      mantendo o documento e seu status.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Contratos.
+
+  Antes de começar                    Motorista e veículo devem estar
+                                      cadastrados.
+  -----------------------------------------------------------------------
+
+Fluxo recomendado
+
+1. Abra Contratos.
+
+2. Crie o contrato e selecione motorista e veículo.
+
+3. Preencha valores, datas, periodicidade, limite de KM e demais regras
+disponíveis.
+
+4. Gere o documento e confira os dados.
+
+5. Envie para assinatura conforme o fluxo adotado.
+
+6. Atualize o status para refletir a situação real.
+
+Significado dos status
+
+-   Gerado: documento preparado, ainda sem confirmação de assinatura.
+
+-   Assinado: assinatura confirmada.
+
+-   Ativo: contrato em operação.
+
+-   Cancelado: contrato encerrado e retirado dos fluxos vigentes quando
+    aplicável.
+
+  -----------------------------------------------------------------------
+  Atenção: Contratos cancelados não devem continuar gerando cobranças ou
+  tarefas atuais.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+8. Cobranças, pagamentos e comprovantes
+
+  -----------------------------------------------------------------------
+  Para que serve                      Acompanhar a competência semanal,
+                                      aluguel, limite de KM, excedente,
+                                      total e situação do pagamento.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Cobranças.
+
+  Antes de começar                    Mantenha contrato, vencimento e
+                                      valores coerentes; valide templates
+                                      antes de automatizar.
+  -----------------------------------------------------------------------
+
+Dar baixa manual
+
+1. Abra Cobranças.
+
+2. Localize a competência e o motorista.
+
+3. Se a cobrança já existe, use Marcar como pago.
+
+4. Se ainda não existe, use o fluxo disponível para criar e marcar como
+paga sem enviar mensagem.
+
+5. Confirme que a competência aparece como paga.
+
+Comprovante pelo link
+
+Quando o motorista usa o link correto da cobrança, o comprovante fica
+vinculado à própria competência para conferência e baixa. Isso evita
+procurar imagens em conversas de WhatsApp.
+
+Automação de cobrança
+
+A cobrança possui controle próprio. Quando desativada, não envia
+mensagens automáticas; o envio manual continua disponível. Enquanto a
+cobrança não estiver paga, os lembretes seguem a configuração aplicável.
+Após a baixa, os lembretes daquela competência devem parar.
+
+  -----------------------------------------------------------------------
+  Cobrança paga por engano: Use Reabrir cobrança e revise a situação
+  antes de novos envios.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+9. Quilometragem e foto do painel
+
+  -----------------------------------------------------------------------
+  Para que serve                      Solicitar, registrar e conferir a
+                                      KM com apoio da foto do painel.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Quilometragens e Conferir KM.
+
+  Antes de começar                    Veículo e motorista devem estar
+                                      vinculados ao fluxo aplicável.
+  -----------------------------------------------------------------------
+
+Fluxo do motorista
+
+1. O motorista abre o link recebido.
+
+2. Fotografa o painel.
+
+3. Digita a quilometragem exibida.
+
+4. Envia as informações.
+
+5. A locadora confere a leitura e a foto quando necessário.
+
+A vistoria também pode registrar foto do painel e KM. Quando a vistoria
+satisfaz a obrigação, o sistema evita uma solicitação redundante de
+quilometragem.
+
+  -----------------------------------------------------------------------
+  KM incorreta: Abra Conferir KM e compare o valor digitado com a foto do
+  painel. Não confirme uma leitura incompatível.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+10. Vistorias
+
+  -----------------------------------------------------------------------
+  Para que serve                      Registrar o estado do veículo com
+                                      imagens consistentes e comparáveis.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Vistorias; o tipo padrão fica em
+                                      Configurações > Automações.
+
+  Antes de começar                    Configure o tipo de vistoria e
+                                      valide o fluxo com usuário de
+                                      teste.
+  -----------------------------------------------------------------------
+
+Fotos guiadas - 4 lados + painel
+
+1. Fotografe a frente do veículo.
+
+2. Fotografe a lateral direita.
+
+3. Fotografe a traseira.
+
+4. Fotografe a lateral esquerda.
+
+5. Fotografe o painel.
+
+6. Digite a quilometragem exibida.
+
+7. Revise e envie.
+
+As fotos devem ser capturadas na hora. O motorista pode refazer cada
+imagem antes de avançar.
+
+Análise assistida por IA
+
+Quando habilitada, a IA analisa as quatro fotos externas e pode indicar
+possíveis avarias. Se houver vistoria anterior do mesmo veículo, pode
+comparar a mesma posição para procurar mudanças visuais.
+
+  -----------------------------------------------------------------------
+  Decisão humana: A IA não aprova nem reprova automaticamente. Na
+  primeira vistoria, pode apontar indícios, mas não deve afirmar que uma
+  avaria é nova sem referência anterior.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+11. Manutenções
+
+  -----------------------------------------------------------------------
+  Para que serve                      Organizar manutenções preventivas e
+                                      corretivas por data ou KM, com
+                                      alertas, custos e comprovantes.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Manutenções.
+
+  Antes de começar                    Veículo cadastrado e KM atual
+                                      coerente.
+  -----------------------------------------------------------------------
+
+Registrar manutenção
+
+1. Abra Manutenções.
+
+2. Selecione o veículo.
+
+3. Informe tipo, descrição, data/KM e valor.
+
+4. Anexe comprovantes quando disponíveis.
+
+5. Salve e acompanhe alertas e histórico.
+
+-   Manutenções podem ser canceladas quando necessário.
+
+-   Notas fiscais, recibos e documentos da oficina permanecem vinculados
+    ao histórico.
+
+-   A manutenção registrada alimenta os indicadores aplicáveis.
+
+12. Documentos
+
+  -----------------------------------------------------------------------
+  Para que serve                      Centralizar documentos de
+                                      motoristas e veículos.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Documentos e cadastros
+                                      relacionados.
+
+  Antes de começar                    Use arquivos legíveis e confira o
+                                      vínculo correto.
+  -----------------------------------------------------------------------
+
+-   CNH do motorista.
+
+-   CRLV-e do veículo.
+
+-   Comprovantes e documentos vinculados às áreas disponíveis.
+
+CRLV-e no Portal do Motorista
+
+Quando o CRLV-e está cadastrado, o motorista pode visualizar e baixar o
+documento do veículo vinculado a um contrato atual autorizado. O acesso
+respeita a locadora e o vínculo motorista-veículo.
+
+13. WhatsApp e automações
+
+  -----------------------------------------------------------------------
+  Para que serve                      Enviar solicitações e lembretes
+                                      conforme regras da locadora.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Integrações e Configurações >
+                                      Automações.
+
+  Antes de começar                    Integração WhatsApp conectada e
+                                      templates Meta aprovados.
+  -----------------------------------------------------------------------
+
+Antes de ativar
+
+1. Confirme se a integração está conectada.
+
+2. Confira se o template necessário está aprovado e disponível.
+
+3. Revise os parâmetros esperados pelo template.
+
+4. Defina dias, janela de horário e intervalo de reenvio.
+
+5. Faça um teste controlado.
+
+6. Ative somente a automação validada.
+
+-   KM, cobrança, vistoria e manutenção usam os controles disponíveis
+    para cada fluxo.
+
+-   Evite mensagens redundantes pedindo a mesma informação.
+
+-   Desativar a automação impede novos envios automáticos daquele fluxo.
+
+-   Desligar a integração interrompe os envios pelo WhatsApp.
+
+  -----------------------------------------------------------------------
+  Automação não enviou: Confira Configurações > Automações e depois o
+  status da integração e do template. Se tudo estiver correto, abra
+  suporte com horário, motorista e fluxo testado.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+14. Configurações da locadora
+
+  -----------------------------------------------------------------------
+  Para que serve                      Definir dados, identidade visual,
+                                      fuso horário e comportamento
+                                      operacional.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Configurações.
+
+  Antes de começar                    Use dados oficiais da locadora e
+                                      faça alterações com cuidado em
+                                      produção.
+  -----------------------------------------------------------------------
+
+Fuso horário
+
+Cada locadora define seu fuso horário. Históricos e automações
+consideram essa configuração.
+
+Tipo padrão de vistoria
+
+Em Configurações > Automações, escolha o padrão das vistorias
+automáticas. Fotos guiadas - 4 lados + painel é o fluxo recomendado para
+facilitar a adesão e a comparação. Modos de vídeo permanecem disponíveis
+quando necessários.
+
+Identidade visual
+
+Em Dados da locadora, revise os campos de personalização disponíveis,
+salve e atualize a página para conferir a aplicação.
+
+15. Financeiro da locadora e do proprietário
+
+  -----------------------------------------------------------------------
+  Para que serve                      Consolidar valores previstos e
+                                      realizados a partir de contratos,
+                                      cobranças, pagamentos, custos e
+                                      regras de repasse.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Financeiro, Dashboard e Portal do
+                                      Proprietário.
+
+  Antes de começar                    Cadastros financeiros e baixas
+                                      devem estar atualizados.
+  -----------------------------------------------------------------------
+
+Ao dar baixa corretamente em uma cobrança, os dados realizados passam a
+refletir a confirmação nos indicadores. Os mesmos registros alimentam as
+visões correspondentes sem exigir digitação duplicada.
+
+  -----------------------------------------------------------------------
+  Repasse incorreto: Abra Proprietários > Valores e veículos e confira
+  percentuais, veículo e data de vigência.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+16. Ajuda, Assistente e Suporte
+
+  -----------------------------------------------------------------------
+  Para que serve                      Consultar orientações e registrar
+                                      situações específicas da locadora.
+  ----------------------------------- -----------------------------------
+  Onde acessar                        Ajuda e Suporte.
+
+  Antes de começar                    Descreva o contexto sem incluir
+                                      senhas ou chaves secretas.
+  -----------------------------------------------------------------------
+
+Perguntar ao Assistente Frota Fácil
+
+1. Abra Ajuda e Suporte > Assistente.
+
+2. Escreva uma pergunta objetiva sobre o uso do sistema.
+
+3. Leia a orientação e confirme se ela corresponde ao seu perfil e à
+tela acessada.
+
+4. Se a base não tiver a resposta ou a situação for específica da
+locadora, abra suporte.
+
+Abrir uma solicitação
+
+1. Acesse Ajuda e Suporte > Suporte.
+
+2. Informe assunto, categoria e prioridade.
+
+3. Descreva o que estava fazendo, o que esperava e o que aconteceu.
+
+4. Inclua tela, data, horário e identificação do registro quando
+ajudarem no diagnóstico.
+
+5. Envie e acompanhe em Minhas solicitações.
+
+17. Dúvidas rápidas
+
+  -----------------------------------------------------------------------
+  Dúvida                   Resposta rápida
+  ------------------------ ----------------------------------------------
+  Como acessar o Portal do A locadora abre Proprietários > Acesso ao
+  Proprietário?            portal, configura as credenciais, confirma que
+                           o acesso está ativo e envia ao proprietário o
+                           link e as credenciais.
+
+  O proprietário não       Confira credenciais e status em
+  consegue entrar.         Proprietários > Acesso ao portal.
+
+  O proprietário não vê um Confirme se o veículo está vinculado ao
+  veículo.                 proprietário correto.
+
+  O repasse parece errado. Revise Proprietários > Valores e veículos,
+                           percentuais e vigência.
+
+  A KM parece incorreta.   Abra Conferir KM e compare o valor com a foto
+                           do painel.
+
+  O comprovante não        Confirme se o motorista usou o link daquela
+  aparece.                 cobrança.
+
+  A cobrança foi paga por  Use Reabrir cobrança.
+  engano.                  
+
+  A automação não enviou.  Confira Configurações > Automações, integração
+                           WhatsApp e template.
+
+  WhatsApp não envia.      Verifique conexão da integração, template
+                           aprovado e parâmetros.
+
+  A personalização não     Revise Dados da locadora, salve e atualize a
+  apareceu.                página.
+
+  A IA pode reprovar       Não. A análise é assistiva e a decisão final é
+  vistoria?                da locadora.
+
+  Onde abrir suporte?      Ajuda e Suporte > Suporte.
+  -----------------------------------------------------------------------
+
+18. Rotina recomendada
+
+Todos os dias
+
+-   Revise alertas e pendências.
+
+-   Confira integrações e automações ativas.
+
+-   Acompanhe cobranças, KM, vistorias e manutenções que exigem ação.
+
+Toda semana
+
+-   Revise cobranças e pagamentos.
+
+-   Confira leituras de KM e possíveis excedentes.
+
+-   Acompanhe vistorias, manutenções e documentos pendentes.
+
+Todo mês
+
+-   Revise contratos ativos e encerrados.
+
+-   Confira regras financeiras e vínculos.
+
+-   Acompanhe indicadores da locadora e dos proprietários.
+
+19. Resumo: onde fazer
+
+  -----------------------------------------------------------------------
+  Dúvida                   Resposta rápida
+  ------------------------ ----------------------------------------------
+  Cadastrar motorista      Motoristas
+
+  Cadastrar veículo        Veículos
+
+  Cadastrar proprietário   Proprietários
+
+  Criar acesso do          Proprietários > Acesso ao portal
+  proprietário             
+
+  Criar contrato           Contratos
+
+  Dar baixa em cobrança    Cobranças
+
+  Conferir KM              Quilometragens > Conferir KM
+
+  Analisar vistoria        Vistorias
+
+  Cadastrar manutenção     Manutenções
+
+  Alterar fuso horário     Configurações > Dados da locadora
+
+  Definir vistoria padrão  Configurações > Automações
+
+  Abrir chamado            Ajuda e Suporte > Suporte
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+  Frota Fácil: Gestão inteligente para locadoras e frotas. O objetivo é
+  reduzir solicitações repetitivas, organizar a operação e manter cada
+  usuário com acesso somente às informações do seu papel.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
