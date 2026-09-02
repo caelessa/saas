@@ -1,42 +1,33 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ativar Portal do Motorista</title>
-<style>
-:root{--primary:{{ (tenant.cor_primaria if tenant and tenant.cor_primaria else '#1565c0') }};--secondary:{{ (tenant.cor_secundaria if tenant and tenant.cor_secundaria else '#0d47a1') }};--bg:#f4f7fb;--text:#172033;--muted:#667085;--border:#d8dee9}
-*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:22px}.card{width:100%;max-width:470px;background:#fff;border-radius:18px;padding:28px;box-shadow:0 12px 38px rgba(20,35,70,.12)}.brand{text-align:center;margin-bottom:22px}.brand h1{font-size:24px;margin:0 0 7px;color:var(--primary)}.brand p{margin:0;color:var(--muted);line-height:1.45}.owner{background:#f7f9fc;border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin:18px 0}.owner strong{display:block;margin-bottom:3px}.hint{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.4}label{display:block;font-weight:700;margin:15px 0 6px}input{width:100%;padding:13px 14px;border:1px solid var(--border);border-radius:10px;font-size:16px}input:focus{outline:2px solid color-mix(in srgb,var(--primary) 28%,transparent);border-color:var(--primary)}button{width:100%;border:0;border-radius:10px;padding:14px 16px;margin-top:20px;background:var(--primary);color:#fff;font-weight:700;font-size:16px;cursor:pointer}.flash{padding:11px 13px;border-radius:9px;margin:12px 0;font-size:14px}.danger{background:#fff1f0;color:#9f1c14}.success{background:#ecfdf3;color:#067647}.warning{background:#fffaeb;color:#93370d}.security{font-size:12px;text-align:center;color:var(--muted);margin:18px 0 0}.tech{text-align:center;color:var(--muted);font-size:11px;margin-top:18px}
-</style>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+ <meta name="theme-color" content="{{ tenant.cor_primaria if tenant and tenant.cor_primaria else '#ea580c' }}">
+ <title>Criar acesso | Portal do Motorista</title>
+ {% if tenant and tenant.favicon_key %}<link rel="icon" href="{{ url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon') }}">{% endif %}
+ <link rel="stylesheet" href="{{ url_for('static',filename='portal_motorista.css') }}">
+ <style>:root{--pm-primary:{{ tenant.cor_primaria if tenant and tenant.cor_primaria else '#ea580c' }};--pm-secondary:{{ tenant.cor_secundaria if tenant and tenant.cor_secundaria else '#0f172a' }};}</style>
 </head>
 <body>
-<div class="card">
- <div class="brand">
-  <h1>Portal do Motorista</h1>
-  {% if tenant %}<p>{{ tenant.nome_fantasia or tenant.nome or 'Locadora' }}</p>{% endif %}
- </div>
- {% with messages = get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
- {% if erro %}
-  <div class="flash danger">{{ erro }}</div>
-  <p class="hint">Peça à locadora um novo convite de acesso.</p>
- {% else %}
-  <h2 style="margin-bottom:8px">Crie seu acesso</h2>
-  <p style="color:var(--muted);line-height:1.5;margin-top:0">Escolha o e-mail que deseja usar para entrar no portal e crie sua própria senha.</p>
-  <div class="owner"><strong>{{ driver.nome }}</strong><span class="hint">Este convite é exclusivo para o seu cadastro.</span></div>
-  <form method="post" autocomplete="on">
-   <label for="email">E-mail de acesso</label>
-   <input id="email" type="email" name="email" value="{{ email_sugerido }}" autocomplete="email" required>
-   {% if email_sugerido %}<div class="hint">Usamos o e-mail do cadastro apenas como sugestão. Você pode alterá-lo.</div>{% else %}<div class="hint">Digite o e-mail que prefere usar para entrar no portal.</div>{% endif %}
-   <label for="senha">Crie uma senha</label>
-   <input id="senha" type="password" name="senha" minlength="6" autocomplete="new-password" required>
-   <div class="hint">Use pelo menos 6 caracteres.</div>
-   <label for="confirmar_senha">Confirme a senha</label>
-   <input id="confirmar_senha" type="password" name="confirmar_senha" minlength="6" autocomplete="new-password" required>
-   <button type="submit">Ativar meu acesso</button>
-  </form>
-  <p class="security">Sua senha é armazenada de forma protegida e não fica disponível para consulta pela locadora.</p>
- {% endif %}
- <div class="tech">Tecnologia Frota Fácil</div>
-</div>
+ <main class="pm-auth">
+  <section class="pm-auth-card">
+   <div class="pm-auth-brand">
+    {% if tenant and tenant.logo_key %}<img class="pm-logo" src="{{ url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='logo') }}" alt="Logo da locadora">{% endif %}
+    <h1>{% if driver %}Olá, {{ driver.nome.split()[0] }}{% else %}Portal do Motorista{% endif %}</h1>
+    <p>{% if tenant %}Crie seu acesso à {{ tenant.nome_fantasia or tenant.nome }}{% else %}Ativação de acesso{% endif %}</p>
+   </div>
+   {% if erro %}<div class="pm-error" role="alert">{{ erro }}</div>{% else %}
+   {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="pm-flash {{ cat }}" role="alert">{{ msg }}</div>{% endfor %}{% endwith %}
+   <form method="post" autocomplete="on">
+    <div class="pm-field"><label for="email">Seu e-mail</label><input id="email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" value="{{ email_sugerido }}" required></div>
+    <div class="pm-field"><label for="senha">Crie uma senha</label><input id="senha" name="senha" type="password" autocomplete="new-password" minlength="6" required></div>
+    <div class="pm-field"><label for="confirmar_senha">Confirme a senha</label><input id="confirmar_senha" name="confirmar_senha" type="password" autocomplete="new-password" minlength="6" required></div>
+    <button class="pm-action" type="submit">Criar acesso</button>
+   </form>
+   <p class="pm-security">A senha deve ter pelo menos 6 caracteres. Não compartilhe seu acesso.</p>
+   {% endif %}
+  </section>
+ </main>
 </body>
 </html>

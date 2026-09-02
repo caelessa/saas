@@ -1,26 +1,31 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Portal do Motorista · Frota Fácil</title>
-<style>
-:root{--primary:{{ (tenant_login.cor_primaria if tenant_login and tenant_login.cor_primaria else '#111827') }}}
-body{margin:0;font-family:Arial,sans-serif;background:#f6f8fb;color:#172033;display:grid;place-items:center;min-height:100vh;padding:20px}.card{width:min(420px,92vw);background:#fff;border:1px solid #e4e8ef;border-radius:18px;padding:28px;box-shadow:0 14px 40px rgba(15,23,42,.08)}h1{margin:0 0 8px}p{color:#64748b;line-height:1.5}label{display:block;margin:16px 0 6px;font-weight:600}input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px}button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:10px;background:var(--primary);color:white;font-weight:700;cursor:pointer}.flash{padding:10px 12px;border-radius:10px;background:#fee2e2;color:#991b1b;margin:12px 0}.brand{font-size:.9rem;color:#64748b;margin-bottom:18px}.help{margin-top:18px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;color:#475569;line-height:1.45}.tenant{font-weight:700;color:var(--primary);margin-bottom:8px}
-</style>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+ <meta name="theme-color" content="{{ tenant_login.cor_primaria if tenant_login and tenant_login.cor_primaria else '#ea580c' }}">
+ <title>Entrar | Portal do Motorista</title>
+ {% if tenant_login and tenant_login.favicon_key %}<link rel="icon" href="{{ url_for('identidade_publica_tenant',tenant_id=tenant_login.id,tipo='favicon') }}">{% endif %}
+ <link rel="stylesheet" href="{{ url_for('static',filename='portal_motorista.css') }}">
+ <style>:root{--pm-primary:{{ tenant_login.cor_primaria if tenant_login and tenant_login.cor_primaria else '#ea580c' }};--pm-secondary:{{ tenant_login.cor_secundaria if tenant_login and tenant_login.cor_secundaria else '#0f172a' }};}</style>
 </head>
 <body>
-<div class="card">
-<div class="brand">Tecnologia Frota Fácil</div>
-{% if tenant_login %}<div class="tenant">{{ tenant_login.nome_fantasia or tenant_login.nome }}</div>{% endif %}
-<h1>Portal do Motorista</h1>
-<p>Entre com o e-mail e a senha que você escolheu na ativação do seu acesso.</p>
-{% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="flash">{{msg}}</div>{% endfor %}{% endwith %}
-<form method="post">
-{% if tenant_login %}<input type="hidden" name="tenant" value="{{ tenant_login.id }}">{% endif %}
-<label>E-mail de acesso</label><input type="email" name="email" required autocomplete="username">
-<label>Senha</label><input type="password" name="senha" required autocomplete="current-password">
-<button type="submit">Entrar</button>
-</form>
-<div class="help"><strong>Primeiro acesso?</strong><br>Use o link de ativação enviado pela locadora no WhatsApp para escolher seu e-mail e criar sua senha.</div>
-</div>
-</body></html>
+ <main class="pm-auth">
+  <section class="pm-auth-card">
+   <div class="pm-auth-brand">
+    {% if tenant_login and tenant_login.logo_key %}<img class="pm-logo" src="{{ url_for('identidade_publica_tenant',tenant_id=tenant_login.id,tipo='logo') }}" alt="Logo da locadora">{% endif %}
+    <h1>Portal do Motorista</h1>
+    <p>{{ (tenant_login.nome_fantasia or tenant_login.nome) if tenant_login else 'Acesse suas informações e pendências' }}</p>
+   </div>
+   {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="pm-flash {{ cat }}" role="alert">{{ msg }}</div>{% endfor %}{% endwith %}
+   <form method="post" autocomplete="on">
+    {% if tenant_login %}<input type="hidden" name="tenant" value="{{ tenant_login.id }}">{% endif %}
+    <div class="pm-field"><label for="email">E-mail</label><input id="email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+    <div class="pm-field"><label for="senha">Senha</label><input id="senha" name="senha" type="password" autocomplete="current-password" minlength="6" required></div>
+    <button class="pm-action" type="submit">Entrar no portal</button>
+   </form>
+   <p class="pm-security">Use o e-mail e a senha criados pelo link enviado pela sua locadora. Seus dados ficam vinculados apenas à locadora responsável pelo contrato.</p>
+  </section>
+ </main>
+</body>
+</html>
