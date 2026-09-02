@@ -6225,6 +6225,11 @@ def processar_alertas_automaticos(tenant_id=None):
   if a.entidade=='Manutenção':
    m=Maintenance.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first()
    if m and (m.status or '').strip()=='Cancelada': continue
+   # Quando a locadora escolhe notificar o motorista no agendamento, a própria
+   # manutenção já controla a confirmação imediata e o lembrete de um dia antes.
+   # Não envie também o alerta operacional genérico para o mesmo compromisso.
+   if m and m.notificar_motorista and m.notificacao_agendamento_id:
+    continue
    v=m.vehicle if m else None
   elif a.entidade=='Veículo': v=Vehicle.query.filter_by(id=a.entidade_id,tenant_id=a.tenant_id).first()
   if not v: continue
