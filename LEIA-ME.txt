@@ -1,6 +1,8 @@
 FROTA FÁCIL - RC BASE DE CONHECIMENTO DO ASSISTENTE
 
 Alterações desta versão:
+- Corrige o marcador {{data_atual}} nos modelos de contrato, preenchendo automaticamente a data corrente da locadora no formato DD/MM/AAAA.
+- Contratos ainda em Rascunho ou Gerado que ficaram com {{data_atual}} visível são corrigidos ao abrir os detalhes; o PDF não assinado é regenerado sem alterar contratos assinados ou enviados à Clicksign.
 - Corrige o cálculo de KM excedente quando a leitura é enviada pelo link da vistoria: a leitura agora fica vinculada ao contrato vigente e não é combinada com KM deixada por motorista ou contrato anterior.
 - A vistoria passa a substituir também uma solicitação de KM que esteja aguardando conferência, usando a foto do painel e a KM da própria vistoria.
 - A foto/KM mais recente substitui outra leitura do mesmo contrato na mesma semana; reenvios e conferências atualizam essa única leitura, evitando que vistoria e KM anterior do mesmo período sejam usadas juntas na cobrança.

@@ -4164,6 +4164,7 @@ def contratos():
    'prazo_bloqueio_horas':request.form.get('prazo_bloqueio_horas') or '48','multa_diaria':moeda_br(request.form.get('multa_diaria') or 500),'taxa_adm_multas_percentual':request.form.get('taxa_adm_multas_percentual') or '20',
    'data_inicio_formatada':data_br(data_inicio),'hora_inicio':request.form.get('hora_inicio') or '09:00','data_fim_formatada':data_br(data_fim),'prazo_dias':prazo_dias,
    'cidade_assinatura':request.form.get('cidade_assinatura') or 'Carapicuíba/SP','data_assinatura_formatada':data_br(data_inicio),
+   'data_atual':datetime.now(_tenant_zone(tid())).strftime('%d/%m/%Y'),
   }
   # Regra operacional: um veículo só pode ter um contrato vigente por vez.
   conflito=Contract.query.filter(Contract.tenant_id==tid(),Contract.vehicle_id==v.id,Contract.status.in_(['Rascunho','Gerado','Enviado','Visualizado','Assinado','Ativo'])).first()
@@ -4236,6 +4237,28 @@ def contratos():
 @login_required
 def contrato_detalhe(id):
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle),joinedload(Contract.criado_por)).filter_by(id=id,tenant_id=tid()).first_or_404()
+ # Compatibilidade com modelos já enviados que continham {{data_atual}}, mas
+ # foram gerados antes de esse marcador ser reconhecido. Só corrige documentos
+ # ainda não assinados e não enviados à Clicksign, preservando a integridade.
+ if '{{data_atual}}' in (c.texto_final or '') and c.status in ('Rascunho','Gerado') and not c.clicksign_envelope_id and not c.arquivo_pdf_assinado:
+  data_contrato=(c.criado_em or agora_sao_paulo_naive()).strftime('%d/%m/%Y')
+  c.texto_final=c.texto_final.replace('{{data_atual}}',data_contrato)
+  if c.arquivo_pdf:
+   try:
+    codigo_publico=garantir_codigo_publico_contrato(c)
+    pdf_corrigido=gerar_pdf_contrato(c.numero_contrato,c.texto_final,codigo_publico=codigo_publico,url_validacao=url_for('validar_contrato_publico',codigo=codigo_publico,_external=True))
+    storage.upload(BytesIO(pdf_corrigido),c.arquivo_pdf,'application/pdf')
+    c.hash_documento=hashlib.sha256(pdf_corrigido).hexdigest()
+    if c.documento_id:
+     doc_corrigido=Document.query.filter_by(id=c.documento_id,tenant_id=tid()).first()
+     if doc_corrigido: doc_corrigido.hash_sha256=c.hash_documento
+    registrar_evento_contrato(db.session,ContractEvent,tenant_id=tid(),contract_id=c.id,user_id=current_user.id,evento='DATA_ATUAL_CORRIGIDA',descricao='Marcador {{data_atual}} preenchido e PDF não assinado regenerado.',status_novo=c.status)
+   except Exception:
+    db.session.rollback(); app.logger.exception('Falha ao corrigir data atual do contrato %s',c.id)
+   else:
+    db.session.commit()
+  else:
+   db.session.commit()
  eventos=ContractEvent.query.options(joinedload(ContractEvent.user)).filter_by(tenant_id=tid(),contract_id=c.id).order_by(ContractEvent.criado_em.desc()).all()
  documento=Document.query.filter_by(id=c.documento_id,tenant_id=tid()).first() if c.documento_id else None
  signature_item=_integration('signature')
@@ -4659,7 +4682,7 @@ CONTRACT_MARKERS=[
  ('caucao','Caução'),('caucao_extenso','Caução por extenso'),('franquia','Franquia'),('franquia_extenso','Franquia por extenso'),
  ('limite_km','Limite de KM'),('valor_km_excedente','Valor por KM excedente'),('data_inicio_formatada','Data inicial'),
  ('data_fim_formatada','Data final'),('hora_inicio','Hora inicial'),('dia_vencimento','Dia de vencimento'),('cidade_assinatura','Cidade de assinatura'),
- ('data_assinatura_formatada','Data da assinatura'),('prazo_dias','Prazo em dias'),
+ ('data_assinatura_formatada','Data da assinatura'),('data_atual','Data atual no formato DD/MM/AAAA'),('prazo_dias','Prazo em dias'),
  ('gestora_nome','Razão social da gestora'),('gestora_fantasia','Nome fantasia da gestora'),('gestora_cnpj','CNPJ da gestora'),
  ('gestora_endereco','Endereço da gestora'),('parceira_nome','Razão social da parceira'),('parceira_cnpj','CNPJ da parceira'),
  ('parceira_endereco','Endereço da parceira'),
