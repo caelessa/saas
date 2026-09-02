@@ -95,6 +95,15 @@ def _as_tenant_time(value,tenant_id=None):
 def _as_sao_paulo(value):
  return _as_tenant_time(value,None)
 
+def _mesma_semana_tenant(valor_a,valor_b,tenant_id):
+ if not valor_a or not valor_b:
+  return False
+ local_a=_as_tenant_time(valor_a,tenant_id)
+ local_b=_as_tenant_time(valor_b,tenant_id)
+ inicio_a=local_a.date()-timedelta(days=local_a.weekday())
+ inicio_b=local_b.date()-timedelta(days=local_b.weekday())
+ return inicio_a==inicio_b
+
 TENANT_TIMEZONE_OPTIONS=[
  ('America/Sao_Paulo','Brasília / São Paulo (UTC−03:00)'),
  ('America/Recife','Recife / Nordeste (UTC−03:00)'),
@@ -213,9 +222,9 @@ class VehicleInvestmentHistory(db.Model):
 class Vehicle(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); placa=db.Column(db.String(10),nullable=False); renavam=db.Column(db.String(20)); chassi=db.Column(db.String(30)); marca_modelo=db.Column(db.String(150)); ano_fabricacao=db.Column(db.String(4)); ano_modelo=db.Column(db.String(4)); cor=db.Column(db.String(30)); combustivel=db.Column(db.String(100)); motorizacao=db.Column(db.String(20)); km_atual=db.Column(db.Integer,default=0); status=db.Column(db.String(30),default='Disponível'); proprietario_legal=db.Column(db.String(150)); cpf_cnpj_proprietario=db.Column(db.String(20)); investor_id=db.Column(db.Integer,db.ForeignKey('investor.id')); valor_repasse=db.Column(db.Numeric(12,2),default=0); limite_km=db.Column(db.Integer); valor_km_excedente=db.Column(db.Numeric(10,2),default=0); rastreador_id=db.Column(db.String(80)); controlar_oleo=db.Column(db.Boolean,default=False); ultima_troca_oleo_km=db.Column(db.Integer); intervalo_oleo_km=db.Column(db.Integer,default=10000); alerta_oleo_km=db.Column(db.Integer,default=100); current_driver_id=db.Column(db.Integer,db.ForeignKey('driver.id')); current_contract_id=db.Column(db.Integer,db.ForeignKey('contract.id')); status_changed_at=db.Column(db.DateTime); status_reason=db.Column(db.String(255)); investor=db.relationship('Investor'); current_driver=db.relationship('Driver',foreign_keys=[current_driver_id]); current_contract=db.relationship('Contract',foreign_keys=[current_contract_id],post_update=True)
 class Odometer(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); km=db.Column(db.Integer,nullable=False); origem=db.Column(db.String(40)); data=db.Column(db.DateTime,default=datetime.utcnow); vehicle=db.relationship('Vehicle')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id')); contract_id=db.Column(db.Integer,db.ForeignKey('contract.id'),index=True); inspection_id=db.Column(db.Integer,index=True); km=db.Column(db.Integer,nullable=False); origem=db.Column(db.String(40)); data=db.Column(db.DateTime,default=datetime.utcnow); vehicle=db.relationship('Vehicle')
 class MileageRequest(db.Model):
- id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False); token=db.Column(db.String(64),unique=True,nullable=False,index=True); status=db.Column(db.String(30),default='Pendente'); expires_at=db.Column(db.DateTime); sent_at=db.Column(db.DateTime,default=datetime.utcnow); submitted_at=db.Column(db.DateTime); km=db.Column(db.Integer); previous_km=db.Column(db.Integer); photo=db.Column(db.String(255)); notes=db.Column(db.Text); vehicle=db.relationship('Vehicle'); driver=db.relationship('Driver')
+ id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); vehicle_id=db.Column(db.Integer,db.ForeignKey('vehicle.id'),nullable=False); driver_id=db.Column(db.Integer,db.ForeignKey('driver.id'),nullable=False); contract_id=db.Column(db.Integer,db.ForeignKey('contract.id'),index=True); fulfilled_by_inspection_id=db.Column(db.Integer,index=True); token=db.Column(db.String(64),unique=True,nullable=False,index=True); status=db.Column(db.String(30),default='Pendente'); expires_at=db.Column(db.DateTime); sent_at=db.Column(db.DateTime,default=datetime.utcnow); submitted_at=db.Column(db.DateTime); km=db.Column(db.Integer); previous_km=db.Column(db.Integer); photo=db.Column(db.String(255)); notes=db.Column(db.Text); vehicle=db.relationship('Vehicle'); driver=db.relationship('Driver')
 class ContractTemplate(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); nome=db.Column(db.String(120)); descricao=db.Column(db.String(255)); versao=db.Column(db.Integer,default=1); padrao=db.Column(db.Boolean,default=False); tipo_veiculo=db.Column(db.String(30)); possui_limite_km=db.Column(db.Boolean,default=False); conteudo=db.Column(db.Text); nome_original=db.Column(db.String(255)); arquivo_original=db.Column(db.String(255)); hash_original=db.Column(db.String(64)); preparado_em=db.Column(db.DateTime); gestora_nome=db.Column(db.String(180)); gestora_fantasia=db.Column(db.String(120)); gestora_cnpj=db.Column(db.String(30)); gestora_endereco=db.Column(db.String(255)); parceira_nome=db.Column(db.String(180)); parceira_cnpj=db.Column(db.String(30)); parceira_endereco=db.Column(db.String(255)); ativo=db.Column(db.Boolean,default=True)
 class Contract(db.Model):
@@ -238,6 +247,7 @@ class Contract(db.Model):
  franquia=db.Column(db.Numeric(12,2))
  limite_km=db.Column(db.Integer)
  valor_km_excedente=db.Column(db.Numeric(10,2))
+ km_inicial=db.Column(db.Integer)
  multa_atraso_percentual=db.Column(db.Numeric(6,2))
  juros_mes_percentual=db.Column(db.Numeric(6,2))
  indice_correcao=db.Column(db.String(30))
@@ -906,6 +916,8 @@ def migrate_schema():
   'alert':[('source_key','VARCHAR(120)'),('entidade','VARCHAR(40)'),('entidade_id','INTEGER'),('action_url','VARCHAR(255)'),('atualizado_em','TIMESTAMP'),('resolvido_em','TIMESTAMP')],
   'inspection':[('tipo_vistoria',"VARCHAR(20) DEFAULT 'guiada'"),('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('front_photo_key','VARCHAR(255)'),('front_photo_mime','VARCHAR(80)'),('right_photo_key','VARCHAR(255)'),('right_photo_mime','VARCHAR(80)'),('rear_photo_key','VARCHAR(255)'),('rear_photo_mime','VARCHAR(80)'),('left_photo_key','VARCHAR(255)'),('left_photo_mime','VARCHAR(80)'),('km_informada','INTEGER'),('damage_analysis_status',"VARCHAR(30) DEFAULT 'NAO_ANALISADA'"),('damage_analysis_level','VARCHAR(30)'),('damage_analysis_summary','TEXT'),('damage_analysis_at','TIMESTAMP')],
   'inspection_attempt':[('painel_photo_key','VARCHAR(255)'),('painel_photo_mime','VARCHAR(80)'),('km_informada','INTEGER')],
+  'odometer':[('contract_id','INTEGER'),('inspection_id','INTEGER')],
+  'mileage_request':[('contract_id','INTEGER'),('fulfilled_by_inspection_id','INTEGER')],
   'message_queue':[('template_parameters','TEXT')],
   'support_ticket':[('respondido_por_admin_id','INTEGER'),('respondido_por_nome','VARCHAR(120)')],
   'billing_audit':[
@@ -914,7 +926,7 @@ def migrate_schema():
    ('last_reminder_at','TIMESTAMP'),('closed_at','TIMESTAMP'),('receipt_token','VARCHAR(64)'),('receipt_key','VARCHAR(255)'),('receipt_name','VARCHAR(255)'),('receipt_mime','VARCHAR(100)'),('receipt_uploaded_at','TIMESTAMP'),
   ],
   'contract':[
-   ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),
+   ('template_nome','VARCHAR(120)'),('template_versao','INTEGER DEFAULT 1'),('hora_inicio','VARCHAR(5)'),('km_inicial','INTEGER'),
    ('periodicidade','VARCHAR(30)'),('dia_vencimento','VARCHAR(30)'),('multa_atraso_percentual','NUMERIC(6,2)'),
    ('juros_mes_percentual','NUMERIC(6,2)'),('indice_correcao','VARCHAR(30)'),('prazo_bloqueio_horas','INTEGER'),
    ('multa_diaria','NUMERIC(12,2)'),('taxa_adm_multas_percentual','NUMERIC(6,2)'),('nacionalidade','VARCHAR(60)'),
@@ -2922,7 +2934,7 @@ def excluir_veiculo(id):
 @app.route('/veiculos/<int:id>/km',methods=['POST'])
 @login_required
 def atualizar_km(id):
- v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404(); km=int(request.form['km']); v.km_atual=km; db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,km=km,origem=request.form.get('origem','Manual'))); db.session.commit(); recalcular_alertas(tid()); flash('Quilometragem atualizada e alertas recalculados.','success'); return redirect(url_for('veiculos'))
+ v=Vehicle.query.filter_by(id=id,tenant_id=tid()).first_or_404(); km=int(request.form['km']); v.km_atual=km; db.session.add(Odometer(tenant_id=tid(),vehicle_id=v.id,contract_id=v.current_contract_id,km=km,origem=request.form.get('origem','Manual'))); db.session.commit(); recalcular_alertas(tid()); flash('Quilometragem atualizada e alertas recalculados.','success'); return redirect(url_for('veiculos'))
 
 @app.route('/veiculos/<int:id>/oleo',methods=['POST'])
 @login_required
@@ -2950,7 +2962,7 @@ def solicitar_km(id):
   flash('Cadastre um telefone/WhatsApp válido para o motorista.','danger'); return redirect(url_for('veiculos'))
  req=active_request(v.id,d.id)
  if not req:
-  req=MileageRequest(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=v.km_atual)
+  req=MileageRequest(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=v.current_contract_id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=v.km_atual)
   db.session.add(req); db.session.commit()
  link=url_for('registrar_quilometragem_publica',token=req.token,_external=True)
  mensagem=f'Olá, {d.nome}! Precisamos da quilometragem atual do veículo {v.placa}. Abra o link, tire uma foto do painel e informe o km: {link}'
@@ -3016,7 +3028,21 @@ def registrar_quilometragem_publica(token):
    else:
     req.status='Concluído'
     req.vehicle.km_atual=km
-    db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,km=km,origem='Motorista via link'))
+    contract_id=req.contract_id or req.vehicle.current_contract_id
+    leitura_em=req.submitted_at or datetime.utcnow()
+    if contract_id and not Odometer.query.filter_by(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,contract_id=contract_id).first():
+     contrato_km=Contract.query.filter_by(id=contract_id,tenant_id=req.tenant_id).first()
+     if contrato_km and contrato_km.km_inicial is None:
+      contrato_km.km_inicial=req.previous_km
+     db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,contract_id=contract_id,km=req.previous_km or 0,origem='Base da solicitação',data=leitura_em-timedelta(microseconds=1)))
+    leitura_periodo=None
+    if contract_id:
+     candidatas=Odometer.query.filter_by(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,contract_id=contract_id).filter(~Odometer.origem.like('Base%')).order_by(Odometer.data.desc(),Odometer.id.desc()).limit(5).all()
+     leitura_periodo=next((x for x in candidatas if _mesma_semana_tenant(x.data,leitura_em,req.tenant_id)),None)
+    if leitura_periodo:
+     leitura_periodo.km=km; leitura_periodo.origem='Motorista via link'; leitura_periodo.data=leitura_em
+    else:
+     db.session.add(Odometer(tenant_id=req.tenant_id,vehicle_id=req.vehicle_id,contract_id=contract_id,km=km,origem='Motorista via link',data=leitura_em))
    db.session.commit()
   except Exception:
    db.session.rollback()
@@ -3604,6 +3630,11 @@ def conferir_quilometragem(id):
  if acao=='rejeitar':
   req.status='Rejeitado'
   req.notes=((req.notes or '')+'\nRejeitado pelo administrador: '+(request.form.get('motivo') or 'Solicitada nova foto.')).strip()
+  if req.fulfilled_by_inspection_id:
+   Odometer.query.filter_by(tenant_id=tid(),vehicle_id=req.vehicle_id,inspection_id=req.fulfilled_by_inspection_id).delete(synchronize_session=False)
+   ultima_valida=Odometer.query.filter_by(tenant_id=tid(),vehicle_id=req.vehicle_id).order_by(Odometer.data.desc(),Odometer.id.desc()).first()
+   if req.vehicle:
+    req.vehicle.km_atual=ultima_valida.km if ultima_valida else (req.previous_km or 0)
   db.session.commit()
   flash('Leitura rejeitada. Gere uma nova solicitação de KM para o motorista.','success')
   return redirect(url_for('conferencia_quilometragens'))
@@ -3615,7 +3646,17 @@ def conferir_quilometragem(id):
   flash(f'A KM confirmada não pode ser menor que a leitura anterior ({req.previous_km:,} km).','danger'); return redirect(url_for('conferencia_quilometragens'))
  req.km=km; req.status='Concluído'; req.vehicle.km_atual=km
  origem='Administrador confirmou KM do motorista' if km==request.form.get('km_original',type=int) else 'Administrador corrigiu KM do motorista'
- db.session.add(Odometer(tenant_id=tid(),vehicle_id=req.vehicle_id,km=km,origem=origem))
+ odo=None
+ if req.fulfilled_by_inspection_id:
+  odo=Odometer.query.filter_by(tenant_id=tid(),vehicle_id=req.vehicle_id,inspection_id=req.fulfilled_by_inspection_id).first()
+ if odo:
+  odo.km=km; odo.data=req.submitted_at or datetime.utcnow(); odo.origem='KM da vistoria conferida'
+ else:
+  contract_id=req.contract_id or req.vehicle.current_contract_id
+  leitura_em=req.submitted_at or datetime.utcnow()
+  if contract_id and not Odometer.query.filter_by(tenant_id=tid(),vehicle_id=req.vehicle_id,contract_id=contract_id).first():
+   db.session.add(Odometer(tenant_id=tid(),vehicle_id=req.vehicle_id,contract_id=contract_id,km=req.previous_km or 0,origem='Base da solicitação',data=leitura_em-timedelta(microseconds=1)))
+  db.session.add(Odometer(tenant_id=tid(),vehicle_id=req.vehicle_id,contract_id=contract_id,inspection_id=req.fulfilled_by_inspection_id,km=km,origem=origem,data=leitura_em))
  db.session.commit(); recalcular_alertas(tid())
  flash('Quilometragem conferida e veículo atualizado.','success')
  return redirect(url_for('conferencia_quilometragens'))
@@ -4136,7 +4177,7 @@ def contratos():
    texto_final=texto_final.replace('{{'+key+'}}',str(value))
   c=Contract(
    tenant_id=tid(),driver_id=d.id,vehicle_id=v.id,template_id=t.id,template_nome=t.nome,template_versao=t.versao or 1,
-   data_inicio=data_inicio,hora_inicio=repl['hora_inicio'],data_fim=data_fim,periodicidade=periodicidade,dia_vencimento=repl['dia_vencimento'],
+   data_inicio=data_inicio,hora_inicio=repl['hora_inicio'],data_fim=data_fim,periodicidade=periodicidade,dia_vencimento=repl['dia_vencimento'],km_inicial=v.km_atual or 0,
    valor_locacao=valor_locacao,caucao=caucao,franquia=franquia,limite_km=request.form.get('limite_km') or None,valor_km_excedente=valor_km,
    multa_atraso_percentual=request.form.get('multa_atraso_percentual') or 6,juros_mes_percentual=request.form.get('juros_mes_percentual') or 1,
    indice_correcao=repl['indice_correcao'],prazo_bloqueio_horas=request.form.get('prazo_bloqueio_horas') or 48,multa_diaria=request.form.get('multa_diaria') or 500,
@@ -5692,17 +5733,39 @@ def vistoria_upload(token):
   origem_odo='Vistoria em vídeo'; evento_recebido='Vistoria em vídeo recebida'
   descricao=f'Vistoria em vídeo concluída; duração {duracao}s; foto do painel anexada; KM informada {km:,} km.'.replace(',','.')
 
- km_anterior_vistoria=item.km_informada
  item.km_informada=km; item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Concluída'; item.notes=None
  # Uma vistoria completa satisfaz a obrigação do contrato. Encerra pedidos
  # anteriores ainda abertos, inclusive registros legados sem contract_id.
  _encerrar_vistorias_anteriores(item)
- if km_anterior_vistoria != km:
-  db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem=origem_odo))
+ # A leitura da vistoria pertence ao contrato atual. Na primeira leitura
+ # identificada do contrato, registra também a base anterior sem reaproveitar
+ # uma leitura de outro motorista/contrato. Reenvios atualizam a mesma linha.
+ contract_id=item.contract_id or veiculo.current_contract_id
+ if contract_id:
+  contrato_km=Contract.query.filter_by(id=contract_id,tenant_id=item.tenant_id).first()
+  if contrato_km and contrato_km.km_inicial is None:
+   contrato_km.km_inicial=km_anterior
+  tem_leitura_contrato=Odometer.query.filter_by(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=contract_id).first()
+  if not tem_leitura_contrato:
+   db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=contract_id,km=km_anterior,origem='Base do contrato',data=item.submitted_at-timedelta(microseconds=1)))
+ leitura_vistoria=Odometer.query.filter_by(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,inspection_id=item.id).first()
+ if not leitura_vistoria and contract_id:
+  candidatas=Odometer.query.filter_by(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=contract_id).filter(~Odometer.origem.like('Base%')).order_by(Odometer.data.desc(),Odometer.id.desc()).limit(5).all()
+  leitura_vistoria=next((x for x in candidatas if _mesma_semana_tenant(x.data,item.submitted_at,item.tenant_id)),None)
+ if leitura_vistoria:
+  leitura_vistoria.contract_id=contract_id; leitura_vistoria.inspection_id=item.id; leitura_vistoria.km=km; leitura_vistoria.origem=(origem_odo+' #'+str(item.id))[:40]; leitura_vistoria.data=item.submitted_at
+ else:
+  db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,contract_id=contract_id,inspection_id=item.id,km=km,origem=(origem_odo+' #'+str(item.id))[:40],data=item.submitted_at))
  if km >= km_anterior: veiculo.km_atual=km
  tenant_km=Tenant.query.get(item.tenant_id)
- km_pendentes=MileageRequest.query.filter_by(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,driver_id=item.driver_id,status='Pendente').all()
+ km_pendentes=MileageRequest.query.filter(
+  MileageRequest.tenant_id==item.tenant_id,
+  MileageRequest.vehicle_id==item.vehicle_id,
+  MileageRequest.driver_id==item.driver_id,
+  MileageRequest.status.in_(['Pendente','Aguardando conferência'])
+ ).all()
  for _req in km_pendentes:
+  _req.contract_id=contract_id; _req.fulfilled_by_inspection_id=item.id
   _req.km=km; _req.photo=item.painel_photo_key; _req.submitted_at=item.submitted_at
   _req.notes='Atendida automaticamente pela vistoria fotográfica.' if modo=='fotos' else 'Atendida automaticamente pela vistoria em vídeo.'
   _req.status='Aguardando conferência' if (tenant_km and tenant_km.conferir_km_motorista) else 'Concluído'
@@ -5864,9 +5927,12 @@ def _normalizar_dia_semana(valor):
  }
  return mapa.get(texto)
 
-def _ultimas_leituras_km(vehicle_id, limit=2, tenant_id=None):
+def _ultimas_leituras_km(vehicle_id, limit=2, tenant_id=None, contract_id=None):
  tenant_id=tenant_id if tenant_id is not None else tid()
- return Odometer.query.filter_by(tenant_id=tenant_id,vehicle_id=vehicle_id).order_by(Odometer.data.desc(),Odometer.id.desc()).limit(limit).all()
+ query=Odometer.query.filter_by(tenant_id=tenant_id,vehicle_id=vehicle_id)
+ if contract_id is not None:
+  query=query.filter(Odometer.contract_id==contract_id)
+ return query.order_by(Odometer.data.desc(),Odometer.id.desc()).limit(limit).all()
 
 def calcular_cobranca_semanal(contract):
  valor_base=Decimal(str(contract.valor_locacao or 0))
@@ -5878,7 +5944,9 @@ def calcular_cobranca_semanal(contract):
  }
  if not contract.vehicle_id or not contract.limite_km or not contract.valor_km_excedente:
   return info
- leituras=_ultimas_leituras_km(contract.vehicle_id,2,contract.tenant_id)
+ # Nunca mistura a foto/KM do contrato atual com leitura deixada por contrato
+ # ou motorista anterior no mesmo veículo.
+ leituras=_ultimas_leituras_km(contract.vehicle_id,2,contract.tenant_id,contract.id)
  if len(leituras)<2:
   return info
  atual,anterior=leituras[0],leituras[1]
@@ -6159,7 +6227,7 @@ def processar_km_automatico(tenant_id=None):
 
   req=MileageRequest.query.filter_by(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,status='Pendente').filter(MileageRequest.expires_at>datetime.utcnow()).order_by(MileageRequest.id.desc()).first()
   if not req:
-   req=MileageRequest(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=c.vehicle.km_atual); db.session.add(req); db.session.flush()
+   req=MileageRequest(tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,contract_id=c.id,token=uuid.uuid4().hex+uuid.uuid4().hex,expires_at=datetime.utcnow()+timedelta(days=7),previous_km=c.vehicle.km_atual); db.session.add(req); db.session.flush()
   ultimo=MessageQueue.query.filter_by(tenant_id=c.tenant_id,message_type='solicitacao_km',related_entity='Veiculo',related_entity_id=c.vehicle.id).filter(MessageQueue.created_at>=inicio).order_by(MessageQueue.id.desc()).first()
   intervalo=_reminder_interval(cfg,'km')
   if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo): continue
