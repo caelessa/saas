@@ -3937,67 +3937,29 @@ def cobrancas():
   else:
    rendered_html=rendered_html+painel_sem
 
- # Compatibilidade com versões antigas do template cobrancas.html: algumas
- # exibiam a ação Reabrir com a condição visual invertida. Para toda cobrança
- # paga, garante a ação quando o processamento está ativo, sem duplicá-la caso
- # o template atual já a tenha renderizado.
- auditorias_reabrir=[]
- for audit in auditoria:
-  if (audit.payment_status or '').upper()!='PAGO':
-   continue
-  action_reabrir=url_for('reabrir_cobranca',id=audit.id)
-  if action_reabrir in rendered_html:
-   continue
-  auditorias_reabrir.append((audit,action_reabrir))
- if auditorias_reabrir:
-  linhas_reabrir=[]
-  for audit,action_reabrir in auditorias_reabrir:
-   total='R$ {:,.2f}'.format(float(audit.total_amount or 0)).replace(',', 'X').replace('.', ',').replace('X', '.')
-   data_ref=audit.billing_date.strftime('%d/%m/%Y') if audit.billing_date else '-'
-   linhas_reabrir.append(
-    '<tr>'
-    '<td>'+html.escape(audit.driver_name or '-')+'</td>'
-    '<td>'+html.escape(audit.plate or '-')+'</td>'
-    '<td>'+data_ref+'</td>'
-    '<td>'+total+'</td>'
-    '<td><form method="post" action="'+action_reabrir+'" style="margin:0">'
-    '<button type="submit" class="btn btn-warning btn-sm" onclick="return confirm(\'Reabrir esta cobrança? Ela voltará a ficar pendente.\')">Reabrir cobrança</button>'
-    '</form></td>'
-    '</tr>'
-   )
-  painel_reabrir=(
-   '<div class="container-fluid mt-4"><div class="card shadow-sm"><div class="card-body">'
-   '<h5 class="card-title mb-1">Cobranças pagas</h5>'
-   '<p class="text-muted small">Use Reabrir cobrança somente quando uma baixa tiver sido registrada por engano.</p>'
-   '<div class="table-responsive"><table class="table table-sm align-middle">'
-   '<thead><tr><th>Motorista</th><th>Placa</th><th>Data</th><th>Total</th><th>Ação</th></tr></thead>'
-   '<tbody>'+''.join(linhas_reabrir)+'</tbody></table></div></div></div></div>'
-  )
-  if '</main>' in rendered_html:
-   rendered_html=rendered_html.replace('</main>',painel_reabrir+'</main>',1)
-  elif '</body>' in rendered_html:
-   rendered_html=rendered_html.replace('</body>',painel_reabrir+'</body>',1)
-  else:
-   rendered_html+=painel_reabrir
- # Coerência visual: se a competência atual já foi paga, o botão de lembrete
- # da tabela principal deixa de ser acionável. A proteção real continua no backend.
+ # Na tabela principal, uma competência já paga deve oferecer a correção da
+ # baixa na própria linha. Substitui o formulário "Enviar lembrete" pelo
+ # formulário "Reabrir cobrança", usando a auditoria paga mais recente da
+ # semana para cada contrato.
  pagos_semana=BillingAudit.query.filter(
   BillingAudit.tenant_id==tid(),
   BillingAudit.contract_id.in_(contratos_vigentes_ids),
   BillingAudit.billing_date>=inicio_semana,
   BillingAudit.billing_date<=fim_semana,
   BillingAudit.payment_status=='PAGO'
- ).all() if contratos_vigentes_ids else []
- contratos_pagos=sorted({a.contract_id for a in pagos_semana if a.contract_id})
- if contratos_pagos:
-  ids_json=json.dumps(contratos_pagos)
+ ).order_by(BillingAudit.id.asc()).all() if contratos_vigentes_ids else []
+ acoes_reabrir={str(a.contract_id):url_for('reabrir_cobranca',id=a.id) for a in pagos_semana if a.contract_id}
+ if acoes_reabrir:
+  acoes_json=json.dumps(acoes_reabrir,ensure_ascii=False)
   script_pago=(
-   '<script>(function(){var pagos=new Set('+ids_json+');'
+   '<script>(function(){var acoes='+acoes_json+';'
    'document.querySelectorAll("form[action]").forEach(function(f){'
    'var m=(f.getAttribute("action")||"").match(/\\/cobrancas\\/(\\d+)\\/whatsapp(?:$|\\?)/);'
-   'if(!m||!pagos.has(parseInt(m[1],10)))return;'
-   'var b=f.querySelector("button,input[type=submit]");'
-   'if(b){var span=document.createElement("span");span.className="badge bg-success";span.textContent="Pago nesta semana";b.replaceWith(span);}'
+   'if(!m||!acoes[m[1]])return;'
+   'var novo=document.createElement("form");novo.method="post";novo.action=acoes[m[1]];novo.style.margin="0";'
+   'var b=document.createElement("button");b.type="submit";b.className="btn btn-warning btn-sm";b.textContent="Reabrir cobrança";'
+   'b.onclick=function(){return confirm("Reabrir esta cobrança? Ela voltará a ficar pendente.");};'
+   'novo.appendChild(b);f.replaceWith(novo);'
    '});})();</script>'
   )
   if '</body>' in rendered_html:
