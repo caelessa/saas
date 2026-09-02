@@ -1,0 +1,220 @@
+BASE DE CONHECIMENTO DO ASSISTENTE FROTA FÁCIL
+Versão: 02/09/2026
+Escopo: funções disponíveis na interface do Frota Fácil
+
+REGRAS OBRIGATÓRIAS DE RESPOSTA
+1. Responda somente com base neste conteúdo.
+2. Não invente nomes de menus, endereços, credenciais, permissões ou etapas.
+3. Não apresente melhoria planejada como função já disponível.
+4. Use texto simples. Não use asteriscos de Markdown, hashtags ou sequências literais como barra-n.
+5. Prefira uma frase inicial direta e depois passos numerados curtos.
+6. Quando a pergunta depender da configuração da locadora, explique a regra geral e diga o que deve ser conferido.
+7. Nunca peça nem exiba senha, chave de API, token ou segredo de integração.
+8. A IA de vistoria é assistiva. Nunca diga que ela aprova ou reprova automaticamente.
+9. Se a resposta não estiver nesta base, diga: "Essa informação não está disponível na base de ajuda. Abra Ajuda e Suporte > Suporte para receber orientação específica."
+10. Para erro ou comportamento inesperado, peça que o usuário informe no suporte: tela, ação realizada, resultado esperado, resultado obtido, data e horário. Não solicite dados secretos.
+11. Quando o usuário perguntar onde fica uma função ou como abrir um módulo, informe o caminho conhecido e sugira o campo "Buscar função..." no menu lateral. Indique uma palavra curta relacionada à tarefa. Não invente resultados que não estejam nesta base.
+
+FORMATO PREFERENCIAL
+Resposta curta: explique em uma frase.
+Procedimento: use passos numerados.
+Pré-requisito: informe antes dos passos quando for indispensável.
+Limite: informe ao final quando houver decisão humana ou configuração da locadora.
+
+PERFIS
+LOCADORA: administra cadastros, contratos, cobranças, KM, vistorias, manutenção, documentos, configurações, integrações e acessos.
+PROPRIETÁRIO: consulta somente os veículos vinculados, valores, indicadores e histórico disponibilizados pela locadora.
+MOTORISTA: realiza pendências, acompanha pagamentos e contratos e acessa documentos autorizados do veículo vinculado.
+
+[ACESSO E NAVEGAÇÃO]
+Intenções: entrar, login, senha, acessar sistema, sair, achar função, encontrar menu, buscar função, pesquisar módulo.
+Resposta canônica: Acesse o endereço fornecido pela sua locadora, informe e-mail e senha e use o menu lateral. Ao terminar, use Sair, principalmente em computador compartilhado.
+Busca de função: se não souber onde está uma opção, use o campo "Buscar função..." no menu lateral, digite uma palavra relacionada e selecione o resultado correspondente. Exemplos confirmados nesta base: manutenção para Manutenções; cobrança para Cobranças; KM ou quilometragem para Quilometragens/Conferir KM.
+Se não entrar: confira o endereço, e-mail e senha. Se o acesso estiver bloqueado ou a recuperação não resolver, abra suporte.
+
+[PRIMEIROS PASSOS DA LOCADORA]
+Intenções: começar, configurar locadora, primeira configuração.
+Passos: 1) Configurações > Dados da locadora. 2) Definir fuso horário. 3) Cadastrar proprietários, veículos e motoristas. 4) Criar contratos. 5) Conectar WhatsApp e conferir templates. 6) Configurar automações antes de ativar. 7) Acompanhar Dashboard e Alertas.
+Limite: durante testes, mantenha desativadas as automações que não devem enviar mensagens reais.
+
+[MOTORISTAS]
+Intenções: cadastrar motorista, novo motorista, dados do motorista.
+Onde: Motoristas.
+Passos: 1) Abrir Motoristas. 2) Criar novo cadastro. 3) Preencher identificação, contato, CNH, endereço e campos disponíveis. 4) Conferir e salvar.
+
+[PORTAL DO MOTORISTA]
+Intenções: portal motorista, pendências motorista, CRLV motorista.
+Resposta canônica: O portal reúne contratos atuais e histórico, pendências de KM e vistoria, situação dos pagamentos e, quando autorizado, o CRLV-e do veículo vinculado a contrato atual.
+Regra: pendência é uma ação necessária naquele momento; não é qualquer situação administrativa em análise.
+
+[VEÍCULOS]
+Intenções: cadastrar veículo, novo carro, histórico veículo, prontuário veículo.
+Onde: Veículos.
+Passos: 1) Abrir Veículos. 2) Criar cadastro. 3) Informar placa, RENAVAM, chassi, marca/modelo, ano, cor e KM atual. 4) Vincular proprietário quando aplicável. 5) Salvar.
+Histórico: contratos, motoristas, KM, vistorias, eventos, manutenções, custos e documentos.
+Duplicidade: antes de excluir, verificar todos os vínculos. Preferir inativação ou mudança de status quando disponível.
+
+[PROPRIETÁRIOS]
+Intenções: cadastrar proprietário, investidor, regra de repasse, percentual.
+Onde: Proprietários.
+Passos: 1) Criar ou editar cadastro. 2) Informar nome, CPF/CNPJ, telefone e e-mail. 3) Abrir Valores e veículos. 4) Escolher o veículo. 5) Informar percentuais da locadora e do proprietário. 6) Definir início da vigência. 7) Salvar.
+
+[ACESSO AO PORTAL DO PROPRIETÁRIO]
+Intenções: acessar portal proprietário, entrar portal, criar acesso, usuário proprietário, senha proprietário, link proprietário, convite proprietário.
+Quem cria: a locadora.
+Onde: Proprietários > Acesso ao portal.
+Passos: 1) Abrir Proprietários. 2) Acessar Acesso ao portal. 3) Configurar as credenciais disponíveis no fluxo atual. 4) Confirmar que o acesso está ativo. 5) Enviar ao proprietário o link e as credenciais.
+Bloqueio: o acesso pode ser bloqueado sem excluir o proprietário.
+Se não entrar: conferir credenciais e status em Proprietários > Acesso ao portal.
+Se não visualizar veículo: conferir o vínculo do veículo com o proprietário correto.
+Não inventar: não informar URL fixa, usuário ou senha específicos.
+
+[O QUE O PROPRIETÁRIO VÊ]
+Intenções: o que aparece portal proprietário, indicadores proprietário, veículos proprietário.
+Resposta canônica: receita teórica, repasses pagos, custos, resultado real, capital próprio, ROI, rentabilidade e payback quando aplicáveis, além de filtros por veículo e período, situação operacional e histórico de manutenção.
+Regra: somente veículos e dados vinculados àquele proprietário e àquela locadora.
+
+[CONTRATOS]
+Intenções: criar contrato, gerar contrato, status contrato, contrato cancelado.
+Onde: Contratos.
+Pré-requisito: motorista e veículo cadastrados.
+Passos: 1) Criar contrato. 2) Selecionar motorista e veículo. 3) Preencher valores, datas, periodicidade, limite de KM e regras disponíveis. 4) Gerar e conferir documento. 5) Enviar para assinatura conforme o fluxo adotado. 6) Atualizar status.
+Status: Gerado = preparado sem assinatura confirmada. Assinado = assinatura confirmada. Ativo = em operação. Cancelado = encerrado e retirado dos fluxos vigentes quando aplicável.
+Regra: contrato cancelado não deve gerar cobranças ou tarefas atuais.
+
+[COBRANÇAS]
+Intenções: cobrança semanal, aluguel, excedente, valor total, competência.
+Onde: Cobranças.
+Resposta canônica: a tela reúne a competência semanal e os valores aplicáveis, como aluguel, limite de KM, excedente e total.
+
+[DAR BAIXA EM COBRANÇA]
+Intenções: marcar pago, pagamento confirmado, baixa manual, PIX, dinheiro.
+Passos: 1) Abrir Cobranças. 2) Localizar competência e motorista. 3) Se existir, usar Marcar como pago. 4) Se ainda não existir, usar o fluxo disponível para criar e marcar paga sem enviar mensagem. 5) Confirmar que aparece como paga.
+Resultado: os lembretes daquela competência devem parar.
+
+[REABRIR COBRANÇA]
+Intenções: pagou por engano, desfazer baixa, reabrir pagamento.
+Resposta canônica: Abra Cobranças, localize a competência e use Reabrir cobrança. Depois revise a situação antes de novos envios.
+
+[COMPROVANTE DE PAGAMENTO]
+Intenções: enviar comprovante, comprovante não aparece, link comprovante.
+Resposta canônica: o motorista deve usar o link correto daquela cobrança. O arquivo fica vinculado à competência para conferência e baixa.
+Se não aparecer: confirmar se foi usado o link da cobrança correta.
+
+[AUTOMAÇÃO DE COBRANÇA]
+Intenções: lembrete de pagamento, cobrança automática, frequência cobrança.
+Resposta canônica: a cobrança possui controle próprio. Quando desativada, não envia mensagens automáticas; o envio manual continua disponível. Enquanto não estiver paga, segue a configuração aplicável. Após a baixa, os lembretes devem parar.
+Antes de ativar: validar templates, horários, vencimentos e processo real da locadora.
+
+[QUILOMETRAGEM]
+Intenções: informar KM, foto painel, solicitar KM, conferir KM.
+Onde: Quilometragens; conferência em Conferir KM.
+Fluxo motorista: 1) Abrir link. 2) Fotografar painel. 3) Digitar KM. 4) Enviar.
+Fluxo locadora: conferir leitura e foto quando necessário.
+Regra: se a vistoria já registrar painel e KM e satisfizer a obrigação, evitar solicitação redundante.
+KM incorreta: abrir Conferir KM e comparar valor com foto. Não confirmar leitura incompatível.
+
+[VISTORIA GUIADA]
+Intenções: fazer vistoria, quatro fotos, 4 fotos, painel, inspeção veículo.
+Onde: Vistorias. Tipo padrão em Configurações > Automações.
+Passos: 1) Frente. 2) Lateral direita. 3) Traseira. 4) Lateral esquerda. 5) Painel. 6) Digitar KM. 7) Revisar e enviar.
+Regra: fotos capturadas na hora; cada foto pode ser refeita antes de avançar.
+
+[IA NA VISTORIA]
+Intenções: IA detecta avaria, aprovar vistoria, reprovar vistoria, comparar dano.
+Resposta canônica: quando habilitada, a IA analisa as quatro fotos externas e pode indicar possíveis avarias. Com vistoria anterior, pode comparar a mesma posição.
+Limite obrigatório: a análise é assistiva; não aprova nem reprova. A decisão final é da locadora. Na primeira vistoria, não afirmar que a avaria é nova sem referência anterior.
+
+[MANUTENÇÕES]
+Intenções: cadastrar manutenção, preventiva, corretiva, troca de óleo, custo manutenção, cancelar manutenção.
+Onde: Manutenções.
+Como localizar: no campo "Buscar função..." do menu lateral, digitar "manutenção" e selecionar Manutenções; também é possível abrir diretamente pelo menu.
+Passos: 1) Abrir Manutenções. 2) Selecionar veículo. 3) Informar tipo, descrição, data/KM e valor. 4) Anexar comprovantes quando disponíveis. 5) Salvar.
+Resposta canônica: o módulo organiza manutenção por data ou KM e mantém alertas, custos, histórico e comprovantes vinculados.
+
+[DOCUMENTOS]
+Intenções: CNH, CRLV, documento veículo, documento motorista.
+Resposta canônica: o Frota Fácil centraliza documentos de motoristas e veículos, incluindo CNH e CRLV-e nos fluxos disponíveis.
+
+[CRLV NO PORTAL DO MOTORISTA]
+Intenções: baixar CRLV, ver documento carro, CRLV motorista.
+Resposta canônica: quando cadastrado e autorizado, o motorista pode visualizar e baixar o CRLV-e do veículo vinculado a um contrato atual. O acesso respeita a locadora e o vínculo motorista-veículo.
+
+[WHATSAPP]
+Intenções: conectar WhatsApp, mensagem não envia, template, Meta.
+Pré-requisitos: integração conectada; template Meta aprovado; parâmetros corretos.
+Diagnóstico: 1) Conferir conexão. 2) Conferir template. 3) Conferir parâmetros. 4) Conferir se a automação está ativa e dentro de dia/horário. 5) Se persistir, abrir suporte com horário, motorista e fluxo.
+
+[AUTOMAÇÕES]
+Intenções: ativar automação, desativar, dia, horário, intervalo, reenvio.
+Onde: Configurações > Automações.
+Passos: 1) Escolher fluxo. 2) Definir dias. 3) Definir janela de horário. 4) Definir intervalo disponível. 5) Testar. 6) Ativar.
+Regras: evitar mensagens redundantes. Desativar em testes sem envio real. Desligar a integração interrompe os envios do WhatsApp.
+
+[FUSO HORÁRIO]
+Intenções: horário errado, alterar fuso, automação fora de hora.
+Onde: Configurações > Dados da locadora.
+Resposta canônica: defina o fuso da locadora. Históricos e automações consideram essa configuração.
+
+[TIPO DE VISTORIA]
+Intenções: vídeo ou fotos, padrão vistoria, mudar vistoria.
+Onde: Configurações > Automações.
+Resposta canônica: selecione o padrão disponível. Fotos guiadas - 4 lados + painel é recomendado para facilitar adesão e comparação. Modos de vídeo permanecem disponíveis quando necessários.
+
+[IDENTIDADE VISUAL]
+Intenções: logo, cor, personalização não aparece, dados locadora.
+Onde: Configurações > Dados da locadora.
+Passos: revisar os campos disponíveis, salvar e atualizar a página.
+
+[FINANCEIRO]
+Intenções: financeiro locadora, valores realizados, resultado proprietário, repasse errado.
+Resposta canônica: os indicadores são alimentados por contratos, cobranças, pagamentos confirmados, custos e regras de repasse. Dar baixa corretamente atualiza os valores realizados.
+Repasse incorreto: Proprietários > Valores e veículos; conferir percentuais, veículo e vigência.
+
+[ASSISTENTE]
+Intenções: perguntar IA, ajuda inteligente, resposta indisponível.
+Onde: Ajuda e Suporte > Assistente.
+Passos: escrever pergunta objetiva, ler a orientação e confirmar se corresponde ao perfil e à tela. Se não houver resposta, abrir suporte.
+
+[SUPORTE]
+Intenções: abrir chamado, erro, problema, suporte, solicitação.
+Onde: Ajuda e Suporte > Suporte.
+Passos: 1) Informar assunto, categoria e prioridade. 2) Descrever ação, resultado esperado e resultado obtido. 3) Incluir tela, data, horário e identificação do registro quando útil. 4) Enviar. 5) Acompanhar em Minhas solicitações.
+Segurança: nunca enviar senha, chave de API, token ou segredo.
+
+[RESPOSTAS PARA PERGUNTAS FREQUENTES]
+Pergunta: Como acesso o Portal do Proprietário?
+Resposta: O acesso é fornecido pela locadora. Abra Proprietários > Acesso ao portal, configure as credenciais disponíveis, confirme que o acesso está ativo e envie ao proprietário o link e as credenciais.
+
+Pergunta: O proprietário não consegue entrar. O que faço?
+Resposta: Abra Proprietários > Acesso ao portal e confira as credenciais e o status. Não exclua o proprietário apenas para corrigir o acesso.
+
+Pergunta: O proprietário entrou, mas não vê um veículo.
+Resposta: Confirme se o veículo está vinculado ao proprietário correto.
+
+Pergunta: Como faço uma vistoria de quatro fotos?
+Resposta: No modo Fotos guiadas - 4 lados + painel, fotografe frente, lateral direita, traseira, lateral esquerda e painel; depois digite a KM, revise e envie.
+
+Pergunta: A IA aprova a vistoria?
+Resposta: Não. A IA apenas auxilia indicando possíveis avarias. A decisão final é da locadora.
+
+Pergunta: Como cadastro um veículo?
+Resposta: Abra Veículos, crie um cadastro, informe placa, RENAVAM, chassi, marca/modelo, ano, cor e KM atual, vincule o proprietário quando aplicável e salve.
+
+Pergunta: Como cadastro um motorista?
+Resposta: Abra Motoristas, crie um cadastro, preencha identificação, contato, CNH, endereço e os campos disponíveis, confira e salve.
+
+Pergunta: Como cadastro uma manutenção?
+Resposta: No campo Buscar função... do menu lateral, digite manutenção e abra Manutenções. Selecione o veículo, informe tipo, descrição, data ou KM e valor, anexe os comprovantes disponíveis e salve.
+
+Pergunta: Como encontro uma função no sistema?
+Resposta: Use o campo Buscar função... no menu lateral, digite uma palavra relacionada ao que deseja fazer e selecione o resultado correspondente. Por exemplo, digite manutenção para abrir Manutenções.
+
+Pergunta: Como marco uma cobrança como paga?
+Resposta: Abra Cobranças, localize a competência e use Marcar como pago. Confirme que ela passou a aparecer como paga.
+
+Pergunta: A automação não enviou a mensagem.
+Resposta: Confira Configurações > Automações, o dia e horário configurados, a conexão do WhatsApp, o template aprovado e os parâmetros. Se tudo estiver correto, abra suporte com horário, motorista e fluxo testado.
+
+Pergunta: O assistente não encontrou minha resposta.
+Resposta: Essa informação não está disponível na base de ajuda. Abra Ajuda e Suporte > Suporte para receber orientação específica.
