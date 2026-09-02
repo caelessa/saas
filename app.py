@@ -1,5 +1,5 @@
 import mimetypes
-import os, uuid, re, json, hashlib, unicodedata, base64, binascii, html, tempfile, subprocess
+import os, uuid, re, json, hashlib, unicodedata, base64, binascii, html, tempfile, subprocess, time
 import requests
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
@@ -33,6 +33,7 @@ from functools import wraps
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 BASE=Path(__file__).parent; UPLOAD=BASE/'uploads'; UPLOAD.mkdir(exist_ok=True)
+APP_STARTED_AT=datetime.utcnow()
 storage=StorageService(UPLOAD)
 app=Flask(__name__)
 app.config['SECRET_KEY']=os.getenv('SECRET_KEY','dev-change-me')
@@ -3211,6 +3212,95 @@ def suporte_central_legado():
  flash('A Central de Suporte agora utiliza uma conta administrativa Frota Fácil separada.','info')
  return redirect(url_for('ajuda'))
 
+def _admin_system_health():
+ """Resumo operacional seguro, sem expor segredos nem chamar APIs externas."""
+ cards=[]
+ agora_utc=datetime.utcnow()
+ agora_fila=agora_sao_paulo_naive()
+
+ versao=(os.getenv('FROTA_FACIL_VERSION') or os.getenv('RENDER_GIT_COMMIT') or 'não informada').strip()
+ if len(versao)>12 and versao!='não informada': versao=versao[:12]
+ cards.append({
+  'nome':'Aplicação','icone':'●','status':'ok','rotulo':'Online',
+  'resumo':f'Versão {versao}',
+  'detalhe':'Iniciada em '+_as_sao_paulo(APP_STARTED_AT).strftime('%d/%m/%Y %H:%M'),
+ })
+
+ try:
+  inicio=time.perf_counter()
+  db.session.execute(text('SELECT 1'))
+  latencia=max(0,int((time.perf_counter()-inicio)*1000))
+  db_status='ok' if latencia<500 else 'warning'
+  cards.append({'nome':'Banco de dados','icone':'◆','status':db_status,'rotulo':'Conectado','resumo':f'Resposta em {latencia} ms','detalhe':'Consulta de integridade concluída.'})
+ except Exception as exc:
+  db.session.rollback()
+  app.logger.exception('Falha no diagnóstico administrativo do banco')
+  cards.append({'nome':'Banco de dados','icone':'◆','status':'danger','rotulo':'Falha','resumo':'Sem resposta','detalhe':'Não foi possível concluir a consulta de integridade.'})
+
+ try:
+  integracoes=Integration.query.filter_by(tipo='whatsapp').all()
+  business=0
+  for integracao in integracoes:
+   try:
+    cfg=CommunicationService.parse_config(integracao)
+    if integracao.ativo and (cfg.get('provider') or 'web').lower()=='business': business+=1
+   except Exception:
+    continue
+  falhas_24h=MessageQueue.query.filter(MessageQueue.channel=='whatsapp',MessageQueue.status=='FALHA',MessageQueue.updated_at>=agora_fila-timedelta(hours=24)).count()
+  ultimo=MessageQueue.query.filter(MessageQueue.channel=='whatsapp',MessageQueue.sent_at.isnot(None)).order_by(MessageQueue.sent_at.desc()).first()
+  if falhas_24h: wa_status='danger'; wa_rotulo='Atenção'
+  elif business: wa_status='ok'; wa_rotulo='Operacional'
+  else: wa_status='warning'; wa_rotulo='Não conectado'
+  ultimo_txt=('Último envio: '+_as_sao_paulo(_message_db_time_as_utc_naive(ultimo.sent_at)).strftime('%d/%m %H:%M')) if ultimo and ultimo.sent_at else 'Nenhum envio registrado.'
+  cards.append({'nome':'WhatsApp/Meta','icone':'✆','status':wa_status,'rotulo':wa_rotulo,'resumo':f'{business} locadora(s) Business · {falhas_24h} falha(s) em 24h','detalhe':ultimo_txt})
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha no diagnóstico administrativo do WhatsApp')
+  cards.append({'nome':'WhatsApp/Meta','icone':'✆','status':'danger','rotulo':'Falha','resumo':'Diagnóstico indisponível','detalhe':'Não foi possível consultar os registros de mensagens.'})
+
+ try:
+  chave_openai=bool((os.getenv('OPENAI_API_KEY') or '').strip())
+  ultima_analise=Inspection.query.filter(Inspection.damage_analysis_at.isnot(None)).order_by(Inspection.damage_analysis_at.desc()).first()
+  if not chave_openai: ai_status='danger'; ai_rotulo='Não configurada'; ai_resumo='Chave ausente'
+  elif ultima_analise and ultima_analise.damage_analysis_status=='FALHA': ai_status='warning'; ai_rotulo='Revisar'; ai_resumo='A análise mais recente falhou'
+  else: ai_status='ok'; ai_rotulo='Configurada'; ai_resumo='Chave disponível'
+  ai_detalhe=('Última análise: '+_as_sao_paulo(ultima_analise.damage_analysis_at).strftime('%d/%m/%Y %H:%M')) if ultima_analise else 'Nenhuma análise registrada ainda.'
+  cards.append({'nome':'OpenAI','icone':'✦','status':ai_status,'rotulo':ai_rotulo,'resumo':ai_resumo,'detalhe':ai_detalhe})
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha no diagnóstico administrativo da OpenAI')
+  cards.append({'nome':'OpenAI','icone':'✦','status':'warning','rotulo':'Indisponível','resumo':'Diagnóstico não concluído','detalhe':'Nenhuma chave ou conteúdo sensível foi exibido.'})
+
+ try:
+  ativas=0
+  for integracao in Integration.query.filter_by(tipo='whatsapp',ativo=True).all():
+   try:
+    cfg=CommunicationService.parse_config(integracao)
+    if cfg.get('automation_enabled') and any((cfg.get('km_automation_enabled'),cfg.get('billing_automation_enabled'),cfg.get('inspection_automation_enabled'))): ativas+=1
+   except Exception:
+    continue
+  ultimo_auto=MessageEvent.query.filter(MessageEvent.description.ilike('%automat%')).order_by(MessageEvent.created_at.desc()).first()
+  auto_status='ok' if ativas and ultimo_auto else ('warning' if ativas else 'neutral')
+  auto_rotulo='Em atividade' if ativas and ultimo_auto else ('Aguardando execução' if ativas else 'Desativadas')
+  auto_detalhe=('Última atividade: '+_as_sao_paulo(_message_db_time_as_utc_naive(ultimo_auto.created_at)).strftime('%d/%m/%Y %H:%M')) if ultimo_auto else 'Nenhuma execução automática registrada.'
+  cards.append({'nome':'Automações','icone':'↻','status':auto_status,'rotulo':auto_rotulo,'resumo':f'{ativas} locadora(s) com automação ativa','detalhe':auto_detalhe})
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha no diagnóstico administrativo das automações')
+  cards.append({'nome':'Automações','icone':'↻','status':'warning','rotulo':'Indisponível','resumo':'Diagnóstico não concluído','detalhe':'Consulte os registros do serviço de automação.'})
+
+ try:
+  pendentes=MessageQueue.query.filter(MessageQueue.status.in_(['PENDENTE','AGENDADA'])).count()
+  falhas=MessageQueue.query.filter(MessageQueue.status=='FALHA',MessageQueue.updated_at>=agora_fila-timedelta(hours=24)).count()
+  fila_status='danger' if falhas else ('warning' if pendentes>100 else 'ok')
+  fila_rotulo='Com falhas' if falhas else ('Acumulada' if pendentes>100 else 'Normal')
+  cards.append({'nome':'Fila de mensagens','icone':'≡','status':fila_status,'rotulo':fila_rotulo,'resumo':f'{pendentes} aguardando · {falhas} falha(s) em 24h','detalhe':'Inclui mensagens pendentes e agendadas de todas as locadoras.'})
+ except Exception:
+  db.session.rollback(); app.logger.exception('Falha no diagnóstico administrativo da fila')
+  cards.append({'nome':'Fila de mensagens','icone':'≡','status':'danger','rotulo':'Falha','resumo':'Diagnóstico indisponível','detalhe':'Não foi possível consultar a fila.'})
+
+ ordem={'danger':3,'warning':2,'neutral':1,'ok':0}
+ pior=max(cards,key=lambda card:ordem.get(card['status'],0))['status']
+ resumo_geral={'danger':'Há itens que exigem atenção','warning':'Sistema operacional com alertas','neutral':'Sistema operacional','ok':'Todos os indicadores normais'}[pior]
+ return cards,resumo_geral,pior
+
 @app.route('/admin-frota/suporte')
 @frota_admin_required
 def frota_admin_suporte():
@@ -3238,7 +3328,8 @@ def frota_admin_suporte():
   'EM_ANALISE':SupportTicket.query.filter_by(status='EM_ANALISE').count(),
   'RESOLVIDO':SupportTicket.query.filter_by(status='RESOLVIDO').count(),
  }
- return render_template('admin_frota_suporte.html',admin=admin,tickets=tickets,tenants=tenants,todas_locadoras=todas_locadoras,status_filtro=status,prioridade_filtro=prioridade,locadora_filtro=tenant_id,busca=busca,counts=counts)
+ health_cards,health_summary,health_status=_admin_system_health()
+ return render_template('admin_frota_suporte.html',admin=admin,tickets=tickets,tenants=tenants,todas_locadoras=todas_locadoras,status_filtro=status,prioridade_filtro=prioridade,locadora_filtro=tenant_id,busca=busca,counts=counts,health_cards=health_cards,health_summary=health_summary,health_status=health_status,health_checked_at=datetime.utcnow())
 
 @app.route('/admin-frota/suporte/<int:ticket_id>')
 @frota_admin_required
