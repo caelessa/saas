@@ -815,6 +815,7 @@ def processar_mensagens_agendadas(tenant_id=None, limit=100):
    (fila.message_type or '').strip().lower() in ('lembrete_pagamento_semanal','cobranca','cobranca_semanal')
    or (fila.related_entity or '').strip().lower()=='cobranca'
   )
+  billing_processing_enabled=bool(cfg.get('billing_processing_enabled',True))
   billing_enabled=bool(cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)))
   if eh_cobranca and fila.related_entity_id:
    audit_pago=BillingAudit.query.filter_by(id=fila.related_entity_id,tenant_id=fila.tenant_id).first()
@@ -822,6 +823,10 @@ def processar_mensagens_agendadas(tenant_id=None, limit=100):
     fila.status='CANCELADA'; fila.updated_at=now
     db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='CANCELADA',description='Cobrança agendada cancelada porque o pagamento já foi baixado.',created_at=now))
     processed+=1; continue
+  if eh_cobranca and not billing_processing_enabled:
+   fila.status='CANCELADA'; fila.updated_at=now
+   db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='CANCELADA',description='Cobrança cancelada porque o processamento de cobranças está desabilitado para esta locadora.',created_at=now))
+   processed+=1; continue
   if eh_cobranca and not billing_enabled:
    fila.status='CANCELADA'; fila.updated_at=now
    db.session.add(MessageEvent(tenant_id=fila.tenant_id,message_id=fila.id,event='CANCELADA',description='Cobrança automática cancelada porque a automação de cobranças está desabilitada.',created_at=now))
@@ -1175,7 +1180,7 @@ def dashboard():
   'alertas':Alert.query.filter(Alert.tenant_id==tid(),Alert.resolvido_em.is_(None)).count(),
   'disponiveis':status_counts.get('Disponível',0),'reservados':status_counts.get('Reservado',0),
   'alugados':status_counts.get('Alugado',0),'manutencao':status_counts.get('Manutenção',0),
-  'cobrancas_hoje':sum(1 for c in Contract.query.filter(Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])).all() if cobranca_vence_hoje(c)),
+  'cobrancas_hoje':sum(1 for c in Contract.query.filter(Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])).all() if cobranca_vence_hoje(c)) if _billing_processing_enabled(tid()) else 0,
  }
  return render_template('dashboard.html',cards=cards,veiculos=sorted(vehicles,key=lambda v:v.id,reverse=True)[:6],alertas=system_alerts,oil_status=oil_status)
 
@@ -1981,6 +1986,7 @@ def portal_motorista_sair():
 @driver_portal_required
 def portal_motorista():
  tenant_id=int(session['driver_portal_tenant_id']); driver_id=int(session['driver_portal_driver_id']); driver=Driver.query.filter_by(id=driver_id,tenant_id=tenant_id).first_or_404(); tenant=Tenant.query.get(tenant_id)
+ billing_processing_enabled=_billing_processing_enabled(tenant_id)
  contracts=Contract.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Contract.id.desc()).all()
  contract_ids=[c.id for c in contracts]
  active_contracts=[c for c in contracts if (c.status or '').strip() in {'Assinado','Ativo'}]
@@ -1990,7 +1996,7 @@ def portal_motorista():
  current_vehicle=Vehicle.query.filter_by(tenant_id=tenant_id,current_driver_id=driver_id).first()
  if not current_vehicle:
   active=next((c for c in active_contracts if c.vehicle_id),None); current_vehicle=active.vehicle if active else None
- audits_raw=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(contract_ids)).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).all() if contract_ids else []
+ audits_raw=BillingAudit.query.filter(BillingAudit.tenant_id==tenant_id,BillingAudit.contract_id.in_(contract_ids)).order_by(BillingAudit.billing_date.desc(),BillingAudit.id.desc()).all() if contract_ids and billing_processing_enabled else []
  contract_map={c.id:c for c in contracts}
 
  # Consolida registros antigos criados pelo bug de cobrança diária.
@@ -2079,7 +2085,7 @@ def portal_motorista():
   if i.contract_id in active_contract_ids and (i.status or '').lower()=='pendente' and (not i.expires_at or i.expires_at>=datetime.utcnow()):
    c=contract_map.get(i.contract_id); numero=c.numero_contrato if c else ''
    pendencias.append({'tipo':'Vistoria','texto':f'{i.vehicle.placa} · {i.vehicle.marca_modelo}'+(f' · {numero}' if numero else ''),'url':url_for('vistoria_publica',token=i.token)})
- return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,active_contract_ids=active_contract_ids,audits=audits,audit_context=audit_context,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias,crlv_by_vehicle=crlv_by_vehicle)
+ return render_template('portal_motorista.html',tenant=tenant,driver=driver,current_vehicle=current_vehicle,contracts=contracts,active_contract_ids=active_contract_ids,audits=audits,audit_context=audit_context,pagos=pagos,pendentes=pendentes,km_requests=km_requests,inspections=inspections,maintenances=maintenances,pendencias=pendencias,crlv_by_vehicle=crlv_by_vehicle,billing_processing_enabled=billing_processing_enabled)
 
 def _portal_motorista_crlv_autorizado(document_id):
  tenant_id=int(session['driver_portal_tenant_id'])
@@ -3496,7 +3502,8 @@ def configuracoes_automacoes():
   except Exception: old_interval=1
 
   km_enabled=request.form.get('km_automation_enabled')=='1'
-  billing_enabled=request.form.get('billing_automation_enabled')=='1'
+  billing_processing_enabled=request.form.get('billing_processing_enabled')=='1'
+  billing_enabled=billing_processing_enabled and request.form.get('billing_automation_enabled')=='1'
   inspection_enabled=request.form.get('inspection_automation_enabled')=='1'
   inspection_type='fotos'
   damage_detection_enabled=request.form.get('inspection_damage_detection_enabled')=='1'
@@ -3532,7 +3539,7 @@ def configuracoes_automacoes():
   # Se a automação de cobranças acabou de ser desligada, elimina da fila
   # qualquer cobrança ainda não enviada. Assim o botão funciona como um freio
   # imediato, sem afetar o histórico financeiro nem as baixas manuais.
-  if not billing_enabled:
+  if not billing_enabled or not billing_processing_enabled:
    agora_cancelamento=agora_sao_paulo_naive()
    filas_cobranca=MessageQueue.query.filter(
     MessageQueue.tenant_id==tid(),
@@ -3545,13 +3552,15 @@ def configuracoes_automacoes():
    ).all()
    for fila_cobranca in filas_cobranca:
     fila_cobranca.status='CANCELADA'; fila_cobranca.updated_at=agora_cancelamento
-    db.session.add(MessageEvent(tenant_id=tid(),message_id=fila_cobranca.id,event='CANCELADA',description='Cobrança cancelada ao desabilitar a automação de cobranças.',created_at=agora_cancelamento))
+    motivo_cancelamento=('Cobrança cancelada ao desabilitar o processamento de cobranças da locadora.' if not billing_processing_enabled else 'Cobrança cancelada ao desabilitar a automação de cobranças.')
+    db.session.add(MessageEvent(tenant_id=tid(),message_id=fila_cobranca.id,event='CANCELADA',description=motivo_cancelamento,created_at=agora_cancelamento))
 
   cfg.update({
    'automation_enabled':request.form.get('automation_enabled')=='1',
    'km_automation_enabled':km_enabled,
    'km_automation_weekdays':km_days,
    'km_start_hour':km_start,'km_end_hour':km_end,'km_reminder_interval_hours':km_interval,
+   'billing_processing_enabled':billing_processing_enabled,
    'billing_automation_enabled':billing_enabled,
    'billing_automation_weekdays':billing_days,
    'billing_start_hour':billing_start,'billing_end_hour':billing_end,'billing_reminder_interval_hours':billing_interval,
@@ -3738,6 +3747,8 @@ def url_comprovante_cobranca(audit):
 @app.route('/pagamento/<token>',methods=['GET','POST'])
 def enviar_comprovante_pagamento(token):
  audit=BillingAudit.query.filter_by(receipt_token=token).first_or_404()
+ if not _billing_processing_enabled(audit.tenant_id):
+  return 'O recebimento de comprovantes pelo Frota Fácil está desativado para esta locadora.',410
  contrato=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=audit.contract_id,tenant_id=audit.tenant_id).first()
  tenant=Tenant.query.get(audit.tenant_id)
  if request.method=='POST':
@@ -3781,6 +3792,7 @@ def visualizar_comprovante_pagamento(id):
 @login_required
 def cobrancas():
  tenant=Tenant.query.get_or_404(tid())
+ billing_processing_enabled=_billing_processing_enabled(tid())
  if request.method=='POST':
   tenant.cobrar_km_excedente=bool(request.form.get('cobrar_km_excedente'))
   db.session.commit()
@@ -3790,7 +3802,7 @@ def cobrancas():
   Contract.tenant_id==tid(),Contract.status.in_(['Assinado','Ativo'])
  ).order_by(Contract.id.desc()).all()
  items=[]
- for c in contratos_ativos:
+ for c in contratos_ativos if billing_processing_enabled else []:
   # Esta RC é focada no fluxo semanal. Contratos de outra periodicidade continuam fora da cobrança automática semanal.
   periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
   if periodicidade and 'seman' not in periodicidade:
@@ -3800,10 +3812,24 @@ def cobrancas():
  hoje=[x for x in items if x['vence_hoje']]
  auditoria=BillingAudit.query.filter_by(tenant_id=tid()).order_by(BillingAudit.created_at.desc()).limit(200).all()
  alterou=False
- for audit in auditoria:
+ for audit in auditoria if billing_processing_enabled else []:
   if not audit.receipt_token: garantir_token_comprovante(audit); alterou=True
  if alterou: db.session.commit()
- rendered_html=render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant)
+ rendered_html=render_template('cobrancas.html',items=items,hoje=hoje,auditoria=auditoria,tenant=tenant,billing_processing_enabled=billing_processing_enabled)
+ if not billing_processing_enabled:
+  aviso=(
+   '<div class="container-fluid mt-4"><div class="alert alert-info" role="alert">'
+   '<strong>Cobranças desativadas.</strong> Esta locadora utiliza outro sistema para processar cobranças. '
+   'O histórico existente foi preservado, mas o Frota Fácil não criará cobranças, baixas, links de comprovante ou mensagens enquanto esta opção permanecer desligada.'
+   '</div></div>'
+  )
+  if '</main>' in rendered_html:
+   rendered_html=rendered_html.replace('</main>',aviso+'</main>',1)
+  elif '</body>' in rendered_html:
+   rendered_html=rendered_html.replace('</body>',aviso+'</body>',1)
+  else:
+   rendered_html+=aviso
+  return rendered_html
  # Baixa manual da competência semanal atual.
  # Busca diretamente no banco (sem o limite visual de 200 registros da auditoria)
  # para que nenhum contrato vigente desapareça da baixa manual por possuir histórico antigo.
@@ -5935,6 +5961,13 @@ def _automation_cfg(tenant_id):
  cfg=CommunicationService.parse_config(integration)
  return integration,cfg
 
+def _billing_processing_enabled(tenant_id,cfg=None):
+ # Compatibilidade: locadoras já existentes permanecem com o módulo ativo até
+ # que decidam desligá-lo explicitamente em Configurações > Automações.
+ if cfg is None:
+  _,cfg=_automation_cfg(tenant_id)
+ return bool(cfg.get('billing_processing_enabled',True))
+
 def _automation_window_open(cfg, kind=None, agora=None):
  agora=agora or datetime.now(SAO_PAULO)
  if not cfg.get('automation_enabled',False): return False
@@ -5980,6 +6013,8 @@ def _audit_info(audit):
  }
 
 def _enviar_cobranca_audit(contract,audit,cfg):
+ if not _billing_processing_enabled(contract.tenant_id,cfg):
+  return None,None,'O processamento de cobranças está desabilitado para esta locadora.'
  if not audit or (audit.payment_status or 'PENDENTE').upper()=='PAGO':
   return None,None,'Esta cobrança já está baixada como paga.'
  info=_audit_info(audit)
@@ -5995,8 +6030,10 @@ def _enviar_cobranca_audit(contract,audit,cfg):
  return fila,redirect_url,err
 
 def gerar_e_enviar_cobranca(contract,automatico=False):
- info=calcular_cobranca_semanal(contract)
  integration,cfg=_automation_cfg(contract.tenant_id)
+ if not _billing_processing_enabled(contract.tenant_id,cfg):
+  return None,None,None,'O processamento de cobranças está desabilitado para esta locadora.'
+ info=calcular_cobranca_semanal(contract)
  # Segunda barreira de segurança para chamadas automáticas diretas. O envio
  # manual pelo botão da tela continua permitido mesmo com a automação desligada.
  if automatico and not cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)):
@@ -6057,7 +6094,7 @@ def processar_cobrancas_automaticas(tenant_id=None):
   periodicidade=unicodedata.normalize('NFKD',str(c.periodicidade or '')).encode('ascii','ignore').decode('ascii').lower()
   if periodicidade and 'seman' not in periodicidade: continue
   integration,cfg=_automation_cfg(c.tenant_id)
-  if not cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) or not _automation_window_open(cfg,'billing',agora): continue
+  if not _billing_processing_enabled(c.tenant_id,cfg) or not cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) or not _automation_window_open(cfg,'billing',agora): continue
   inicio_semana,fim_semana=_periodo_semana_tenant(c.tenant_id,hoje)
   pago_semana=BillingAudit.query.filter(
    BillingAudit.tenant_id==c.tenant_id,
@@ -6285,6 +6322,8 @@ def _cancelar_lembretes_cobranca_ids(tenant_id, audit_ids, motivo):
 @app.route('/cobrancas/auditoria/<int:id>/pago',methods=['POST'])
 @login_required
 def marcar_cobranca_paga(id):
+ if not _billing_processing_enabled(tid()):
+  flash('O processamento de cobranças está desabilitado para esta locadora.','warning'); return redirect(url_for('cobrancas'))
  audit=BillingAudit.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  contrato=Contract.query.filter_by(id=audit.contract_id,tenant_id=tid()).first() if audit.contract_id else None
  if not contrato or contrato.status not in ('Assinado','Ativo'):
@@ -6314,6 +6353,8 @@ def marcar_cobranca_paga(id):
 @app.route('/cobrancas/<int:id>/baixa-manual-criar',methods=['POST'])
 @login_required
 def criar_baixa_manual_cobranca(id):
+ if not _billing_processing_enabled(tid()):
+  flash('O processamento de cobranças está desabilitado para esta locadora.','warning'); return redirect(url_for('cobrancas'))
  c=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter_by(id=id,tenant_id=tid()).first_or_404()
  if c.status not in ('Assinado','Ativo'):
   flash('Somente contratos vigentes podem receber baixa manual.','warning')
@@ -6391,6 +6432,8 @@ def criar_baixa_manual_cobranca(id):
 @app.route('/cobrancas/auditoria/<int:id>/reabrir',methods=['POST'])
 @login_required
 def reabrir_cobranca(id):
+ if not _billing_processing_enabled(tid()):
+  flash('O processamento de cobranças está desabilitado para esta locadora.','warning'); return redirect(url_for('cobrancas'))
  audit=BillingAudit.query.filter_by(id=id,tenant_id=tid()).first_or_404()
  audit.payment_status='COMPROVANTE_RECEBIDO' if audit.receipt_key else 'PENDENTE'; audit.paid_at=None; audit.paid_by_id=None; audit.payment_method=None; audit.payment_notes=None; audit.closed_at=None
  db.session.commit(); flash('Cobrança reaberta. Ela volta a participar dos lembretes automáticos.','warning')
