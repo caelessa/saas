@@ -94,9 +94,8 @@ Entrar e sair
 
 Localizar uma função rapidamente
 
-Quando não souber em qual opção do menu está uma função, use o campo
-Buscar função... no menu lateral. Digite uma palavra relacionada ao que
-deseja fazer e selecione o resultado correspondente.
+Use o campo Buscar função... no menu lateral. Digite uma palavra
+relacionada ao que deseja fazer e selecione o resultado correspondente.
 
 -   Para cadastrar ou consultar uma manutenção, digite manutenção.
 
@@ -397,12 +396,13 @@ quilometragem.
   Para que serve                      Registrar o estado do veículo com
                                       imagens consistentes e comparáveis.
   ----------------------------------- -----------------------------------
-  Onde acessar                        Vistorias; o tipo padrão fica em
+  Onde acessar                        Vistorias; dias e horários
+                                      automáticos ficam em
                                       Configurações > Automações.
 
-  Antes de começar                    Configure o tipo de vistoria e
-                                      valide o fluxo com usuário de
-                                      teste.
+  Antes de começar                    O formato é Fotos guiadas - 4
+                                      lados + painel. Valide o fluxo com
+                                      um usuário de teste.
   -----------------------------------------------------------------------
 
 Fotos guiadas - 4 lados + painel
@@ -560,12 +560,12 @@ Fuso horário
 Cada locadora define seu fuso horário. Históricos e automações
 consideram essa configuração.
 
-Tipo padrão de vistoria
+Formato das vistorias
 
-Em Configurações > Automações, escolha o padrão das vistorias
-automáticas. Fotos guiadas - 4 lados + painel é o fluxo recomendado para
-facilitar a adesão e a comparação. Modos de vídeo permanecem disponíveis
-quando necessários.
+Em Configurações > Automações, defina os dias e horários das vistorias
+automáticas. O Frota Fácil utiliza Fotos guiadas - 4 lados + painel para
+facilitar a adesão, padronizar as evidências e permitir comparação entre
+vistorias.
 
 Identidade visual
 
@@ -733,9 +733,8 @@ Todo mês
 
   Cadastrar manutenção     Manutenções
 
-  Alterar fuso horário     Configurações > Dados da locadora
-
-  Definir vistoria padrão  Configurações > Automações
+  Configurar vistoria      Configurações > Automações
+  automática               
 
   Abrir chamado            Ajuda e Suporte > Suporte
   -----------------------------------------------------------------------

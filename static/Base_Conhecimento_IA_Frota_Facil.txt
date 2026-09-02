@@ -116,7 +116,7 @@ KM incorreta: abrir Conferir KM e comparar valor com foto. Não confirmar leitur
 
 [VISTORIA GUIADA]
 Intenções: fazer vistoria, quatro fotos, 4 fotos, painel, inspeção veículo.
-Onde: Vistorias. Tipo padrão em Configurações > Automações.
+Onde: Vistorias. Dias e horários automáticos em Configurações > Automações.
 Passos: 1) Frente. 2) Lateral direita. 3) Traseira. 4) Lateral esquerda. 5) Painel. 6) Digitar KM. 7) Revisar e enviar.
 Regra: fotos capturadas na hora; cada foto pode ser refeita antes de avançar.
 Conclusão: o envio de todas as evidências obrigatórias conclui automaticamente a vistoria e encerra a pendência. Eventuais pedidos anteriores ainda abertos do mesmo contrato também são encerrados. Não depende de aprovação da locadora.
@@ -159,9 +159,9 @@ Onde: Configurações > Dados da locadora.
 Resposta canônica: defina o fuso da locadora. Históricos e automações consideram essa configuração.
 
 [TIPO DE VISTORIA]
-Intenções: vídeo ou fotos, padrão vistoria, mudar vistoria.
+Intenções: formato da vistoria, fotos guiadas, quatro lados, painel.
 Onde: Configurações > Automações.
-Resposta canônica: selecione o padrão disponível. Fotos guiadas - 4 lados + painel é recomendado para facilitar adesão e comparação. Modos de vídeo permanecem disponíveis quando necessários.
+Resposta canônica: o Frota Fácil utiliza Fotos guiadas - 4 lados + painel. O motorista fotografa frente, lateral direita, traseira, lateral esquerda e painel, informa a KM e envia. Novas vistorias em vídeo não estão disponíveis; vídeos concluídos anteriormente permanecem apenas no histórico.
 
 [IDENTIDADE VISUAL]
 Intenções: logo, cor, personalização não aparece, dados locadora.
