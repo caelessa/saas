@@ -92,6 +92,21 @@ Entrar e sair
 
 4. Ao terminar, use Sair, principalmente em computador compartilhado.
 
+Localizar uma função rapidamente
+
+Quando não souber em qual opção do menu está uma função, use o campo
+Buscar função... no menu lateral. Digite uma palavra relacionada ao que
+deseja fazer e selecione o resultado correspondente.
+
+-   Para cadastrar ou consultar uma manutenção, digite manutenção.
+
+-   Para localizar cobranças, digite cobrança.
+
+-   Para conferir quilometragem, digite KM ou quilometragem.
+
+-   A busca ajuda a abrir a tela correta; depois siga as orientações
+    exibidas no módulo ou consulte o Assistente.
+
 Quando não conseguir entrar
 
 -   Confira se está usando o endereço correto da locadora.
@@ -438,7 +453,8 @@ comparar a mesma posição para procurar mudanças visuais.
 
 Registrar manutenção
 
-1. Abra Manutenções.
+1. No campo Buscar função... do menu lateral, digite manutenção e abra
+Manutenções. Você também pode abrir o módulo diretamente pelo menu.
 
 2. Selecione o veículo.
 
@@ -623,6 +639,11 @@ ajudarem no diagnóstico.
   -----------------------------------------------------------------------
   Dúvida                   Resposta rápida
   ------------------------ ----------------------------------------------
+  Como encontro uma função Use o campo Buscar função... no menu lateral,
+  no menu?                 digite uma palavra relacionada, como
+                           manutenção, e selecione o resultado
+                           correspondente.
+
   Como acessar o Portal do A locadora abre Proprietários > Acesso ao
   Proprietário?            portal, configura as credenciais, confirma que
                            o acesso está ativo e envia ao proprietário o
