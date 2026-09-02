@@ -2028,7 +2028,11 @@ def portal_motorista():
  pendentes=sum(Decimal(str(a.total_amount or 0)) for a in current_audits if (a.payment_status or '').upper()!='PAGO')
  km_requests=MileageRequest.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(MileageRequest.sent_at.desc()).limit(30).all()
  inspections=Inspection.query.filter_by(tenant_id=tenant_id,driver_id=driver_id).order_by(Inspection.requested_at.desc()).limit(30).all()
- maintenances=Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(list(vehicle_ids))).order_by(Maintenance.id.desc()).limit(30).all() if vehicle_ids else []
+ # Manutenções só podem ser exibidas para veículos vinculados a contratos
+ # atuais deste motorista. Usar vehicle_ids aqui também incluiria veículos de
+ # contratos cancelados ou encerrados e exporia compromissos que já não lhe
+ # pertencem.
+ maintenances=Maintenance.query.filter(Maintenance.tenant_id==tenant_id,Maintenance.vehicle_id.in_(list(active_vehicle_ids))).order_by(Maintenance.id.desc()).limit(30).all() if active_vehicle_ids else []
 
  # CRLV-e: somente documentos ativos dos veículos vinculados a contratos atuais
  # do motorista. Mantemos apenas o CRLV mais recente por veículo.
