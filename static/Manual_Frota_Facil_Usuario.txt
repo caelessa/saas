@@ -421,8 +421,9 @@ Fotos guiadas - 4 lados + painel
 
 7. Revise e envie.
 
-As fotos devem ser capturadas na hora. O motorista pode refazer cada
-imagem antes de avançar.
+As fotos devem ser capturadas na hora e podem ser refeitas antes de
+avançar. Após o envio completo, a vistoria e os pedidos anteriores ainda
+abertos do mesmo contrato são encerrados automaticamente.
 
 Análise assistida por IA
 
@@ -431,9 +432,9 @@ possíveis avarias. Se houver vistoria anterior do mesmo veículo, pode
 comparar a mesma posição para procurar mudanças visuais.
 
   -----------------------------------------------------------------------
-  Decisão humana: A IA não aprova nem reprova automaticamente. Na
-  primeira vistoria, pode apontar indícios, mas não deve afirmar que uma
-  avaria é nova sem referência anterior.
+  Revisão por exceção: A vistoria não depende de aprovação. A IA apenas
+  sinaliza exceções; não aprova nem reprova. Uma nova solicitação só
+  ocorre por ação da locadora.
   -----------------------------------------------------------------------
 
   -----------------------------------------------------------------------
@@ -676,8 +677,8 @@ ajudarem no diagnóstico.
   A personalização não     Revise Dados da locadora, salve e atualize a
   apareceu.                página.
 
-  A IA pode reprovar       Não. A análise é assistiva e a decisão final é
-  vistoria?                da locadora.
+  Preciso aprovar a        Não. O envio completo conclui a vistoria. A IA
+  vistoria?                apenas sinaliza exceções para revisão.
 
   Onde abrir suporte?      Ajuda e Suporte > Suporte.
   -----------------------------------------------------------------------

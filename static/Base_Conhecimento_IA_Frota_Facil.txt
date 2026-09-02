@@ -10,7 +10,7 @@ REGRAS OBRIGATÓRIAS DE RESPOSTA
 5. Prefira uma frase inicial direta e depois passos numerados curtos.
 6. Quando a pergunta depender da configuração da locadora, explique a regra geral e diga o que deve ser conferido.
 7. Nunca peça nem exiba senha, chave de API, token ou segredo de integração.
-8. A IA de vistoria é assistiva. Nunca diga que ela aprova ou reprova automaticamente.
+8. A IA de vistoria é assistiva. Nunca diga que ela aprova ou reprova automaticamente. O envio completo conclui a vistoria sem depender de aprovação.
 9. Se a resposta não estiver nesta base, diga: "Essa informação não está disponível na base de ajuda. Abra Ajuda e Suporte > Suporte para receber orientação específica."
 10. Para erro ou comportamento inesperado, peça que o usuário informe no suporte: tela, ação realizada, resultado esperado, resultado obtido, data e horário. Não solicite dados secretos.
 11. Quando o usuário perguntar onde fica uma função ou como abrir um módulo, informe o caminho conhecido e sugira o campo "Buscar função..." no menu lateral. Indique uma palavra curta relacionada à tarefa. Não invente resultados que não estejam nesta base.
@@ -119,11 +119,13 @@ Intenções: fazer vistoria, quatro fotos, 4 fotos, painel, inspeção veículo.
 Onde: Vistorias. Tipo padrão em Configurações > Automações.
 Passos: 1) Frente. 2) Lateral direita. 3) Traseira. 4) Lateral esquerda. 5) Painel. 6) Digitar KM. 7) Revisar e enviar.
 Regra: fotos capturadas na hora; cada foto pode ser refeita antes de avançar.
+Conclusão: o envio de todas as evidências obrigatórias conclui automaticamente a vistoria e encerra a pendência. Eventuais pedidos anteriores ainda abertos do mesmo contrato também são encerrados. Não depende de aprovação da locadora.
+Nova solicitação: somente a ação explícita da locadora para solicitar nova vistoria deve gerar outro link e mensagem. A falta de aprovação ou a análise da IA não deve provocar reenvio.
 
 [IA NA VISTORIA]
 Intenções: IA detecta avaria, aprovar vistoria, reprovar vistoria, comparar dano.
 Resposta canônica: quando habilitada, a IA analisa as quatro fotos externas e pode indicar possíveis avarias. Com vistoria anterior, pode comparar a mesma posição.
-Limite obrigatório: a análise é assistiva; não aprova nem reprova. A decisão final é da locadora. Na primeira vistoria, não afirmar que a avaria é nova sem referência anterior.
+Limite obrigatório: a análise é assistiva; não aprova nem reprova e não impede a conclusão da vistoria. A locadora revisa as exceções sinalizadas. Na primeira vistoria, não afirmar que a avaria é nova sem referência anterior.
 
 [MANUTENÇÕES]
 Intenções: cadastrar manutenção, preventiva, corretiva, troca de óleo, custo manutenção, cancelar manutenção.
@@ -196,7 +198,10 @@ Pergunta: Como faço uma vistoria de quatro fotos?
 Resposta: No modo Fotos guiadas - 4 lados + painel, fotografe frente, lateral direita, traseira, lateral esquerda e painel; depois digite a KM, revise e envie.
 
 Pergunta: A IA aprova a vistoria?
-Resposta: Não. A IA apenas auxilia indicando possíveis avarias. A decisão final é da locadora.
+Resposta: Não. A vistoria é concluída automaticamente quando todas as evidências são enviadas. A IA apenas sinaliza possíveis avarias ou necessidade de revisão, sem aprovar, reprovar ou gerar um novo pedido.
+
+Pergunta: Preciso aprovar a vistoria para encerrar a solicitação?
+Resposta: Não. O envio completo conclui a vistoria, encerra a pendência atual e também os pedidos anteriores ainda abertos do mesmo contrato. Uma nova solicitação só é enviada quando a locadora usa a ação específica para solicitar nova vistoria.
 
 Pergunta: Como cadastro um veículo?
 Resposta: Abra Veículos, crie um cadastro, informe placa, RENAVAM, chassi, marca/modelo, ano, cor e KM atual, vincule o proprietário quando aplicável e salve.
