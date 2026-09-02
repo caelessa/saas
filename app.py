@@ -383,6 +383,38 @@ class InspectionAttempt(db.Model):
  decided_at=db.Column(db.DateTime)
  inspection=db.relationship('Inspection',backref=db.backref('attempts',lazy=True,order_by='InspectionAttempt.id.desc()'))
 
+def _encerrar_vistorias_anteriores(item):
+ """Encerra solicitações antigas já satisfeitas pela vistoria informada.
+
+ Também alcança registros legados sem contract_id, desde que pertençam ao mesmo
+ veículo e motorista. O filtro por id impede que um link antigo encerre uma
+ solicitação nova criada intencionalmente depois dele.
+ """
+ if not item or not item.id or not item.tenant_id or not item.vehicle_id:
+  return 0
+ filtros=[
+  Inspection.tenant_id==item.tenant_id,
+  Inspection.vehicle_id==item.vehicle_id,
+  Inspection.id<item.id,
+  Inspection.status.in_(['Pendente','Regravar','Recebida']),
+ ]
+ if item.contract_id:
+  vinculo=Inspection.contract_id==item.contract_id
+  if item.driver_id:
+   vinculo=or_(vinculo,db.and_(Inspection.contract_id.is_(None),Inspection.driver_id==item.driver_id))
+  filtros.append(vinculo)
+ elif item.driver_id:
+  filtros.append(Inspection.driver_id==item.driver_id)
+ else:
+  return 0
+ anteriores=Inspection.query.filter(*filtros).all()
+ agora=datetime.utcnow()
+ for anterior in anteriores:
+  anterior.status='Encerrada'
+  anterior.expires_at=agora
+  anterior.notes=f'Encerrada automaticamente pela conclusão da vistoria #{item.id} do mesmo contrato.'
+ return len(anteriores)
+
 class Alert(db.Model):
  id=db.Column(db.Integer,primary_key=True); tenant_id=db.Column(db.Integer,index=True,nullable=False); titulo=db.Column(db.String(150)); mensagem=db.Column(db.Text); nivel=db.Column(db.String(20),default='info'); lido=db.Column(db.Boolean,default=False); criado_em=db.Column(db.DateTime,default=datetime.utcnow); source_key=db.Column(db.String(120),index=True); entidade=db.Column(db.String(40)); entidade_id=db.Column(db.Integer); action_url=db.Column(db.String(255)); atualizado_em=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow); resolvido_em=db.Column(db.DateTime)
 class Integration(db.Model):
@@ -5297,6 +5329,13 @@ def vistorias():
   flash(msg_envio,'success' if ok_envio else 'warning')
   return redirect(url_for('vistorias'))
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
+ # Corrige também pendências que já existiam antes desta versão.
+ reconciliados=0
+ for _concluida in items:
+  if _concluida.status in ('Concluída','Concluida','Aprovada') and (_concluida.submitted_at or _concluida.status=='Aprovada'):
+   reconciliados+=_encerrar_vistorias_anteriores(_concluida)
+ if reconciliados:
+  db.session.commit()
  # O template legado usa strftime diretamente. Localizamos apenas a cópia em memória
  # para exibição; o banco continua preservando requested_at em UTC.
  from sqlalchemy.orm.attributes import set_committed_value
@@ -5317,6 +5356,7 @@ def aprovar_vistoria(id):
   flash('A vistoria ainda não possui todas as evidências obrigatórias.','warning'); return redirect(url_for('vistorias'))
  status_anterior=item.status
  item.status='Aprovada'
+ _encerrar_vistorias_anteriores(item)
  tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
  if not tentativa and item.video_key:
   tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,painel_photo_key=item.painel_photo_key,painel_photo_mime=item.painel_photo_mime,km_informada=item.km_informada,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
@@ -5522,18 +5562,8 @@ def vistoria_upload(token):
  km_anterior_vistoria=item.km_informada
  item.km_informada=km; item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Concluída'; item.notes=None
  # Uma vistoria completa satisfaz a obrigação do contrato. Encerra pedidos
- # anteriores ainda abertos para impedir pendências e lembretes por links antigos.
- if item.contract_id:
-  vistorias_anteriores_abertas=Inspection.query.filter(
-   Inspection.tenant_id==item.tenant_id,
-   Inspection.contract_id==item.contract_id,
-   Inspection.id<item.id,
-   Inspection.status.in_(['Pendente','Regravar','Recebida']),
-  ).all()
-  for _anterior in vistorias_anteriores_abertas:
-   _anterior.status='Encerrada'
-   _anterior.expires_at=datetime.utcnow()
-   _anterior.notes=f'Encerrada automaticamente pela conclusão da vistoria #{item.id} do mesmo contrato.'
+ # anteriores ainda abertos, inclusive registros legados sem contract_id.
+ _encerrar_vistorias_anteriores(item)
  if km_anterior_vistoria != km:
   db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem=origem_odo))
  if km >= km_anterior: veiculo.km_atual=km
