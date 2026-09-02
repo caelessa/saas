@@ -32,14 +32,17 @@
 
  <section class="auto-card">
   <h2>💰 Cobranças</h2>
-  <p class="muted2">Possui agenda própria. A cobrança deixa de ser reenviada quando recebe a baixa de pagamento.</p>
-  <div class="switch-row"><input type="checkbox" id="billing_automation_enabled" name="billing_automation_enabled" value="1" {% if cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) %}checked{% endif %}><label for="billing_automation_enabled">Ativar cobrança automática</label></div>
-  <h3>Dias de envio</h3>
-  <div class="days">{% for n,nome in [(0,'Seg'),(1,'Ter'),(2,'Qua'),(3,'Qui'),(4,'Sex'),(5,'Sáb'),(6,'Dom')] %}<label class="day"><input type="checkbox" name="billing_automation_weekdays" value="{{n}}" {% if n in billing_days %}checked{% endif %}>{{nome}}</label>{% endfor %}</div>
-  <div class="auto-grid">
-   <div><label for="billing_start_hour">Início (hora)</label><input id="billing_start_hour" type="number" min="0" max="23" name="billing_start_hour" value="{{cfg.get('billing_start_hour',cfg.get('automation_start_hour',7))}}"></div>
-   <div><label for="billing_end_hour">Fim (hora)</label><input id="billing_end_hour" type="number" min="0" max="23" name="billing_end_hour" value="{{cfg.get('billing_end_hour',cfg.get('automation_end_hour',20))}}"></div>
-   <div><label for="billing_reminder_interval_hours">Repetir a cada (horas)</label><input id="billing_reminder_interval_hours" type="number" min="1" max="12" name="billing_reminder_interval_hours" value="{{cfg.get('billing_reminder_interval_hours',cfg.get('reminder_interval_hours',1))}}"></div>
+  <div class="switch-row"><input type="checkbox" id="billing_processing_enabled" name="billing_processing_enabled" value="1" {% if cfg.get('billing_processing_enabled',True) %}checked{% endif %}><div><label for="billing_processing_enabled">Processar cobranças no Frota Fácil</label><div class="muted2">Desative quando a locadora utilizar outro sistema de cobrança. O histórico será preservado, mas não serão criadas novas cobranças, baixas, mensagens ou links de comprovante.</div></div></div>
+  <div id="billing_automation_controls">
+   <p class="muted2">Possui agenda própria. A cobrança deixa de ser reenviada quando recebe a baixa de pagamento.</p>
+   <div class="switch-row"><input type="checkbox" id="billing_automation_enabled" name="billing_automation_enabled" value="1" {% if cfg.get('billing_automation_enabled',cfg.get('automatic_billing_enabled',False)) %}checked{% endif %}><label for="billing_automation_enabled">Ativar cobrança automática</label></div>
+   <h3>Dias de envio</h3>
+   <div class="days">{% for n,nome in [(0,'Seg'),(1,'Ter'),(2,'Qua'),(3,'Qui'),(4,'Sex'),(5,'Sáb'),(6,'Dom')] %}<label class="day"><input type="checkbox" name="billing_automation_weekdays" value="{{n}}" {% if n in billing_days %}checked{% endif %}>{{nome}}</label>{% endfor %}</div>
+   <div class="auto-grid">
+    <div><label for="billing_start_hour">Início (hora)</label><input id="billing_start_hour" type="number" min="0" max="23" name="billing_start_hour" value="{{cfg.get('billing_start_hour',cfg.get('automation_start_hour',7))}}"></div>
+    <div><label for="billing_end_hour">Fim (hora)</label><input id="billing_end_hour" type="number" min="0" max="23" name="billing_end_hour" value="{{cfg.get('billing_end_hour',cfg.get('automation_end_hour',20))}}"></div>
+    <div><label for="billing_reminder_interval_hours">Repetir a cada (horas)</label><input id="billing_reminder_interval_hours" type="number" min="1" max="12" name="billing_reminder_interval_hours" value="{{cfg.get('billing_reminder_interval_hours',cfg.get('reminder_interval_hours',1))}}"></div>
+   </div>
   </div>
  </section>
 
@@ -76,4 +79,16 @@
  </section>
 </form>
 <section class="auto-card"><h2>🧪 Teste manual</h2><p class="muted2">Executa agora o processamento deste tenant respeitando as regras salvas.</p><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button type="submit">Processar agora</button></form></section>
+<script>
+(function(){
+ var master=document.getElementById('billing_processing_enabled');
+ var controls=document.getElementById('billing_automation_controls');
+ function syncBilling(){
+  var enabled=master.checked;
+  controls.style.opacity=enabled?'1':'.5';
+  controls.querySelectorAll('input').forEach(function(input){input.disabled=!enabled;});
+ }
+ master.addEventListener('change',syncBilling); syncBilling();
+})();
+</script>
 {% endblock %}

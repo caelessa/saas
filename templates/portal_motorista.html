@@ -25,8 +25,8 @@
 
    <section class="pm-summary" aria-label="Resumo">
     <div class="pm-stat"><strong>{{ pendencias|length }}</strong><span>Ações pendentes</span></div>
-    <div class="pm-stat"><strong>R$ {{ pendentes|brl }}</strong><span>Em aberto</span></div>
-    <div class="pm-stat"><strong>R$ {{ pagos|brl }}</strong><span>Pagamentos baixados</span></div>
+    {% if billing_processing_enabled %}<div class="pm-stat"><strong>R$ {{ pendentes|brl }}</strong><span>Em aberto</span></div>
+    <div class="pm-stat"><strong>R$ {{ pagos|brl }}</strong><span>Pagamentos baixados</span></div>{% endif %}
     <div class="pm-stat"><strong>{{ current_vehicle.placa if current_vehicle else '—' }}</strong><span>Veículo atual</span></div>
    </section>
 
@@ -42,10 +42,10 @@
     {% else %}<div class="pm-empty">Nenhum veículo está vinculado ao seu contrato atual.</div>{% endif %}
    </section>
 
-   <section class="pm-card" id="financeiro">
+   {% if billing_processing_enabled %}<section class="pm-card" id="financeiro">
     <div class="pm-card-head"><div><h2>Pagamentos</h2><p class="pm-muted">Consulte cobranças atuais e anteriores.</p></div></div>
     {% if audits %}{% for a in audits %}{% set ctx=audit_context.get(a.id,{}) %}<details class="pm-details" {% if loop.first %}open{% endif %}><summary><span>{{ a.billing_date.strftime('%d/%m/%Y') if a.billing_date else 'Cobrança' }} · R$ {{ a.total_amount|brl }}</span><span class="pm-badge {% if (a.payment_status or '')|upper == 'PAGO' %}success{% elif (a.payment_status or '')|upper == 'COMPROVANTE_RECEBIDO' %}{% else %}attention{% endif %}">{{ (a.payment_status or 'Pendente').replace('_',' ') }}</span></summary><div class="pm-detail-body"><p class="pm-muted">{{ ctx.get('placa','') }}{% if ctx.get('veiculo') %} · {{ ctx.get('veiculo') }}{% endif %}{% if ctx.get('contrato') %}<br>{{ ctx.get('contrato') }}{% endif %}</p><dl class="pm-kv"><div><dt>Locação</dt><dd>R$ {{ a.base_amount|brl }}</dd></div><div><dt>Excesso de KM</dt><dd>R$ {{ a.excess_amount|brl }}</dd></div></dl>{% if (a.payment_status or '')|upper not in ['PAGO','COMPROVANTE_RECEBIDO'] and a.receipt_token %}<a class="pm-action" href="{{ url_for('enviar_comprovante_pagamento',token=a.receipt_token) }}">Enviar comprovante</a>{% endif %}</div></details>{% endfor %}{% else %}<div class="pm-empty">Nenhuma cobrança encontrada.</div>{% endif %}
-   </section>
+   </section>{% endif %}
 
    <section class="pm-card" id="documentos">
     <div class="pm-card-head"><div><h2>Documentos</h2><p class="pm-muted">Documentos autorizados do veículo atual.</p></div></div>
@@ -61,6 +61,6 @@
    </section>
   </main>
  </div>
- <nav class="pm-bottom-nav" aria-label="Navegação do portal"><a href="#inicio"><b>⌂</b>Início</a><a href="#pendencias"><b>✓</b>Pendências</a><a href="#financeiro"><b>R$</b>Pagamentos</a><a href="#documentos"><b>▣</b>Documentos</a></nav>
+ <nav class="pm-bottom-nav" aria-label="Navegação do portal"><a href="#inicio"><b>⌂</b>Início</a><a href="#pendencias"><b>✓</b>Pendências</a>{% if billing_processing_enabled %}<a href="#financeiro"><b>R$</b>Pagamentos</a>{% endif %}<a href="#documentos"><b>▣</b>Documentos</a></nav>
 </body>
 </html>
