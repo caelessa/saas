@@ -2494,11 +2494,11 @@ def _veiculo_portal_proprietario(vehicle_id):
  ).filter_by(id=vehicle_id,tenant_id=tenant_id,investor_id=investor_id).first_or_404()
 
 def _ajustar_eventos_vistoria_para_status_atual(eventos, vistorias):
- """Atualiza apenas a exibição de eventos antigos de vistoria para não manter 'Aguardando aprovação' após decisão.
+ """Atualiza apenas a exibição de eventos antigos de vistoria para não manter 'Aguardando aprovação' após conclusão.
  Também cobre registros já existentes, sem exigir alteração manual no banco.
  """
  for evento in eventos:
-  if (evento.evento or '').strip()!='Vistoria em vídeo recebida':
+  if (evento.evento or '').strip() not in ('Vistoria em vídeo recebida','Vistoria fotográfica recebida'):
    continue
   descricao=evento.descricao or ''
   if 'Aguardando aprovação' not in descricao:
@@ -2523,7 +2523,9 @@ def _ajustar_eventos_vistoria_para_status_atual(eventos, vistorias):
    continue
   vistoria=min(candidatos,key=lambda x:(x[0],-x[1]))[2]
   status=(vistoria.status or '').strip().lower()
-  if status=='aprovada':
+  if status in ('concluída','concluida','recebida'):
+   evento.descricao=descricao.replace('Aguardando aprovação.','Vistoria concluída com o envio.').replace('Aguardando aprovação','Vistoria concluída com o envio')
+  elif status=='aprovada':
    evento.descricao=descricao.replace('Aguardando aprovação.','Posteriormente aprovada pela locadora.').replace('Aguardando aprovação','Posteriormente aprovada pela locadora')
   elif status in ('regravar','rejeitada','rejeitado'):
    evento.descricao=descricao.replace('Aguardando aprovação.','Nova gravação solicitada pela locadora.').replace('Aguardando aprovação','Nova gravação solicitada pela locadora')
@@ -5352,7 +5354,7 @@ def aprovar_vistoria(id):
 @login_required
 def rejeitar_vistoria(id):
  item=Inspection.query.filter_by(id=id,tenant_id=tid()).first_or_404()
- item.status='Regravar'; item.notes=(request.form.get('motivo') or 'Nova gravação solicitada pelo administrador.').strip()
+ item.status='Pendente'; item.notes=(request.form.get('motivo') or 'Nova vistoria solicitada pela locadora.').strip()
  tentativa=InspectionAttempt.query.filter_by(inspection_id=item.id,tenant_id=tid(),decision='Pendente').order_by(InspectionAttempt.id.desc()).first()
  if not tentativa and item.video_key:
   tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=item.video_key,video_mime=item.video_mime,duration_seconds=item.duration_seconds,painel_photo_key=item.painel_photo_key,painel_photo_mime=item.painel_photo_mime,km_informada=item.km_informada,brightness_avg=item.brightness_avg,submitted_at=item.submitted_at or datetime.utcnow(),decision='Pendente')
@@ -5360,13 +5362,14 @@ def rejeitar_vistoria(id):
  if tentativa:
   tentativa.decision='Regravar'; tentativa.decision_notes=item.notes; tentativa.decided_at=datetime.utcnow()
  item.token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
+ item.requested_at=datetime.utcnow()
  item.expires_at=datetime.utcnow()+timedelta(hours=48)
  db.session.commit()
  ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
  if ok_envio:
-  flash('Vistoria rejeitada. Novo link gerado e enviado automaticamente pelo WhatsApp.','success')
+  flash('Nova vistoria solicitada. O link foi enviado automaticamente pelo WhatsApp.','success')
  else:
-  flash('Vistoria rejeitada e novo link gerado. '+msg_envio,'warning')
+  flash('Nova vistoria solicitada e novo link gerado. '+msg_envio,'warning')
  return redirect(url_for('vistorias'))
 
 @app.route('/vistorias/<int:id>/video')
@@ -5416,11 +5419,11 @@ def vistoria_tentativa_video(id,attempt_id):
 @app.route('/vistoria/<token>')
 def vistoria_publica(token):
  item=Inspection.query.filter_by(token=token).first_or_404()
+ evidencia_ok=(item.video_key or ((item.tipo_vistoria or '')=='fotos' and item.front_photo_key and item.right_photo_key and item.rear_photo_key and item.left_photo_key and item.painel_photo_key))
+ if item.status in ('Aprovada','Recebida','Concluída','Concluida') and evidencia_ok:
+  return render_template('vistoria_publica.html',item=item,done=True)
  if item.expires_at and item.expires_at < datetime.utcnow():
   return render_template('vistoria_publica.html',item=item,expired=True),410
- evidencia_ok=(item.video_key or ((item.tipo_vistoria or '')=='fotos' and item.front_photo_key and item.right_photo_key and item.rear_photo_key and item.left_photo_key and item.painel_photo_key))
- if item.status in ('Aprovada','Recebida') and evidencia_ok:
-  return render_template('vistoria_publica.html',item=item,done=True)
  return render_template('vistoria_publica.html',item=item)
 
 @app.route('/vistoria/<token>/upload',methods=['POST'])
@@ -5477,7 +5480,7 @@ def vistoria_upload(token):
   item.video_key=None; item.video_mime=None; item.duration_seconds=None
   origem_odo='Vistoria fotográfica'
   evento_recebido='Vistoria fotográfica recebida'
-  descricao=f'Vistoria fotográfica recebida com 4 lados do veículo e foto do painel; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
+  descricao=f'Vistoria fotográfica concluída com 4 lados do veículo e foto do painel; KM informada {km:,} km.'.replace(',','.')
  else:
   video=request.files.get('video'); painel=request.files.get('painel_photo')
   if not video: return {'ok':False,'error':'Vídeo não recebido.'},400
@@ -5511,13 +5514,26 @@ def vistoria_upload(token):
   try: brilho=float(request.form.get('brightness_avg') or 0)
   except Exception: brilho=0
   item.brightness_avg=Decimal(str(round(brilho,2)))
-  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,painel_photo_key=painel_chave,painel_photo_mime=painel_mime,km_informada=km,brightness_avg=item.brightness_avg,submitted_at=datetime.utcnow(),decision='Pendente')
+  tentativa=InspectionAttempt(inspection_id=item.id,tenant_id=item.tenant_id,video_key=chave,video_mime=mime,duration_seconds=duracao,painel_photo_key=painel_chave,painel_photo_mime=painel_mime,km_informada=km,brightness_avg=item.brightness_avg,submitted_at=datetime.utcnow(),decision='Concluída',decided_at=datetime.utcnow())
   db.session.add(tentativa)
   origem_odo='Vistoria em vídeo'; evento_recebido='Vistoria em vídeo recebida'
-  descricao=f'Vistoria em vídeo recebida; duração {duracao}s; foto do painel anexada; KM informada {km:,} km. Aguardando aprovação.'.replace(',','.')
+  descricao=f'Vistoria em vídeo concluída; duração {duracao}s; foto do painel anexada; KM informada {km:,} km.'.replace(',','.')
 
  km_anterior_vistoria=item.km_informada
- item.km_informada=km; item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Recebida'; item.notes=None
+ item.km_informada=km; item.brightness_status='Não avaliada'; item.submitted_at=datetime.utcnow(); item.status='Concluída'; item.notes=None
+ # Uma vistoria completa satisfaz a obrigação do contrato. Encerra pedidos
+ # anteriores ainda abertos para impedir pendências e lembretes por links antigos.
+ if item.contract_id:
+  vistorias_anteriores_abertas=Inspection.query.filter(
+   Inspection.tenant_id==item.tenant_id,
+   Inspection.contract_id==item.contract_id,
+   Inspection.id<item.id,
+   Inspection.status.in_(['Pendente','Regravar','Recebida']),
+  ).all()
+  for _anterior in vistorias_anteriores_abertas:
+   _anterior.status='Encerrada'
+   _anterior.expires_at=datetime.utcnow()
+   _anterior.notes=f'Encerrada automaticamente pela conclusão da vistoria #{item.id} do mesmo contrato.'
  if km_anterior_vistoria != km:
   db.session.add(Odometer(tenant_id=item.tenant_id,vehicle_id=item.vehicle_id,km=km,origem=origem_odo))
  if km >= km_anterior: veiculo.km_atual=km
@@ -5981,9 +5997,10 @@ def processar_km_automatico(tenant_id=None):
  db.session.commit(); return enviados
 
 def processar_vistorias_automaticas(tenant_id=None):
- """Cria uma vistoria semanal por contrato/veículo e reenvia o mesmo link enquanto estiver pendente.
+ """Cria uma vistoria semanal por contrato/veículo e reenvia o mesmo link somente enquanto estiver pendente.
 
- Usa o fuso do tenant e impede criação duplicada do mesmo pedido.
+ O envio completo conclui a obrigação sem depender de aprovação. Usa o fuso do
+ tenant e impede criação duplicada do mesmo pedido.
  """
  q=Contract.query.options(joinedload(Contract.driver),joinedload(Contract.vehicle)).filter(Contract.status.in_(['Assinado','Ativo']))
  if tenant_id is not None: q=q.filter(Contract.tenant_id==tenant_id)
@@ -6014,13 +6031,15 @@ def processar_vistorias_automaticas(tenant_id=None):
   ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
 
   if not item:
-   # Depois que a vistoria foi recebida/aprovada, não cria outra dentro da mesma semana.
+   # Depois que a vistoria foi enviada, não cria outra dentro da mesma semana.
+   # Consideramos submitted_at para que um pedido antigo, concluído hoje, não
+   # provoque uma nova solicitação imediatamente.
    limite_recente=datetime.utcnow()-timedelta(days=7)
    recente=Inspection.query.filter(
     Inspection.tenant_id==c.tenant_id,
     Inspection.vehicle_id==c.vehicle.id,
     Inspection.contract_id==c.id,
-    Inspection.requested_at>=limite_recente,
+    or_(Inspection.submitted_at>=limite_recente,Inspection.requested_at>=limite_recente),
    ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
    if recente:
     continue
