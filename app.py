@@ -3259,11 +3259,11 @@ def _admin_system_health():
 
  try:
   chave_openai=bool((os.getenv('OPENAI_API_KEY') or '').strip())
-  ultima_analise=Inspection.query.filter(Inspection.damage_analysis_at.isnot(None)).order_by(Inspection.damage_analysis_at.desc()).first()
+  ultima_analise=Inspection.query.filter(Inspection.tipo_vistoria=='fotos',Inspection.damage_analysis_at.isnot(None)).order_by(Inspection.damage_analysis_at.desc()).first()
   if not chave_openai: ai_status='danger'; ai_rotulo='Não configurada'; ai_resumo='Chave ausente'
-  elif ultima_analise and ultima_analise.damage_analysis_status=='FALHA': ai_status='warning'; ai_rotulo='Revisar'; ai_resumo='A análise mais recente falhou'
+  elif ultima_analise and ultima_analise.damage_analysis_status=='FALHA': ai_status='warning'; ai_rotulo='Revisar fotos'; ai_resumo='A análise fotográfica mais recente falhou'
   else: ai_status='ok'; ai_rotulo='Configurada'; ai_resumo='Chave disponível'
-  ai_detalhe=('Última análise: '+_as_sao_paulo(ultima_analise.damage_analysis_at).strftime('%d/%m/%Y %H:%M')) if ultima_analise else 'Nenhuma análise registrada ainda.'
+  ai_detalhe=('Última análise de fotos: '+_as_sao_paulo(ultima_analise.damage_analysis_at).strftime('%d/%m/%Y %H:%M')) if ultima_analise else 'Nenhuma análise fotográfica registrada ainda.'
   cards.append({'nome':'OpenAI','icone':'✦','status':ai_status,'rotulo':ai_rotulo,'resumo':ai_resumo,'detalhe':ai_detalhe})
  except Exception:
   db.session.rollback(); app.logger.exception('Falha no diagnóstico administrativo da OpenAI')
@@ -3494,8 +3494,7 @@ def configuracoes_automacoes():
   km_enabled=request.form.get('km_automation_enabled')=='1'
   billing_enabled=request.form.get('billing_automation_enabled')=='1'
   inspection_enabled=request.form.get('inspection_automation_enabled')=='1'
-  inspection_type=(request.form.get('inspection_automation_type') or cfg.get('inspection_automation_type') or 'fotos').strip().lower()
-  if inspection_type not in ('fotos','simples','guiada'): inspection_type='fotos'
+  inspection_type='fotos'
   damage_detection_enabled=request.form.get('inspection_damage_detection_enabled')=='1'
   km_days=_dias('km_automation_weekdays',cfg.get('km_automation_weekdays') or [old_weekday])
   billing_days=_dias('billing_automation_weekdays',cfg.get('billing_automation_weekdays') or [old_weekday])
@@ -5315,7 +5314,14 @@ def _resultado_json_responses(data):
  return json.loads(texto.strip())
 
 def analisar_avarias_vistoria(item):
- """Triagem assistida. Não aprova/reprova a vistoria e nunca substitui a revisão da locadora."""
+ """Triagem assistida apenas das quatro fotos externas da vistoria."""
+ modo=(item.tipo_vistoria or '').strip().lower()
+ if modo!='fotos':
+  item.damage_analysis_status='NAO_APLICAVEL'
+  item.damage_analysis_level=None
+  item.damage_analysis_summary='Análise automática disponível somente para vistorias por fotos guiadas.'
+  item.damage_analysis_at=None
+  return False
  integration=Integration.query.filter_by(tenant_id=item.tenant_id,tipo='whatsapp').first()
  cfg=CommunicationService.parse_config(integration)
  if not cfg.get('inspection_damage_detection_enabled',False):
@@ -5324,7 +5330,6 @@ def analisar_avarias_vistoria(item):
  if not api_key:
   item.damage_analysis_status='AGUARDANDO_CONFIGURACAO'; item.damage_analysis_summary='Detecção de avarias ativada, mas o provedor de visão ainda não possui credencial configurada.'; return False
  try:
-  modo=(item.tipo_vistoria or '').strip().lower()
   if modo=='fotos':
    atuais=[
     ('FRENTE',item.front_photo_key,item.front_photo_mime),
@@ -5380,20 +5385,6 @@ def analisar_avarias_vistoria(item):
    item.damage_analysis_status='CONCLUIDA'; item.damage_analysis_level=level; item.damage_analysis_summary='\n'.join(linhas)[:4000]; item.damage_analysis_at=datetime.utcnow()
    return True
 
-  video_bytes=storage.download(item.video_key)
-  suffix=Path(item.video_key or '').suffix.lower() or '.webm'
-  frames=_extrair_frames_vistoria(video_bytes,suffix=suffix,quantidade=6)
-  if not frames: raise RuntimeError('Nenhum frame pôde ser extraído do vídeo.')
-  content=[{'type':'input_text','text':('Você faz triagem visual de vistorias de veículos. Analise os frames do MESMO vídeo e procure apenas indícios visíveis de avaria externa: amassado, risco relevante, peça quebrada, trinca, desalinhamento ou dano em roda/para-choque/farol. Não invente dano quando a imagem não permitir concluir. Responda SOMENTE JSON válido com level igual a SEM_INDICIOS, POSSIVEL_AVARIA ou REVISAO_RECOMENDADA e summary em português, curto, citando a região suspeita. A decisão final é humana.')}]
-  for frame in frames:
-   content.append({'type':'input_image','image_url':'data:image/jpeg;base64,'+base64.b64encode(frame).decode('ascii')})
-  payload={'model':(os.getenv('FROTA_FACIL_VISION_MODEL') or 'gpt-5.6-luna').strip(),'input':[{'role':'user','content':content}], 'max_output_tokens':350}
-  resp=requests.post('https://api.openai.com/v1/responses',headers={'Authorization':f'Bearer {api_key}','Content-Type':'application/json'},json=payload,timeout=35)
-  resp.raise_for_status(); result=_resultado_json_responses(resp.json())
-  level=str(result.get('level') or 'REVISAO_RECOMENDADA').upper()
-  if level not in {'SEM_INDICIOS','POSSIVEL_AVARIA','REVISAO_RECOMENDADA'}: level='REVISAO_RECOMENDADA'
-  item.damage_analysis_status='CONCLUIDA'; item.damage_analysis_level=level; item.damage_analysis_summary=str(result.get('summary') or '')[:1500]; item.damage_analysis_at=datetime.utcnow()
-  return True
  except Exception:
   app.logger.exception('Falha na triagem assistida de avarias da vistoria %s',item.id)
   item.damage_analysis_status='FALHA'; item.damage_analysis_level='REVISAO_RECOMENDADA'; item.damage_analysis_summary='A análise automática não pôde ser concluída. Faça a revisão visual das evidências da vistoria.'; item.damage_analysis_at=datetime.utcnow()
@@ -5411,14 +5402,23 @@ def vistorias():
    return redirect(url_for('vistorias'))
   token=uuid.uuid4().hex+uuid.uuid4().hex[:8]
   expira_horas=int(request.form.get('expira_horas') or 48)
-  tipo_vistoria=(request.form.get('tipo_vistoria') or 'fotos').strip().lower()
-  if tipo_vistoria not in ('fotos','guiada','simples'):
-   tipo_vistoria='fotos'
+  tipo_vistoria='fotos'
   item=Inspection(tenant_id=tid(),vehicle_id=v.id,driver_id=d.id,contract_id=(c.id if c else None),token=token,status='Pendente',tipo_vistoria=tipo_vistoria,expires_at=datetime.utcnow()+timedelta(hours=max(1,min(expira_horas,168))))
   db.session.add(item); db.session.commit()
   ok_envio,msg_envio=enviar_vistoria_whatsapp_automatico(item)
   flash(msg_envio,'success' if ok_envio else 'warning')
   return redirect(url_for('vistorias'))
+ # Pedidos de vídeo ainda pendentes passam a usar as cinco fotos, mantendo o token.
+ pendentes_video=Inspection.query.filter(
+  Inspection.tenant_id==tid(),Inspection.status.in_(['Pendente','Regravar']),Inspection.tipo_vistoria!='fotos'
+ ).all()
+ for _pendente in pendentes_video:
+  _pendente.tipo_vistoria='fotos'
+  _pendente.damage_analysis_status='NAO_ANALISADA'
+  _pendente.damage_analysis_level=None
+  _pendente.damage_analysis_summary=None
+  _pendente.damage_analysis_at=None
+ if pendentes_video: db.session.commit()
  items=Inspection.query.filter_by(tenant_id=tid()).order_by(Inspection.id.desc()).all()
  # Corrige também pendências que já existiam antes desta versão.
  reconciliados=0
@@ -5550,6 +5550,9 @@ def vistoria_tentativa_video(id,attempt_id):
 @app.route('/vistoria/<token>')
 def vistoria_publica(token):
  item=Inspection.query.filter_by(token=token).first_or_404()
+ if item.status in ('Pendente','Regravar') and (item.tipo_vistoria or '')!='fotos':
+  item.tipo_vistoria='fotos'; item.damage_analysis_status='NAO_ANALISADA'; item.damage_analysis_level=None; item.damage_analysis_summary=None; item.damage_analysis_at=None
+  db.session.commit()
  evidencia_ok=(item.video_key or ((item.tipo_vistoria or '')=='fotos' and item.front_photo_key and item.right_photo_key and item.rear_photo_key and item.left_photo_key and item.painel_photo_key))
  if item.status in ('Aprovada','Recebida','Concluída','Concluida') and evidencia_ok:
   return render_template('vistoria_publica.html',item=item,done=True)
@@ -5562,7 +5565,10 @@ def vistoria_upload(token):
  item=Inspection.query.filter_by(token=token).first_or_404()
  if item.expires_at and item.expires_at < datetime.utcnow():
   return {'ok':False,'error':'Link expirado.'},410
- modo=(item.tipo_vistoria or 'fotos').strip().lower()
+ if item.status not in ('Pendente','Regravar'):
+  return {'ok':False,'error':'Esta solicitação de vistoria já foi encerrada.'},409
+ modo='fotos'
+ if item.tipo_vistoria!='fotos': item.tipo_vistoria='fotos'
  veiculo=Vehicle.query.filter_by(id=item.vehicle_id,tenant_id=item.tenant_id).first()
  if not veiculo:
   return {'ok':False,'error':'Veículo da vistoria não encontrado.'},404
@@ -6170,7 +6176,7 @@ def processar_vistorias_automaticas(tenant_id=None):
    item=Inspection(
     tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,driver_id=c.driver.id,contract_id=c.id,
     token=uuid.uuid4().hex+uuid.uuid4().hex[:8],status='Pendente',
-    tipo_vistoria=((cfg.get('inspection_automation_type') or 'fotos') if (cfg.get('inspection_automation_type') or 'fotos') in ('fotos','simples','guiada') else 'fotos'),
+    tipo_vistoria='fotos',
     requested_at=datetime.utcnow(),
     expires_at=datetime.utcnow()+timedelta(hours=validade),
    )
