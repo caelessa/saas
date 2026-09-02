@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block heading %}Vistorias{% endblock %}
-{% block subheading %}Solicite vistorias fotográficas guiadas ou, quando necessário, em vídeo. O fluxo registra evidências do veículo, painel e quilometragem atual.{% endblock %}
+{% block subheading %}Solicite vistorias por fotos guiadas. O fluxo registra os quatro lados do veículo, painel e quilometragem atual.{% endblock %}
 {% block content %}
 <section class="card">
   <h2>Nova vistoria</h2>
@@ -10,13 +10,9 @@
         {% for v in veiculos %}<option value="{{v.id}}">{{v.placa}} — {{v.marca_modelo}}</option>{% endfor %}
       </select>
     </label>
-    <label>Tipo de vistoria
-      <select name="tipo_vistoria" required>
-        <option value="fotos" selected>Fotos guiadas — 4 lados + painel</option>
-        <option value="simples">Vídeo simples</option>
-        <option value="guiada">Vistoria guiada em vídeo</option>
-      </select>
-      <small class="muted">Fotos guiadas é o modo recomendado para maior adesão: frente, direita, traseira, esquerda e painel, sempre capturados pela câmera na hora.</small>
+    <label>Formato da vistoria
+      <input type="text" value="Fotos guiadas — 4 lados + painel" disabled>
+      <small class="muted">O motorista fotografa frente, direita, traseira, esquerda e painel, sempre pela câmera e na hora.</small>
     </label>
     <label>Validade do link
       <select name="expira_horas"><option value="24">24 horas</option><option value="48" selected>48 horas</option><option value="72">72 horas</option></select>
@@ -34,7 +30,7 @@
     <tr>
       <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
       <td>{{x.driver.nome if x.driver else '-'}}</td>
-      <td>{% if (x.tipo_vistoria or '') == 'fotos' %}<span class="alert-status ok">Fotos guiadas</span>{% elif (x.tipo_vistoria or 'guiada') == 'simples' %}<span class="alert-status info">Vídeo simples</span>{% else %}<span class="alert-status info">Vídeo guiado</span>{% endif %}</td>
+      <td>{% if (x.tipo_vistoria or '') == 'fotos' %}<span class="alert-status ok">Fotos guiadas</span>{% else %}<span class="alert-status info">Vídeo histórico</span>{% endif %}</td>
       <td><span class="alert-status {% if x.status=='Aprovada' %}ok{% elif x.status in ['Regravar'] %}danger{% elif x.status=='Recebida' %}warning{% else %}info{% endif %}">{{x.status}}</span></td>
       <td>{{x.requested_at.strftime('%d/%m/%Y %H:%M') if x.requested_at else '-'}}</td>
       <td>{% if (x.tipo_vistoria or '') == 'fotos' %}
@@ -46,7 +42,8 @@
         </div>
         {% elif x.video_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_video',id=x.id)}}">▶ Ver vídeo</a>{% else %}-{% endif %}</td>
       <td>{% if x.painel_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='painel')}}">📷 Ver painel</a><br>{% endif %}{% if x.km_informada is not none %}<b>{{'{:,}'.format(x.km_informada).replace(',','.')}} km</b>{% elif not x.painel_photo_key %}-{% endif %}</td>
-      <td style="min-width:220px">{% if x.damage_analysis_status == 'CONCLUIDA' %}
+      <td style="min-width:220px">{% if (x.tipo_vistoria or '') != 'fotos' %}<span class="muted">Não aplicável — vídeo histórico</span>
+        {% elif x.damage_analysis_status == 'CONCLUIDA' %}
         {% if x.damage_analysis_level == 'SEM_INDICIOS' %}<span class="alert-status ok">✓ Sem indícios</span>
         {% elif x.damage_analysis_level == 'POSSIVEL_AVARIA' %}<span class="alert-status warning">⚠ Possível avaria</span>
         {% else %}<span class="alert-status danger">🔎 Revisão recomendada</span>{% endif %}
