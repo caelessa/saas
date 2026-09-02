@@ -3822,6 +3822,7 @@ def cobrancas():
    '<strong>Cobranças desativadas.</strong> Esta locadora utiliza outro sistema para processar cobranças. '
    'O histórico existente foi preservado, mas o Frota Fácil não criará cobranças, baixas, links de comprovante ou mensagens enquanto esta opção permanecer desligada.'
    '</div></div>'
+   '<script>(function(){document.querySelectorAll("form[action*=\\"/reabrir\\"],a[href*=\\"/reabrir\\"]").forEach(function(el){el.remove();});})();</script>'
   )
   if '</main>' in rendered_html:
    rendered_html=rendered_html.replace('</main>',aviso+'</main>',1)
@@ -3935,6 +3936,49 @@ def cobrancas():
    rendered_html=rendered_html.replace('</body>',painel_sem+'</body>',1)
   else:
    rendered_html=rendered_html+painel_sem
+
+ # Compatibilidade com versões antigas do template cobrancas.html: algumas
+ # exibiam a ação Reabrir com a condição visual invertida. Para toda cobrança
+ # paga, garante a ação quando o processamento está ativo, sem duplicá-la caso
+ # o template atual já a tenha renderizado.
+ auditorias_reabrir=[]
+ for audit in auditoria:
+  if (audit.payment_status or '').upper()!='PAGO':
+   continue
+  action_reabrir=url_for('reabrir_cobranca',id=audit.id)
+  if action_reabrir in rendered_html:
+   continue
+  auditorias_reabrir.append((audit,action_reabrir))
+ if auditorias_reabrir:
+  linhas_reabrir=[]
+  for audit,action_reabrir in auditorias_reabrir:
+   total='R$ {:,.2f}'.format(float(audit.total_amount or 0)).replace(',', 'X').replace('.', ',').replace('X', '.')
+   data_ref=audit.billing_date.strftime('%d/%m/%Y') if audit.billing_date else '-'
+   linhas_reabrir.append(
+    '<tr>'
+    '<td>'+html.escape(audit.driver_name or '-')+'</td>'
+    '<td>'+html.escape(audit.plate or '-')+'</td>'
+    '<td>'+data_ref+'</td>'
+    '<td>'+total+'</td>'
+    '<td><form method="post" action="'+action_reabrir+'" style="margin:0">'
+    '<button type="submit" class="btn btn-warning btn-sm" onclick="return confirm(\'Reabrir esta cobrança? Ela voltará a ficar pendente.\')">Reabrir cobrança</button>'
+    '</form></td>'
+    '</tr>'
+   )
+  painel_reabrir=(
+   '<div class="container-fluid mt-4"><div class="card shadow-sm"><div class="card-body">'
+   '<h5 class="card-title mb-1">Cobranças pagas</h5>'
+   '<p class="text-muted small">Use Reabrir cobrança somente quando uma baixa tiver sido registrada por engano.</p>'
+   '<div class="table-responsive"><table class="table table-sm align-middle">'
+   '<thead><tr><th>Motorista</th><th>Placa</th><th>Data</th><th>Total</th><th>Ação</th></tr></thead>'
+   '<tbody>'+''.join(linhas_reabrir)+'</tbody></table></div></div></div></div>'
+  )
+  if '</main>' in rendered_html:
+   rendered_html=rendered_html.replace('</main>',painel_reabrir+'</main>',1)
+  elif '</body>' in rendered_html:
+   rendered_html=rendered_html.replace('</body>',painel_reabrir+'</body>',1)
+  else:
+   rendered_html+=painel_reabrir
  # Coerência visual: se a competência atual já foi paga, o botão de lembrete
  # da tabela principal deixa de ser acionável. A proteção real continua no backend.
  pagos_semana=BillingAudit.query.filter(
