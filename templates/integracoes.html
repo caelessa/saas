@@ -17,8 +17,8 @@
         <button class="btn-secondary" type="submit">Desconectar do Frota Fácil</button>
       </form>
     {% elif meta_embedded_ready %}
-      <a class="btn" href="{{ url_for('iniciar_whatsapp_embedded_signup') }}">Conectar meu WhatsApp</a>
-      <p class="muted">Você será direcionado ao fluxo seguro da Meta e voltará automaticamente ao Frota Fácil após a autorização.</p>
+      <button class="btn" type="button" id="meta-connect-button">Conectar meu WhatsApp</button>
+      <p class="muted" id="meta-connect-status">Você será direcionado ao fluxo seguro da Meta para escolher/criar a conta e o número.</p>
     {% else %}
       <div class="notice-warning">
         <strong>Conexão simplificada preparada.</strong>
@@ -159,6 +159,7 @@
   <div class="section-heading"><div><h2>Fila de automações</h2><p class="muted">Em produção, o endpoint protegido pode ser chamado por um Cron Job. O botão abaixo serve para testes.</p></div><form method="post" action="{{url_for('processar_mensagens_manual')}}"><button class="btn-secondary" type="submit">Processar automações agora</button></form></div>
 </section>
 
+
 <section class="card" style="margin-top:20px">
   <div class="section-heading">
     <div>
@@ -207,5 +208,80 @@
   </table></div>
   {% else %}<p>Nenhuma mensagem registrada ainda.</p>{% endif %}
 </section>
+
+
+{% if meta_embedded_ready %}
+<script>
+(function(){
+  let signupInfo = {};
+  const statusEl = document.getElementById('meta-connect-status');
+
+  window.fbAsyncInit = function() {
+    FB.init({
+      appId: '{{ meta_app_id|e }}',
+      autoLogAppEvents: true,
+      xfbml: true,
+      version: '{{ meta_graph_version|e }}'
+    });
+  };
+
+  window.addEventListener('message', function(event) {
+    if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
+    let data = event.data;
+    try {
+      if (typeof data === 'string') data = JSON.parse(data);
+    } catch(e) {
+      return;
+    }
+    if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.event === 'FINISH') {
+      signupInfo = data.data || {};
+    }
+  });
+
+  const btn = document.getElementById('meta-connect-button');
+  if (btn) {
+    btn.addEventListener('click', function(){
+      if (statusEl) statusEl.textContent = 'Abrindo a Meta…';
+
+      FB.login(function(response){
+        if (!response.authResponse || !response.authResponse.code) {
+          if (statusEl) statusEl.textContent = 'Conexão cancelada ou não autorizada.';
+          return;
+        }
+
+        if (statusEl) statusEl.textContent = 'Concluindo conexão com segurança…';
+
+        fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            code: response.authResponse.code,
+            waba_id: signupInfo.waba_id || '',
+            phone_number_id: signupInfo.phone_number_id || '',
+            redirect_uri: window.location.origin + window.location.pathname
+          })
+        })
+        .then(r => r.json().then(j => ({ok:r.ok, data:j})))
+        .then(x => {
+          if (!x.ok) throw new Error(x.data.error || 'Falha ao concluir conexão.');
+          if (statusEl) statusEl.textContent = 'WhatsApp conectado. Atualizando…';
+          window.location.reload();
+        })
+        .catch(err => {
+          if (statusEl) statusEl.textContent = err.message;
+        });
+
+      }, {
+        config_id: '{{ meta_config_id|e }}',
+        response_type: 'code',
+        override_default_response_type: true,
+        extras: {setup:{}, featureType:'', sessionInfoVersion:'3'}
+      });
+    });
+  }
+})();
+</script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
+{% endif %}
 
 {% endblock %}
