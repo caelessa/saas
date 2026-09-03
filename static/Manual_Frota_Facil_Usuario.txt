@@ -275,6 +275,46 @@ O que o proprietário acompanha
                                       cadastrados.
   -----------------------------------------------------------------------
 
+Criar um modelo de contrato
+
+  -----------------------------------------------------------------------
+  Formato recomendado: Prepare um contrato preenchido em DOCX, usando
+  dados reais ou de exemplo. Um documento preenchido ajuda o Frota Fácil
+  a reconhecer nomes, documentos, veículo, valores e datas e
+  substituí-los pelos marcadores automáticos corretos.
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+
+1. No campo Buscar função... do menu lateral, digite modelo de contrato
+e abra Modelos de contrato.
+
+2. Clique em Novo modelo e informe nome, descrição, tipo de veículo e se
+há limite de KM.
+
+3. Preencha os dados da gestora e da empresa parceira quando forem
+aplicáveis.
+
+4. Envie o contrato preenchido em DOCX e clique em Analisar e preparar
+contrato.
+
+5. Revise o texto preparado e os marcadores inseridos, como
+{{motorista_nome}}, {{veiculo_placa}}, {{valor_locacao}} e
+{{data_inicio_formatada}}.
+
+6. Remova ou corrija qualquer dado pessoal que tenha permanecido fixo no
+texto.
+
+7. Salve o modelo, confirme que ele está ativo e defina-o como padrão se
+desejar.
+
+8. Gere um contrato de teste e confira todo o documento antes de enviar
+para assinatura.
+
+Os marcadores precisam permanecer exatamente entre chaves duplas. Ao
+editar um modelo existente, o sistema salva uma nova versão; contratos
+gerados anteriormente não são alterados.
+
 Fluxo recomendado
 
 1. Abra Contratos.
@@ -422,7 +462,10 @@ Fotos guiadas - 4 lados + painel
 7. Revise e envie.
 
 As fotos devem ser capturadas na hora e podem ser refeitas antes de
-avançar. Após o envio completo, a vistoria e os pedidos anteriores ainda
+avançar. Nas fotos laterais, vire o celular na horizontal e enquadre o
+carro inteiro, com as duas rodas visíveis. Fotos laterais feitas com o
+celular na vertical são recusadas antes de serem salvas. Após o envio
+completo, a vistoria e os pedidos anteriores ainda
 abertos do mesmo contrato são encerrados automaticamente.
 
 Análise assistida por IA

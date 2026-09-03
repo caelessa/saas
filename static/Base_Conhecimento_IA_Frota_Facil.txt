@@ -82,6 +82,15 @@ Passos: 1) Criar contrato. 2) Selecionar motorista e veículo. 3) Preencher valo
 Status: Gerado = preparado sem assinatura confirmada. Assinado = assinatura confirmada. Ativo = em operação. Cancelado = encerrado e retirado dos fluxos vigentes quando aplicável.
 Regra: contrato cancelado não deve gerar cobranças ou tarefas atuais.
 
+[MODELOS DE CONTRATO]
+Intenções: criar modelo de contrato, preparar modelo, importar contrato, enviar modelo, marcadores do contrato, contrato preenchido.
+Onde: Modelos de contrato. Para localizar, usar o campo "Buscar função..." e pesquisar por "modelo de contrato".
+Formato recomendado: usar um contrato preenchido em DOCX, com dados reais ou de exemplo. Um documento preenchido facilita o reconhecimento de nomes, documentos, veículo, valores e datas. Não recomendar PDF como formato padrão.
+Passos: 1) Abrir Modelos de contrato. 2) Clicar em Novo modelo. 3) Informar nome, descrição, tipo de veículo e se possui limite de KM. 4) Preencher os dados da gestora e da parceira quando aplicáveis. 5) Enviar o DOCX preenchido. 6) Clicar em Analisar e preparar contrato. 7) Revisar o texto e todos os marcadores. 8) Remover ou corrigir dados pessoais que tenham permanecido fixos. 9) Salvar. 10) Confirmar que o modelo está ativo e definir como padrão se desejado. 11) Gerar e conferir um contrato de teste antes do envio para assinatura.
+Marcadores: devem permanecer exatamente entre chaves duplas. Exemplos: {{motorista_nome}}, {{motorista_cpf}}, {{motorista_endereco}}, {{proprietario_nome}}, {{veiculo_modelo}}, {{veiculo_placa}}, {{veiculo_renavam}}, {{valor_locacao}}, {{valor_locacao_extenso}}, {{caucao}}, {{limite_km}}, {{valor_km_excedente}}, {{data_inicio_formatada}}, {{data_fim_formatada}} e {{data_atual}}.
+Versões: editar um modelo existente salva uma nova versão. Contratos já gerados não são alterados.
+Limite: a preparação automática ajuda a inserir marcadores, mas o usuário deve revisar o conteúdo e gerar um contrato de teste antes do uso real.
+
 [COBRANÇAS]
 Intenções: cobrança semanal, aluguel, excedente, valor total, competência.
 Onde: Cobranças.
@@ -118,7 +127,7 @@ KM incorreta: abrir Conferir KM e comparar valor com foto. Não confirmar leitur
 Intenções: fazer vistoria, quatro fotos, 4 fotos, painel, inspeção veículo.
 Onde: Vistorias. Dias e horários automáticos em Configurações > Automações.
 Passos: 1) Frente. 2) Lateral direita. 3) Traseira. 4) Lateral esquerda. 5) Painel. 6) Digitar KM. 7) Revisar e enviar.
-Regra: fotos capturadas na hora; cada foto pode ser refeita antes de avançar.
+Regra: fotos capturadas na hora; cada foto pode ser refeita antes de avançar. Nas laterais direita e esquerda, o celular deve estar na horizontal e o carro inteiro deve aparecer, incluindo as duas rodas; foto lateral capturada com o celular na vertical é recusada antes de ser salva.
 Conclusão: o envio de todas as evidências obrigatórias conclui automaticamente a vistoria e encerra a pendência. Eventuais pedidos anteriores ainda abertos do mesmo contrato também são encerrados. Não depende de aprovação da locadora.
 Nova solicitação: somente a ação explícita da locadora para solicitar nova vistoria deve gerar outro link e mensagem. A falta de aprovação ou a análise da IA não deve provocar reenvio.
 
