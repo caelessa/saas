@@ -6830,13 +6830,25 @@ def integracoes():
  whatsapp_item=_integration('whatsapp'); signature_item=_integration('signature')
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
- recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.updated_at.desc(),MessageQueue.id.desc()).limit(20).all()
- for fila_recente in recentes:
+ # Mensagens futuras ficam em uma lista própria. Assim uma mensagem que foi
+ # criada com antecedência não desaparece só porque outras 20 mensagens tiveram
+ # atividade depois dela. Quando deixa de ser AGENDADA (enviada, cancelada ou
+ # falha), ela sai desta lista e passa para o histórico recente.
+ agendadas=MessageQueue.query.filter(
+  MessageQueue.tenant_id==tid(),
+  MessageQueue.status=='AGENDADA',
+  MessageQueue.scheduled_at.isnot(None),
+ ).order_by(MessageQueue.scheduled_at.asc(),MessageQueue.id.asc()).all()
+ recentes=MessageQueue.query.filter(
+  MessageQueue.tenant_id==tid(),
+  MessageQueue.status!='AGENDADA',
+ ).order_by(MessageQueue.updated_at.desc(),MessageQueue.id.desc()).limit(20).all()
+ for fila_recente in agendadas+recentes:
   for campo_data in ('created_at','updated_at','sent_at','scheduled_at'):
    valor=getattr(fila_recente,campo_data,None)
    if valor:
     set_committed_value(fila_recente,campo_data,_message_db_time_as_utc_naive(valor))
- return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
+ return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,agendadas=agendadas,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
 @app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
 @login_required
