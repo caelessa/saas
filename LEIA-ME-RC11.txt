@@ -1,0 +1,27 @@
+FROTA FÁCIL — RC11 — MODO DE MANUTENÇÃO GLOBAL
+Data: 03/09/2026
+
+Arquivos para deploy desta melhoria:
+- app.py
+- templates/admin_frota_suporte.html
+- templates/manutencao_sistema.html (novo)
+
+O que muda:
+- Central Administrativa recebe controle do Modo de manutenção.
+- Permite mensagem personalizada e previsão opcional de retorno.
+- Quando ativo, bloqueia locadoras e páginas públicas (portais, vistoria, KM, comprovante etc.).
+- /admin-frota, /health, /webhooks/whatsapp e /static continuam liberados.
+- Jobs operacionais ficam bloqueados durante a manutenção.
+- Envio de vistoria já aberta recebe JSON HTTP 503 com a mensagem de manutenção.
+- Nova tabela global system_setting é criada automaticamente por db.create_all.
+- Não há ALTER TABLE em tabelas existentes.
+
+Uso recomendado:
+1. Entre em /admin-frota/entrar.
+2. Na Central Administrativa, configure a mensagem e a previsão, se desejar.
+3. Clique em Ativar manutenção.
+4. Faça o deploy.
+5. Verifique Saúde do sistema na Central Administrativa.
+6. Clique em Encerrar manutenção.
+
+Observação: o modo reduz o risco de operações durante a atualização, mas não impede eventual indisponibilidade da própria infraestrutura do Render durante a troca de instância.

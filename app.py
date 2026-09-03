@@ -512,6 +512,12 @@ class FrotaAdmin(db.Model):
  ultimo_acesso_em=db.Column(db.DateTime)
  criado_em=db.Column(db.DateTime,default=datetime.utcnow,index=True)
 
+class SystemSetting(db.Model):
+ __tablename__='system_setting'
+ key=db.Column(db.String(80),primary_key=True)
+ value=db.Column(db.Text)
+ updated_at=db.Column(db.DateTime,default=datetime.utcnow,onupdate=datetime.utcnow,index=True)
+
 class SupportTicket(db.Model):
  __tablename__='support_ticket'
  id=db.Column(db.Integer,primary_key=True)
@@ -537,6 +543,61 @@ class SupportTicket(db.Model):
 def load_user(uid):
  return User.query.options(joinedload(User.tenant)).filter_by(id=int(uid)).first()
 def tid(): return current_user.tenant_id
+
+
+MAINTENANCE_SETTING_KEY='platform_maintenance'
+MAINTENANCE_DEFAULT_MESSAGE='Estamos realizando uma atualização no sistema. Tente acessar novamente em alguns minutos.'
+
+def _maintenance_state():
+ state={'enabled':False,'message':MAINTENANCE_DEFAULT_MESSAGE,'expected_return':'','updated_by':'','activated_at':''}
+ try:
+  item=SystemSetting.query.filter_by(key=MAINTENANCE_SETTING_KEY).first()
+  if item and item.value:
+   data=json.loads(item.value)
+   if isinstance(data,dict): state.update(data)
+ except Exception:
+  # O modo de manutenção nunca deve derrubar a aplicação se a própria configuração
+  # estiver temporariamente indisponível durante uma atualização de banco.
+  try: db.session.rollback()
+  except Exception: pass
+ return state
+
+def _maintenance_expected_return_text(value):
+ value=(value or '').strip()
+ if not value: return ''
+ try:
+  dt=datetime.fromisoformat(value)
+  return dt.strftime('%d/%m/%Y às %H:%M')
+ except Exception:
+  return value
+
+def _save_maintenance_state(state):
+ item=SystemSetting.query.filter_by(key=MAINTENANCE_SETTING_KEY).first()
+ if not item:
+  item=SystemSetting(key=MAINTENANCE_SETTING_KEY)
+  db.session.add(item)
+ item.value=json.dumps(state,ensure_ascii=False)
+ item.updated_at=datetime.utcnow()
+ db.session.commit()
+ return state
+
+@app.before_request
+def bloquear_durante_manutencao():
+ # O administrador Frota Fácil precisa continuar acessível para encerrar o modo.
+ # Health check e webhook da Meta permanecem disponíveis; arquivos estáticos são
+ # necessários para as próprias páginas do sistema. Jobs operacionais ficam
+ # propositalmente bloqueados para não enviar links enquanto a plataforma está fechada.
+ path=request.path or '/'
+ if path.startswith('/admin-frota') or path=='/health' or path.startswith('/webhooks/whatsapp') or path.startswith('/static/'):
+  return None
+ state=_maintenance_state()
+ if not state.get('enabled'):
+  return None
+ message=(state.get('message') or MAINTENANCE_DEFAULT_MESSAGE).strip()
+ expected_return=_maintenance_expected_return_text(state.get('expected_return'))
+ if path.startswith('/vistoria/') and path.endswith('/upload'):
+  return {'ok':False,'maintenance':True,'error':message,'expected_return':expected_return},503
+ return render_template('manutencao_sistema.html',message=message,expected_return=expected_return),503
 
 
 def json_safe(value):
@@ -3265,6 +3326,15 @@ def _admin_system_health():
   'detalhe':'Iniciada em '+_as_sao_paulo(APP_STARTED_AT).strftime('%d/%m/%Y %H:%M'),
  })
 
+ maintenance=_maintenance_state()
+ if maintenance.get('enabled'):
+  previsao=_maintenance_expected_return_text(maintenance.get('expected_return'))
+  detalhe='Acesso de usuários e páginas públicas bloqueado; admin, health e webhook continuam disponíveis.'
+  if previsao: detalhe+=' Previsão informada: '+previsao+'.'
+  cards.append({'nome':'Modo de manutenção','icone':'⚙','status':'warning','rotulo':'ATIVO','resumo':'Plataforma temporariamente indisponível para usuários','detalhe':detalhe})
+ else:
+  cards.append({'nome':'Modo de manutenção','icone':'⚙','status':'ok','rotulo':'Desativado','resumo':'Acesso normal','detalhe':'Usuários, motoristas e proprietários podem acessar normalmente.'})
+
  try:
   inicio=time.perf_counter()
   db.session.execute(text('SELECT 1'))
@@ -3368,7 +3438,35 @@ def frota_admin_suporte():
   'RESOLVIDO':SupportTicket.query.filter_by(status='RESOLVIDO').count(),
  }
  health_cards,health_summary,health_status=_admin_system_health()
- return render_template('admin_frota_suporte.html',admin=admin,tickets=tickets,tenants=tenants,todas_locadoras=todas_locadoras,status_filtro=status,prioridade_filtro=prioridade,locadora_filtro=tenant_id,busca=busca,counts=counts,health_cards=health_cards,health_summary=health_summary,health_status=health_status,health_checked_at=datetime.utcnow())
+ return render_template('admin_frota_suporte.html',admin=admin,tickets=tickets,tenants=tenants,todas_locadoras=todas_locadoras,status_filtro=status,prioridade_filtro=prioridade,locadora_filtro=tenant_id,busca=busca,counts=counts,health_cards=health_cards,health_summary=health_summary,health_status=health_status,health_checked_at=datetime.utcnow(),maintenance_state=_maintenance_state())
+
+@app.route('/admin-frota/manutencao',methods=['POST'])
+@frota_admin_required
+def frota_admin_manutencao():
+ admin=_frota_admin_atual()
+ state=_maintenance_state()
+ acao=(request.form.get('acao') or 'salvar').strip().lower()
+ mensagem=(request.form.get('mensagem') or '').strip() or MAINTENANCE_DEFAULT_MESSAGE
+ previsao=(request.form.get('expected_return') or '').strip()
+ if previsao:
+  try:
+   datetime.fromisoformat(previsao)
+  except ValueError:
+   flash('Informe uma previsão de retorno válida.','danger')
+   return redirect(url_for('frota_admin_suporte'))
+ state.update({'message':mensagem,'expected_return':previsao,'updated_by':admin.nome if admin else 'Admin Frota Fácil','updated_at':datetime.utcnow().isoformat()})
+ if acao=='ativar':
+  state['enabled']=True
+  state['activated_at']=datetime.utcnow().isoformat()
+  flash('Modo de manutenção ativado. Usuários e páginas públicas agora recebem o aviso de manutenção.','success')
+ elif acao=='desativar':
+  state['enabled']=False
+  state['disabled_at']=datetime.utcnow().isoformat()
+  flash('Modo de manutenção encerrado. O acesso normal foi restabelecido.','success')
+ else:
+  flash('Mensagem de manutenção salva.','success')
+ _save_maintenance_state(state)
+ return redirect(url_for('frota_admin_suporte'))
 
 @app.route('/admin-frota/suporte/<int:ticket_id>')
 @frota_admin_required
