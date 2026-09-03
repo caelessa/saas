@@ -5530,14 +5530,6 @@ def vistorias():
    reconciliados+=_encerrar_vistorias_anteriores(_concluida)
  if reconciliados:
   db.session.commit()
- # O template legado usa strftime diretamente. Localizamos apenas a cópia em memória
- # para exibição; o banco continua preservando requested_at em UTC.
- from sqlalchemy.orm.attributes import set_committed_value
- for _item in items:
-  if _item.requested_at:
-   _local=_as_tenant_time(_item.requested_at,_item.tenant_id)
-   if _local:
-    set_committed_value(_item,'requested_at',_local.replace(tzinfo=None))
  veiculos=Vehicle.query.filter_by(tenant_id=tid()).order_by(Vehicle.placa).all()
  return render_template('vistorias.html',items=items,veiculos=veiculos)
 
