@@ -2,7 +2,6 @@
 {% block heading %}Integrações{% endblock %}
 {% block subheading %}Conecte os serviços usados por cada locadora sem prender o Frota Fácil a um único fornecedor.{% endblock %}
 {% block content %}
-<div style="margin-bottom:16px"><a class="btn-secondary" href="{{ url_for('configuracoes') }}">⚙ Central de Configurações</a></div>
 <div class="integration-grid">
   <section class="card integration-card">
     <h2>WhatsApp Business Platform</h2>
@@ -18,8 +17,8 @@
         <button class="btn-secondary" type="submit">Desconectar do Frota Fácil</button>
       </form>
     {% elif meta_embedded_ready %}
-      <button class="btn" type="button" id="meta-connect-button">Conectar meu WhatsApp</button>
-      <p class="muted" id="meta-connect-status">Você será direcionado ao fluxo seguro da Meta para escolher/criar a conta e o número.</p>
+      <a class="btn" href="{{ url_for('iniciar_whatsapp_embedded_signup') }}">Conectar meu WhatsApp</a>
+      <p class="muted">Você será direcionado ao fluxo seguro da Meta e voltará automaticamente ao Frota Fácil após a autorização.</p>
     {% else %}
       <div class="notice-warning">
         <strong>Conexão simplificada preparada.</strong>
@@ -54,9 +53,23 @@
         <label>Template manutenção agendada<input name="maintenance_template_name" value="{{ whatsapp_cfg.get('maintenance_template_name','') }}"></label>
         <label>Template lembrete manutenção<input name="maintenance_reminder_template_name" value="{{ whatsapp_cfg.get('maintenance_reminder_template_name','') }}"></label>
         <label>Template alerta troca de óleo<input name="oil_change_template_name" value="{{ whatsapp_cfg.get('oil_change_template_name','') }}" placeholder="alerta_troca_oleo"></label>
-        <label>Template cobrança semanal com comprovante<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="cobranca_semanal_com_comprovante"><small class="muted">Toda cobrança normal deve incluir o link público para envio do comprovante.</small></label>
-        <label>Template cobrança com excesso KM + comprovante<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="cobranca_semanal_excesso_com_comprovante"><small class="muted">Usado quando houver cobrança efetiva de KM excedente; também recebe o link de comprovante.</small></label>
+        <label>Template cobrança semanal<input name="payment_template_name" value="{{ whatsapp_cfg.get('payment_template_name','') }}" placeholder="lembrete_pagamento_semanal"></label>
+        <label>Template cobrança com excesso KM<input name="payment_excess_template_name" value="{{ whatsapp_cfg.get('payment_excess_template_name','') }}" placeholder="lembrete_pagamento_com_excesso"></label>
         <label>Idioma dos templates<input name="template_language" value="{{ whatsapp_cfg.get('template_language','pt_BR') }}"></label>
+        <div class="wide maintenance-box">
+          <h3>Automação operacional semanal</h3>
+          <p class="muted">Por padrão: segunda-feira, das 07h às 20h, repetindo pendências a cada 1 hora. Cobranças param quando recebem baixa; KM para quando a foto/leitura é enviada.</p>
+          <label class="check"><input type="checkbox" name="automation_enabled" value="1" {% if whatsapp_cfg.get('automation_enabled') %}checked{% endif %}> Ativar automações</label>
+          <div class="maintenance-fields">
+            <label>Dia da semana<select name="automation_weekday"><option value="0" {% if whatsapp_cfg.get('automation_weekday',0)|int==0 %}selected{% endif %}>Segunda-feira</option><option value="1" {% if whatsapp_cfg.get('automation_weekday')|int==1 %}selected{% endif %}>Terça-feira</option><option value="2" {% if whatsapp_cfg.get('automation_weekday')|int==2 %}selected{% endif %}>Quarta-feira</option><option value="3" {% if whatsapp_cfg.get('automation_weekday')|int==3 %}selected{% endif %}>Quinta-feira</option><option value="4" {% if whatsapp_cfg.get('automation_weekday')|int==4 %}selected{% endif %}>Sexta-feira</option></select></label>
+            <label>Início (hora)<input type="number" min="0" max="23" name="automation_start_hour" value="{{ whatsapp_cfg.get('automation_start_hour',7) }}"></label>
+            <label>Fim (hora)<input type="number" min="0" max="23" name="automation_end_hour" value="{{ whatsapp_cfg.get('automation_end_hour',20) }}"></label>
+            <label>Repetir a cada (horas)<input type="number" min="1" max="12" name="reminder_interval_hours" value="{{ whatsapp_cfg.get('reminder_interval_hours',1) }}"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="automatic_billing_enabled" value="1" {% if whatsapp_cfg.get('automatic_billing_enabled') %}checked{% endif %}> Cobrança automática enquanto não houver baixa</label>
+          <label class="check"><input type="checkbox" name="automatic_km_enabled" value="1" {% if whatsapp_cfg.get('automatic_km_enabled') %}checked{% endif %}> Solicitação de KM/foto enquanto estiver pendente</label>
+          <label class="check"><input type="checkbox" name="automatic_alerts_enabled" value="1" {% if whatsapp_cfg.get('automatic_alerts_enabled') %}checked{% endif %}> Alertas operacionais automáticos</label>
+        </div>
         <div class="form-actions"><button class="btn" type="submit">Salvar configuração manual</button></div>
       </form>
     </details>
@@ -147,6 +160,34 @@
 </section>
 
 <section class="card" style="margin-top:20px">
+  <div class="section-heading">
+    <div>
+      <h2>Próximas mensagens agendadas</h2>
+      <p class="muted">Mensagens que ainda aguardam a data e o horário programados. Elas permanecem aqui até serem enviadas, canceladas ou apresentarem falha.</p>
+    </div>
+    {% if agendadas %}<span class="badge">{{ agendadas|length }} agendada(s)</span>{% endif %}
+  </div>
+  {% if agendadas %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Agendada para</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for item in agendadas %}
+      <tr>
+        <td><strong>{{ item.scheduled_at|sp_datetime if item.scheduled_at else '-' }}</strong><br><small>Criada em {{ item.created_at|sp_datetime if item.created_at else '-' }}</small></td>
+        <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
+        <td>{{ item.message_type }}</td>
+        <td>{{ item.provider }}</td>
+        <td><span class="badge">{{ status_label(item.status) }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+    <p class="muted">Nenhuma mensagem aguardando envio programado.</p>
+  {% endif %}
+</section>
+
+<section class="card" style="margin-top:20px">
   <h2>Histórico recente de mensagens</h2>
   {% if recentes %}
   <div class="table-wrap"><table>
@@ -166,80 +207,5 @@
   </table></div>
   {% else %}<p>Nenhuma mensagem registrada ainda.</p>{% endif %}
 </section>
-
-
-{% if meta_embedded_ready %}
-<script>
-(function(){
-  let signupInfo = {};
-  const statusEl = document.getElementById('meta-connect-status');
-
-  window.fbAsyncInit = function() {
-    FB.init({
-      appId: '{{ meta_app_id|e }}',
-      autoLogAppEvents: true,
-      xfbml: true,
-      version: '{{ meta_graph_version|e }}'
-    });
-  };
-
-  window.addEventListener('message', function(event) {
-    if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
-    let data = event.data;
-    try {
-      if (typeof data === 'string') data = JSON.parse(data);
-    } catch(e) {
-      return;
-    }
-    if (data && data.type === 'WA_EMBEDDED_SIGNUP' && data.event === 'FINISH') {
-      signupInfo = data.data || {};
-    }
-  });
-
-  const btn = document.getElementById('meta-connect-button');
-  if (btn) {
-    btn.addEventListener('click', function(){
-      if (statusEl) statusEl.textContent = 'Abrindo a Meta…';
-
-      FB.login(function(response){
-        if (!response.authResponse || !response.authResponse.code) {
-          if (statusEl) statusEl.textContent = 'Conexão cancelada ou não autorizada.';
-          return;
-        }
-
-        if (statusEl) statusEl.textContent = 'Concluindo conexão com segurança…';
-
-        fetch('{{ url_for("concluir_whatsapp_embedded_signup") }}', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            code: response.authResponse.code,
-            waba_id: signupInfo.waba_id || '',
-            phone_number_id: signupInfo.phone_number_id || '',
-            redirect_uri: window.location.origin + window.location.pathname
-          })
-        })
-        .then(r => r.json().then(j => ({ok:r.ok, data:j})))
-        .then(x => {
-          if (!x.ok) throw new Error(x.data.error || 'Falha ao concluir conexão.');
-          if (statusEl) statusEl.textContent = 'WhatsApp conectado. Atualizando…';
-          window.location.reload();
-        })
-        .catch(err => {
-          if (statusEl) statusEl.textContent = err.message;
-        });
-
-      }, {
-        config_id: '{{ meta_config_id|e }}',
-        response_type: 'code',
-        override_default_response_type: true,
-        extras: {setup:{}, featureType:'', sessionInfoVersion:'3'}
-      });
-    });
-  }
-})();
-</script>
-<script async defer crossorigin="anonymous" src="https://connect.facebook.net/pt_BR/sdk.js"></script>
-{% endif %}
 
 {% endblock %}
