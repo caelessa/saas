@@ -6830,7 +6830,7 @@ def integracoes():
  whatsapp_item=_integration('whatsapp'); signature_item=_integration('signature')
  whatsapp_cfg=_integration_config(whatsapp_item); signature_cfg=_integration_config(signature_item)
  signature_ready,signature_message=SignatureProviderService.readiness(SignatureProviderService.from_integration(signature_item))
- recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.id.desc()).limit(20).all()
+ recentes=MessageQueue.query.filter_by(tenant_id=tid()).order_by(MessageQueue.updated_at.desc(),MessageQueue.id.desc()).limit(20).all()
  for fila_recente in recentes:
   for campo_data in ('created_at','updated_at','sent_at','scheduled_at'):
    valor=getattr(fila_recente,campo_data,None)
