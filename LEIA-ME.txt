@@ -1,3 +1,35 @@
+FROTA FÁCIL - RC 9 - GUIA E VALIDAÇÃO DAS FOTOS LATERAIS
+
+Alterações desta versão:
+- A orientação horizontal passa a ser exigida somente nas fotos de lateral direita e lateral esquerda.
+- Frente, traseira e painel continuam aceitando o enquadramento normal, sem bloqueio por orientação.
+- Antes da captura lateral, a tela destaca a instrução para virar o celular na horizontal e mostrar o carro inteiro com as duas rodas.
+- A câmera exibe uma moldura-guia nas etapas laterais para ajudar no enquadramento do veículo completo.
+- Se o motorista tentar tirar uma lateral com o celular na vertical, a foto é recusada antes de ser salva e a página orienta a refazer.
+- Após uma lateral válida, a página pede uma conferência visual para confirmar que o carro inteiro e as duas rodas estão visíveis.
+- Não há alteração de banco nem de app.py nesta RC.
+
+Arquivo necessário para a melhoria funcional:
+- templates/vistoria_publica.html
+
+Arquivos de ajuda/documentação atualizados no pacote completo:
+- templates/manual_usuario.html
+- static/Base_Conhecimento_IA_Frota_Facil.txt
+- static/Manual_Frota_Facil_Usuario.txt
+
+Validação recomendada após o deploy:
+1. Abrir uma vistoria no celular e confirmar que frente e traseira não exibem bloqueio de orientação.
+2. Avançar para a lateral direita e confirmar o aviso para girar o celular e a moldura de enquadramento.
+3. Com o aparelho na vertical, tocar em Tirar foto e confirmar que a imagem não é salva.
+4. Girar o aparelho para a horizontal, tirar novamente e confirmar que a foto é aceita.
+5. Repetir na lateral esquerda.
+6. Concluir painel/KM e enviar a vistoria normalmente.
+
+Para deploy mínimo, basta atualizar templates/vistoria_publica.html.
+Para manter também a ajuda interna alinhada, use o pacote completo desta RC.
+
+--- HISTÓRICO ANTERIOR ---
+
 FROTA FÁCIL - RC BASE DE CONHECIMENTO DO ASSISTENTE
 
 Alterações desta versão:
