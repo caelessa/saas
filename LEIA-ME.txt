@@ -1,119 +1,15 @@
-FROTA FÁCIL - RC 9 - GUIA E VALIDAÇÃO DAS FOTOS LATERAIS
+FROTA FÁCIL — RC10 — TEMPLATES CONFIGURÁVEIS DOS PORTAIS
 
-Alterações desta versão:
-- A orientação horizontal passa a ser exigida somente nas fotos de lateral direita e lateral esquerda.
-- Frente, traseira e painel continuam aceitando o enquadramento normal, sem bloqueio por orientação.
-- Antes da captura lateral, a tela destaca a instrução para virar o celular na horizontal e mostrar o carro inteiro com as duas rodas.
-- A câmera exibe uma moldura-guia nas etapas laterais para ajudar no enquadramento do veículo completo.
-- Se o motorista tentar tirar uma lateral com o celular na vertical, a foto é recusada antes de ser salva e a página orienta a refazer.
-- Após uma lateral válida, a página pede uma conferência visual para confirmar que o carro inteiro e as duas rodas estão visíveis.
-- Não há alteração de banco nem de app.py nesta RC.
+Alteração:
+- Permite informar por locadora o nome do template Meta usado no Portal do Proprietário.
+- Permite informar por locadora o nome do template Meta usado no Portal do Motorista.
+- Campos disponíveis em Configurações > Automações.
+- Valores padrão preservados:
+  * acesso_portal_proprietario
+  * acesso_portal_motorista
+- Os envios manuais e automáticos usam o nome salvo na configuração do tenant.
+- Sem alteração/migração de banco.
 
-Arquivo necessário para a melhoria funcional:
-- templates/vistoria_publica.html
-
-Arquivos de ajuda/documentação atualizados no pacote completo:
-- templates/manual_usuario.html
-- static/Base_Conhecimento_IA_Frota_Facil.txt
-- static/Manual_Frota_Facil_Usuario.txt
-
-Validação recomendada após o deploy:
-1. Abrir uma vistoria no celular e confirmar que frente e traseira não exibem bloqueio de orientação.
-2. Avançar para a lateral direita e confirmar o aviso para girar o celular e a moldura de enquadramento.
-3. Com o aparelho na vertical, tocar em Tirar foto e confirmar que a imagem não é salva.
-4. Girar o aparelho para a horizontal, tirar novamente e confirmar que a foto é aceita.
-5. Repetir na lateral esquerda.
-6. Concluir painel/KM e enviar a vistoria normalmente.
-
-Para deploy mínimo, basta atualizar templates/vistoria_publica.html.
-Para manter também a ajuda interna alinhada, use o pacote completo desta RC.
-
---- HISTÓRICO ANTERIOR ---
-
-FROTA FÁCIL - RC BASE DE CONHECIMENTO DO ASSISTENTE
-
-Alterações desta versão:
-- A página administrativa Vistorias da locadora passa a ter colunas separadas para "Solicitada em" e "Recebida em", com data e hora convertidas para o fuso da locadora.
-- Enquanto a vistoria estiver pendente, a coluna de recebimento informa "Ainda não recebida".
-- O Portal do Motorista passa a exibir, em cada manutenção, serviço, modelo e placa do veículo, data e hora agendadas e oficina/local.
-- Para manutenções já concluídas sem próximo agendamento, o portal exibe a data em que o serviço foi realizado.
-- Corrige o marcador {{data_atual}} nos modelos de contrato, preenchendo automaticamente a data corrente da locadora no formato DD/MM/AAAA.
-- Contratos ainda em Rascunho ou Gerado que ficaram com {{data_atual}} visível são corrigidos ao abrir os detalhes; o PDF não assinado é regenerado sem alterar contratos assinados ou enviados à Clicksign.
-- Corrige o cálculo de KM excedente quando a leitura é enviada pelo link da vistoria: a leitura agora fica vinculada ao contrato vigente e não é combinada com KM deixada por motorista ou contrato anterior.
-- A vistoria passa a substituir também uma solicitação de KM que esteja aguardando conferência, usando a foto do painel e a KM da própria vistoria.
-- A foto/KM mais recente substitui outra leitura do mesmo contrato na mesma semana; reenvios e conferências atualizam essa única leitura, evitando que vistoria e KM anterior do mesmo período sejam usadas juntas na cobrança.
-- Corrige a exibição de "Reabrir cobrança": com o processamento habilitado, a própria linha paga troca "Pago nesta semana" pelo botão de reabertura; com o processamento desabilitado, a ação desaparece.
-- Adiciona, por locadora, a opção "Processar cobranças no Frota Fácil" em Configurações > Automações, ativada por padrão para preservar o comportamento atual.
-- Quando desativada, bloqueia novas cobranças automáticas e manuais, baixas, reaberturas, links de comprovante e mensagens pendentes, sem apagar o histórico existente.
-- Oculta valores, pendências e a área de pagamentos do Portal do Motorista para locadoras que usam um sistema de cobrança externo.
-- Corrige o Portal do Motorista para exibir manutenções somente dos veículos vinculados aos contratos atuais do próprio motorista; contratos cancelados ou encerrados não fazem mais suas manutenções aparecerem no portal.
-- Corrige duplicidade de WhatsApp ao agendar manutenção: quando o fluxo dedicado está ativo, envia a confirmação imediata e mantém apenas o lembrete agendado para um dia antes, sem disparar também o alerta automático genérico.
-- Portal do Motorista redesenhado com prioridade para uso no celular.
-- Pendências aparecem primeiro, com botões grandes para resolver pagamento, KM ou vistoria.
-- Navegação inferior fixa dá acesso rápido a Início, Pendências, Pagamentos e Documentos.
-- Contratos, manutenções, quilometragens e vistorias ficam agrupados em seções expansíveis.
-- Login e ativação foram adaptados para teclado, preenchimento automático e área segura do celular.
-- Identidade visual da locadora é preservada nas três telas públicas do portal.
-- Assistente passa a priorizar static/Base_Conhecimento_IA_Frota_Facil.txt.
-- Manual em texto é usado apenas como fonte complementar relevante à pergunta.
-- Seleção local de trechos reduz o volume enviado à API e melhora a precisão.
-- Respostas são normalizadas para remover Markdown bruto e sequências literais de quebra de linha.
-- Tela do assistente não exibe mais os caracteres literais \\n\\n.
-- Erros da API registram status e código sem expor chaves ou conteúdo sensível.
-- Manual PDF/DOCX atualizado em 02/09/2026.
-- Manual online inclui o passo a passo do acesso ao Portal do Proprietário.
-
-Arquivos novos em static/:
-- Base_Conhecimento_IA_Frota_Facil.txt
-- Manual_Frota_Facil_Usuario.txt
-- portal_motorista.css
-
-Arquivos novos/atualizados em templates/:
-- portal_motorista_login.html
-- portal_motorista_ativar.html
-- portal_motorista.html
-
-Arquivos atualizados em static/:
-- Manual_Frota_Facil_Usuario.pdf
-- Manual_Frota_Facil_Usuario.docx
-
-Configuração:
-- OPENAI_API_KEY obrigatória.
-- FROTA_FACIL_HELP_MODEL opcional; padrão gpt-5.6-luna.
-
-Validação recomendada após o deploy:
-1. Enviar uma vistoria com foto do painel e KM para um veículo que possua leitura antiga de outro contrato.
-2. Confirmar que a cobrança usa somente a base e as leituras do contrato vigente.
-3. Se houver solicitação de KM aguardando conferência, confirmar que ela passa a mostrar a foto e a KM da vistoria, sem criar duas leituras ao aprovar.
-4. Em uma locadora de teste, desativar "Processar cobranças no Frota Fácil" e salvar.
-5. Confirmar que cobranças automáticas e manuais não são criadas e que mensagens de cobrança pendentes são canceladas.
-6. Entrar no Portal do Motorista e confirmar que valores, pendências e a área de pagamentos não aparecem.
-7. Reativar o processamento e confirmar que o fluxo volta a funcionar sem perda do histórico anterior.
-8. Entrar no Portal do Motorista que possua um contrato cancelado ou encerrado e confirmar que as manutenções daquele veículo não aparecem.
-9. Confirmar que uma manutenção de veículo vinculado a contrato Assinado ou Ativo continua aparecendo normalmente.
-10. Agendar manutenção com notificação ao motorista e lembrete de um dia antes.
-11. Confirmar uma única mensagem imediata do tipo manutencao_agendada e uma mensagem lembrete_manutencao com status Agendada.
-12. Confirmar que não foi gerada mensagem alerta_automatico para a mesma manutenção.
-13. Abrir o link do Portal do Motorista pelo WhatsApp em um celular.
-14. Ativar o acesso e entrar usando o teclado do telefone.
-15. Confirmar que as pendências corretas aparecem apenas para aquele motorista e aquela locadora.
-16. Abrir KM e vistoria pelo botão "Resolver agora".
-17. Visualizar e baixar o CRLV-e autorizado.
-18. Perguntar "Como acessar o Portal do Proprietário?" ao assistente.
-19. Perguntar "Como faço uma vistoria de 4 fotos?" e confirmar ausência de ** e de \\n\\n visíveis.
-
-Histórico acumulado:
-
-FROTA FÁCIL - RC AJUDA, MANUAL E SUPORTE v2
-
-Alterações desta versão:
-- Terminologia de interface: "tenant" foi substituído por "locadora" onde era exibido ao usuário.
-- Manual do Usuário atualizado e completo disponível para download em PDF e DOCX.
-- Botões de download na Central de Ajuda e dentro do manual online.
-- Mantém a Central de Suporte e todas as correções acumuladas da base anterior.
-
-Arquivos novos em static/:
-- Manual_Frota_Facil_Usuario.pdf
-- Manual_Frota_Facil_Usuario.docx
-
-Atualizar o pacote completo no deploy.
+Deploy mínimo:
+- app.py
+- templates/configuracoes_automacoes.html

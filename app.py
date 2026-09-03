@@ -3600,7 +3600,9 @@ def configuracoes_automacoes():
    'inspection_start_hour':inspection_start,'inspection_end_hour':inspection_end,
    'inspection_reminder_interval_hours':inspection_interval,'inspection_expiry_hours':inspection_expiry,
    'owner_portal_auto_invite_enabled':request.form.get('owner_portal_auto_invite_enabled')=='1',
-    'driver_portal_auto_invite_enabled':request.form.get('driver_portal_auto_invite_enabled')=='1',
+   'owner_portal_template_name':(request.form.get('owner_portal_template_name') or cfg.get('owner_portal_template_name') or 'acesso_portal_proprietario').strip() or 'acesso_portal_proprietario',
+   'driver_portal_auto_invite_enabled':request.form.get('driver_portal_auto_invite_enabled')=='1',
+   'driver_portal_template_name':(request.form.get('driver_portal_template_name') or cfg.get('driver_portal_template_name') or 'acesso_portal_motorista').strip() or 'acesso_portal_motorista',
    # Mantém as chaves antigas durante a transição para não quebrar outras rotinas/RCs.
    'automatic_km_enabled':km_enabled,'automatic_billing_enabled':billing_enabled,
    'automatic_alerts_enabled':request.form.get('automatic_alerts_enabled')=='1',
