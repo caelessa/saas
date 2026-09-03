@@ -6438,8 +6438,30 @@ def processar_vistorias_automaticas(tenant_id=None):
   ultimo=MessageQueue.query.filter_by(
    tenant_id=c.tenant_id,message_type='vistoria',related_entity='Vistoria',related_entity_id=item.id
   ).order_by(MessageQueue.created_at.desc(),MessageQueue.id.desc()).first()
-  if ultimo and ultimo.created_at and (agora_sao_paulo_naive()-ultimo.created_at)<timedelta(hours=intervalo):
-   continue
+
+  # RC14: a recorrência da vistoria segue slots fixos a partir do horário inicial.
+  # Ex.: início 09h + intervalo 3h => 09h, 12h, 15h, 18h. Antes, o código
+  # media 3 horas exatas desde created_at; se o disparo das 09h fosse criado às
+  # 09:00:20, uma execução do job às 12:00:00 ainda via 2h59m40s e pulava o
+  # lembrete das 12h. O slot evita esse deslocamento progressivo sem duplicar
+  # mensagens dentro da mesma janela.
+  if ultimo and ultimo.created_at:
+   try:
+    inicio_hora=int(cfg.get('inspection_start_hour',10) or 10)
+   except Exception:
+    inicio_hora=10
+   inicio_hora=max(0,min(23,inicio_hora))
+   tz_tenant=_tenant_zone(c.tenant_id)
+   try:
+    ultimo_local=ultimo.created_at.replace(tzinfo=SAO_PAULO).astimezone(tz_tenant)
+   except Exception:
+    ultimo_local=ultimo.created_at.replace(tzinfo=tz_tenant)
+   minutos_agora=(agora_local.hour*60+agora_local.minute)-(inicio_hora*60)
+   minutos_ultimo=(ultimo_local.hour*60+ultimo_local.minute)-(inicio_hora*60)
+   slot_agora=max(0,minutos_agora//(intervalo*60))
+   slot_ultimo=max(0,minutos_ultimo//(intervalo*60))
+   if ultimo_local.date()==agora_local.date() and slot_ultimo>=slot_agora:
+    continue
 
   ok,_=enviar_vistoria_whatsapp_automatico(item)
   if ok: enviados+=1
