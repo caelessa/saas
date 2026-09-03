@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% block heading %}Vistorias{% endblock %}
+{% block subheading %}Solicite vistorias por fotos guiadas. O fluxo registra os quatro lados do veículo, painel e quilometragem atual.{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Nova vistoria</h2>
+  <form method="post" class="form-grid">
+    <label>Veículo
+      <select name="vehicle_id" required>
+        {% for v in veiculos %}<option value="{{v.id}}">{{v.placa}} — {{v.marca_modelo}}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Formato da vistoria
+      <input type="text" value="Fotos guiadas — 4 lados + painel" disabled>
+      <small class="muted">O motorista fotografa frente, direita, traseira, esquerda e painel, sempre pela câmera e na hora.</small>
+    </label>
+    <label>Validade do link
+      <select name="expira_horas"><option value="24">24 horas</option><option value="48" selected>48 horas</option><option value="72">72 horas</option></select>
+    </label>
+    <button type="submit">Gerar link de vistoria</button>
+  </form>
+  <p class="muted">O veículo precisa estar vinculado a um motorista por contrato vigente. No modo Fotos guiadas não há upload da galeria: a página abre a câmera e conduz o motorista pelas 5 fotos. Ao final, ele informa a KM, que é registrada automaticamente no histórico do veículo.</p>
+</section>
+
+<section class="card">
+  <h2>Solicitações</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada em</th><th>Recebida em</th><th>Evidências</th><th>Painel / KM</th><th>Análise IA</th><th>Ações</th></tr>
+    {% for x in items %}
+    <tr>
+      <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
+      <td>{{x.driver.nome if x.driver else '-'}}</td>
+      <td>{% if (x.tipo_vistoria or '') == 'fotos' %}<span class="alert-status ok">Fotos guiadas</span>{% else %}<span class="alert-status info">Vídeo histórico</span>{% endif %}</td>
+      <td><span class="alert-status {% if x.status=='Aprovada' %}ok{% elif x.status in ['Regravar'] %}danger{% elif x.status=='Recebida' %}warning{% else %}info{% endif %}">{{x.status}}</span></td>
+      <td>{{ x.requested_at|sp_datetime if x.requested_at else '-' }}</td>
+      <td>{% if x.submitted_at %}<strong>{{ x.submitted_at|sp_datetime }}</strong>{% else %}<span class="muted">Ainda não recebida</span>{% endif %}</td>
+      <td>{% if (x.tipo_vistoria or '') == 'fotos' %}
+        <div style="display:flex;flex-wrap:wrap;gap:5px">
+          {% if x.front_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='frente')}}">📷 Frente</a>{% endif %}
+          {% if x.right_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='direita')}}">📷 Direita</a>{% endif %}
+          {% if x.rear_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='traseira')}}">📷 Traseira</a>{% endif %}
+          {% if x.left_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='esquerda')}}">📷 Esquerda</a>{% endif %}
+        </div>
+        {% elif x.video_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_video',id=x.id)}}">▶ Ver vídeo</a>{% else %}-{% endif %}</td>
+      <td>{% if x.painel_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='painel')}}">📷 Ver painel</a><br>{% endif %}{% if x.km_informada is not none %}<b>{{'{:,}'.format(x.km_informada).replace(',','.')}} km</b>{% elif not x.painel_photo_key %}-{% endif %}</td>
+      <td style="min-width:220px">{% if (x.tipo_vistoria or '') != 'fotos' %}<span class="muted">Não aplicável — vídeo histórico</span>
+        {% elif x.damage_analysis_status == 'CONCLUIDA' %}
+        {% if x.damage_analysis_level == 'SEM_INDICIOS' %}<span class="alert-status ok">✓ Sem indícios</span>
+        {% elif x.damage_analysis_level == 'POSSIVEL_AVARIA' %}<span class="alert-status warning">⚠ Possível avaria</span>
+        {% else %}<span class="alert-status danger">🔎 Revisão recomendada</span>{% endif %}
+        {% if x.damage_analysis_summary %}<details style="margin-top:6px"><summary>Ver análise</summary><div class="muted" style="white-space:pre-line;margin-top:6px">{{x.damage_analysis_summary}}</div></details>{% endif %}
+        {% elif x.damage_analysis_status == 'DESATIVADA' %}<span class="muted">IA desativada</span>
+        {% elif x.damage_analysis_status == 'AGUARDANDO_CONFIGURACAO' %}<span class="alert-status warning">Configurar IA</span>
+        {% elif x.damage_analysis_status == 'FALHA' %}<span class="alert-status danger">Falha na análise</span>{% if x.damage_analysis_summary %}<br><small class="muted">{{x.damage_analysis_summary}}</small>{% endif %}
+        {% elif x.status in ['Recebida','Aprovada'] %}<span class="muted">Não analisada</span>{% else %}-{% endif %}</td>
+      <td class="inspection-actions">
+        {% set link=url_for('vistoria_publica',token=x.token,_external=True) %}
+        <button type="button" class="button secondary" onclick="navigator.clipboard.writeText('{{link}}');this.textContent='Link copiado ✓'">Copiar link</button>
+        {% if x.driver and x.driver.telefone %}<a class="button secondary" target="_blank" href="https://wa.me/{{x.driver.telefone|replace('+','')|replace(' ','')|replace('-','')|replace('(','')|replace(')','')}}?text={{('Olá, '+x.driver.nome+'! Faça a vistoria do veículo '+x.vehicle.placa+' pelo link: '+link)|urlencode}}">WhatsApp</a>{% endif %}
+        {% if x.status=='Recebida' %}
+        <form method="post" action="{{url_for('aprovar_vistoria',id=x.id)}}" class="inline"><button>Aprovar</button></form>
+        <details><summary class="button danger">Pedir nova vistoria</summary><form method="post" action="{{url_for('rejeitar_vistoria',id=x.id)}}"><input name="motivo" placeholder="Motivo (ex.: foto da lateral não ficou clara)"><button class="danger">Confirmar</button></form></details>
+        {% endif %}
+        {% if x.status=='Regravar' and x.notes %}<small class="muted">{{x.notes}}</small>{% endif %}
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="10">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

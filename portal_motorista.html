@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+ <meta name="theme-color" content="{{ tenant.cor_primaria if tenant and tenant.cor_primaria else '#ea580c' }}">
+ <title>Portal do Motorista</title>
+ {% if tenant and tenant.favicon_key %}<link rel="icon" href="{{ url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='favicon') }}">{% endif %}
+ <link rel="stylesheet" href="{{ url_for('static',filename='portal_motorista.css') }}">
+ <style>:root{--pm-primary:{{ tenant.cor_primaria if tenant and tenant.cor_primaria else '#ea580c' }};--pm-secondary:{{ tenant.cor_secundaria if tenant and tenant.cor_secundaria else '#0f172a' }};}</style>
+</head>
+<body>
+ <div class="pm-shell">
+  <header class="pm-topbar">
+   <div class="pm-brand">
+    {% if tenant and tenant.logo_key %}<img class="pm-logo" src="{{ url_for('identidade_publica_tenant',tenant_id=tenant.id,tipo='logo') }}" alt="Logo da locadora">{% endif %}
+    <div class="pm-brand-copy"><p class="pm-brand-name">{{ (tenant.nome_fantasia or tenant.nome) if tenant else 'Frota Fácil' }}</p><p class="pm-brand-subtitle">Portal do Motorista</p></div>
+   </div>
+   <a class="pm-logout" href="{{ url_for('portal_motorista_sair') }}">Sair</a>
+  </header>
+
+  <main>
+   <section class="pm-hero" id="inicio"><p class="pm-eyebrow">Olá,</p><h1>{{ driver.nome.split()[0] }}</h1></section>
+   {% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="pm-flash {{ cat }}" role="alert">{{ msg }}</div>{% endfor %}{% endwith %}
+
+   <section class="pm-summary" aria-label="Resumo">
+    <div class="pm-stat"><strong>{{ pendencias|length }}</strong><span>Ações pendentes</span></div>
+    {% if billing_processing_enabled %}<div class="pm-stat"><strong>R$ {{ pendentes|brl }}</strong><span>Em aberto</span></div>
+    <div class="pm-stat"><strong>R$ {{ pagos|brl }}</strong><span>Pagamentos baixados</span></div>{% endif %}
+    <div class="pm-stat"><strong>{{ current_vehicle.placa if current_vehicle else '—' }}</strong><span>Veículo atual</span></div>
+   </section>
+
+   <section class="pm-card" id="pendencias">
+    <div class="pm-card-head"><div><h2>O que preciso fazer</h2><p class="pm-muted">As ações mais importantes aparecem primeiro.</p></div>{% if pendencias %}<span class="pm-badge attention">{{ pendencias|length }} pendente{% if pendencias|length != 1 %}s{% endif %}</span>{% else %}<span class="pm-badge success">Tudo certo</span>{% endif %}</div>
+    {% if pendencias %}<div class="pm-list">{% for p in pendencias %}<article class="pm-item"><div class="pm-item-row"><div><span class="pm-badge attention">{{ p.tipo }}</span><p class="pm-muted">{{ p.texto }}</p></div></div>{% if p.url %}<a class="pm-action" href="{{ p.url }}">Resolver agora</a>{% endif %}</article>{% endfor %}</div>{% else %}<div class="pm-empty">Você não possui nenhuma ação pendente neste momento.</div>{% endif %}
+   </section>
+
+   <section class="pm-card" id="veiculo">
+    <div class="pm-card-head"><h2>Meu veículo</h2></div>
+    {% if current_vehicle %}<div class="pm-vehicle"><div class="pm-vehicle-icon" aria-hidden="true">🚗</div><div><h3>{{ current_vehicle.marca_modelo or 'Veículo' }}</h3><p class="pm-muted">{{ current_vehicle.placa }}</p></div></div>
+    <dl class="pm-kv"><div><dt>Quilometragem</dt><dd>{{ '{:,}'.format(current_vehicle.km_atual or 0).replace(',','.') }} km</dd></div><div><dt>Status</dt><dd>{{ current_vehicle.status or '—' }}</dd></div><div><dt>Cor</dt><dd>{{ current_vehicle.cor or '—' }}</dd></div><div><dt>Ano/modelo</dt><dd>{{ current_vehicle.ano_fabricacao or '—' }}/{{ current_vehicle.ano_modelo or '—' }}</dd></div></dl>
+    {% else %}<div class="pm-empty">Nenhum veículo está vinculado ao seu contrato atual.</div>{% endif %}
+   </section>
+
+   {% if billing_processing_enabled %}<section class="pm-card" id="financeiro">
+    <div class="pm-card-head"><div><h2>Pagamentos</h2><p class="pm-muted">Consulte cobranças atuais e anteriores.</p></div></div>
+    {% if audits %}{% for a in audits %}{% set ctx=audit_context.get(a.id,{}) %}<details class="pm-details" {% if loop.first %}open{% endif %}><summary><span>{{ a.billing_date.strftime('%d/%m/%Y') if a.billing_date else 'Cobrança' }} · R$ {{ a.total_amount|brl }}</span><span class="pm-badge {% if (a.payment_status or '')|upper == 'PAGO' %}success{% elif (a.payment_status or '')|upper == 'COMPROVANTE_RECEBIDO' %}{% else %}attention{% endif %}">{{ (a.payment_status or 'Pendente').replace('_',' ') }}</span></summary><div class="pm-detail-body"><p class="pm-muted">{{ ctx.get('placa','') }}{% if ctx.get('veiculo') %} · {{ ctx.get('veiculo') }}{% endif %}{% if ctx.get('contrato') %}<br>{{ ctx.get('contrato') }}{% endif %}</p><dl class="pm-kv"><div><dt>Locação</dt><dd>R$ {{ a.base_amount|brl }}</dd></div><div><dt>Excesso de KM</dt><dd>R$ {{ a.excess_amount|brl }}</dd></div></dl>{% if (a.payment_status or '')|upper not in ['PAGO','COMPROVANTE_RECEBIDO'] and a.receipt_token %}<a class="pm-action" href="{{ url_for('enviar_comprovante_pagamento',token=a.receipt_token) }}">Enviar comprovante</a>{% endif %}</div></details>{% endfor %}{% else %}<div class="pm-empty">Nenhuma cobrança encontrada.</div>{% endif %}
+   </section>{% endif %}
+
+   <section class="pm-card" id="documentos">
+    <div class="pm-card-head"><div><h2>Documentos</h2><p class="pm-muted">Documentos autorizados do veículo atual.</p></div></div>
+    {% if crlv_by_vehicle %}{% for vehicle_id,doc in crlv_by_vehicle.items() %}<article class="pm-item"><h3>CRLV-e</h3><p class="pm-muted">{{ doc.nome_original or 'Documento do veículo' }}</p><a class="pm-action" href="{{ url_for('portal_motorista_visualizar_crlv',document_id=doc.id) }}" target="_blank" rel="noopener">Visualizar documento</a><a class="pm-action secondary" href="{{ url_for('portal_motorista_baixar_crlv',document_id=doc.id) }}">Baixar arquivo</a></article>{% endfor %}{% else %}<div class="pm-empty">Nenhum documento foi disponibilizado para o veículo atual.</div>{% endif %}
+   </section>
+
+   <section class="pm-card" id="historico">
+    <div class="pm-card-head"><div><h2>Mais informações</h2><p class="pm-muted">Contratos, manutenções, KM e vistorias.</p></div></div>
+    <details class="pm-details"><summary>Contratos <span class="pm-badge">{{ contracts|length }}</span></summary><div class="pm-detail-body pm-list">{% for c in contracts %}<article class="pm-item"><div class="pm-item-row"><div><h3>{{ c.numero_contrato or ('Contrato #' ~ c.id) }}</h3><p class="pm-muted">{{ c.vehicle.placa if c.vehicle else '' }}{% if c.data_inicio %} · Início {{ c.data_inicio }}{% endif %}</p></div><span class="pm-badge {% if c.id in active_contract_ids %}success{% endif %}">{{ c.status }}</span></div></article>{% else %}<div class="pm-empty">Nenhum contrato encontrado.</div>{% endfor %}</div></details>
+    <details class="pm-details"><summary>Manutenções <span class="pm-badge">{{ maintenances|length }}</span></summary><div class="pm-detail-body pm-list">{% for m in maintenances %}<article class="pm-item"><div class="pm-item-row"><div class="pm-maintenance-info"><h3>{{ m.tipo or 'Manutenção' }}</h3><p class="pm-muted"><strong>Veículo:</strong> {% if m.vehicle %}{{ m.vehicle.marca_modelo or 'Veículo' }} · {{ m.vehicle.placa }}{% else %}—{% endif %}</p>{% if m.proxima_data %}<p class="pm-muted"><strong>Data e hora:</strong> {{ m.proxima_data|br_date }}{% if m.proxima_hora %} às {{ m.proxima_hora }}{% endif %}</p>{% elif m.data %}<p class="pm-muted"><strong>Realizada em:</strong> {{ m.data|br_date }}</p>{% endif %}{% if m.oficina %}<p class="pm-muted"><strong>Oficina:</strong> {{ m.oficina }}</p>{% endif %}</div><span class="pm-badge">{{ m.status or 'Ativa' }}</span></div></article>{% else %}<div class="pm-empty">Nenhuma manutenção encontrada.</div>{% endfor %}</div></details>
+    <details class="pm-details"><summary>Quilometragens <span class="pm-badge">{{ km_requests|length }}</span></summary><div class="pm-detail-body pm-list">{% for r in km_requests %}<article class="pm-item"><div class="pm-item-row"><div><h3>{{ r.vehicle.placa if r.vehicle else 'Veículo' }}</h3><p class="pm-muted">Solicitada em {{ r.sent_at|sp_datetime }}{% if r.km is not none %}<br>{{ '{:,}'.format(r.km).replace(',','.') }} km{% endif %}</p></div><span class="pm-badge {% if (r.status or '')|lower != 'pendente' %}success{% else %}attention{% endif %}">{{ r.status }}</span></div></article>{% else %}<div class="pm-empty">Nenhum pedido de quilometragem encontrado.</div>{% endfor %}</div></details>
+    <details class="pm-details"><summary>Vistorias <span class="pm-badge">{{ inspections|length }}</span></summary><div class="pm-detail-body pm-list">{% for i in inspections %}<article class="pm-item"><div class="pm-item-row"><div><h3>{{ i.vehicle.placa if i.vehicle else 'Veículo' }}</h3><p class="pm-muted">Solicitada em {{ i.requested_at|sp_datetime }}{% if i.km_informada is not none %}<br>{{ '{:,}'.format(i.km_informada).replace(',','.') }} km{% endif %}</p></div><span class="pm-badge {% if (i.status or '')|lower != 'pendente' %}success{% else %}attention{% endif %}">{{ i.status }}</span></div></article>{% else %}<div class="pm-empty">Nenhuma vistoria encontrada.</div>{% endfor %}</div></details>
+   </section>
+  </main>
+ </div>
+ <nav class="pm-bottom-nav" aria-label="Navegação do portal"><a href="#inicio"><b>⌂</b>Início</a><a href="#pendencias"><b>✓</b>Pendências</a>{% if billing_processing_enabled %}<a href="#financeiro"><b>R$</b>Pagamentos</a>{% endif %}<a href="#documentos"><b>▣</b>Documentos</a></nav>
+</body>
+</html>
