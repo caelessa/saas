@@ -25,14 +25,15 @@
 <section class="card">
   <h2>Solicitações</h2>
   <div class="table-wrap"><table>
-    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada</th><th>Evidências</th><th>Painel / KM</th><th>Análise IA</th><th>Ações</th></tr>
+    <tr><th>Veículo</th><th>Motorista</th><th>Tipo</th><th>Status</th><th>Solicitada em</th><th>Recebida em</th><th>Evidências</th><th>Painel / KM</th><th>Análise IA</th><th>Ações</th></tr>
     {% for x in items %}
     <tr>
       <td><b>{{x.vehicle.placa}}</b><br><small>{{x.vehicle.marca_modelo or ''}}</small></td>
       <td>{{x.driver.nome if x.driver else '-'}}</td>
       <td>{% if (x.tipo_vistoria or '') == 'fotos' %}<span class="alert-status ok">Fotos guiadas</span>{% else %}<span class="alert-status info">Vídeo histórico</span>{% endif %}</td>
       <td><span class="alert-status {% if x.status=='Aprovada' %}ok{% elif x.status in ['Regravar'] %}danger{% elif x.status=='Recebida' %}warning{% else %}info{% endif %}">{{x.status}}</span></td>
-      <td>{{x.requested_at.strftime('%d/%m/%Y %H:%M') if x.requested_at else '-'}}</td>
+      <td>{{ x.requested_at|sp_datetime if x.requested_at else '-' }}</td>
+      <td>{% if x.submitted_at %}<strong>{{ x.submitted_at|sp_datetime }}</strong>{% else %}<span class="muted">Ainda não recebida</span>{% endif %}</td>
       <td>{% if (x.tipo_vistoria or '') == 'fotos' %}
         <div style="display:flex;flex-wrap:wrap;gap:5px">
           {% if x.front_photo_key %}<a class="button secondary" target="_blank" href="{{url_for('vistoria_foto',id=x.id,posicao='frente')}}">📷 Frente</a>{% endif %}
@@ -63,7 +64,7 @@
         {% if x.status=='Regravar' and x.notes %}<small class="muted">{{x.notes}}</small>{% endif %}
       </td>
     </tr>
-    {% else %}<tr><td colspan="9">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="10">Nenhuma vistoria solicitada.</td></tr>{% endfor %}
   </table></div>
 </section>
 {% endblock %}
