@@ -49,7 +49,7 @@ a{accent-color:var(--tenant-primary)}
   ['Contratos','/contratos','contrato locacao assinatura'],
   ['Modelos de contrato','/modelos-contrato','modelo contrato template'],
   ['Documentos','/documentos','documento cnh crlv arquivo'],
-  ['Vistorias','/vistorias','vistoria video fotos semanal'],
+  ['Vistorias','/vistorias','vistoria fotos painel semanal'],
   ['Manutenções','/manutencoes','manutencao revisao oleo oficina preventiva'],
   ['Gerenciar manutenções','/manutencoes/gerenciar','gerenciar manutencao cancelar excluir'],
   ['Comprovantes de manutenção','/manutencoes/comprovantes','comprovante manutencao nota oficina'],
@@ -81,4 +81,45 @@ a{accent-color:var(--tenant-primary)}
  document.addEventListener('click',e=>{if(!document.getElementById('ffNavSearch').contains(e.target))box.classList.remove('open');});
  document.addEventListener('keydown',e=>{if(e.key==='/'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();input.focus();render();}});
 })();
-</script><script src="{{url_for('static',filename='help.js')}}"></script></body></html>
+</script><script src="{{url_for('static',filename='help.js')}}"></script>
+<script>
+// RC20 — adiciona comprovantes opcionais ao formulário existente de conclusão de manutenção.
+(function(){
+ function prepararConclusaoManutencao(){
+  document.querySelectorAll('form[action*="/manutencoes/"][action$="/concluir"]').forEach(function(form){
+   if(form.dataset.ffComprovantesRc20==='1') return;
+   form.dataset.ffComprovantesRc20='1';
+   form.enctype='multipart/form-data';
+
+   var box=document.createElement('div');
+   box.className='ff-maintenance-proof-box';
+   box.style.cssText='margin:14px 0;padding:14px;border:1px solid #dbe3ee;border-radius:10px;background:#f8fafc';
+   box.innerHTML=`
+    <div style="font-weight:700;margin-bottom:5px">🧾 Comprovantes da manutenção <span style="font-weight:400;color:#64748b">(opcional)</span></div>
+    <div style="font-size:13px;color:#64748b;margin-bottom:10px">Se já tiver a documentação, anexe agora. Você também poderá complementar depois em <strong>Comprovantes de manutenção</strong>.</div>
+    <label style="display:block;margin-bottom:8px">Tipo do comprovante
+      <select name="tipo_comprovante_conclusao" style="width:100%;margin-top:4px">
+        <option value="Comprovante de manutenção">Comprovante de manutenção</option>
+        <option value="Nota fiscal">Nota fiscal</option>
+        <option value="Recibo">Recibo</option>
+        <option value="Comprovante de pagamento">Comprovante de pagamento</option>
+        <option value="Orçamento">Orçamento</option>
+        <option value="Nota da oficina">Nota da oficina</option>
+      </select>
+    </label>
+    <label style="display:block">Arquivos
+      <input type="file" name="arquivos" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" style="display:block;width:100%;margin-top:4px">
+    </label>
+    <div style="font-size:12px;color:#64748b;margin-top:6px">PDF, JPG, JPEG, PNG ou WEBP · até 15 MB por arquivo · vários arquivos permitidos.</div>
+   `;
+
+   var submit=form.querySelector('button[type="submit"],input[type="submit"]');
+   if(submit && submit.parentNode) submit.parentNode.insertBefore(box,submit);
+   else form.appendChild(box);
+  });
+ }
+ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',prepararConclusaoManutencao);
+ else prepararConclusaoManutencao();
+})();
+</script>
+</body></html>
