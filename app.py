@@ -129,6 +129,16 @@ def sp_datetime(value,fmt='%d/%m/%Y %H:%M'):
  local=_as_tenant_time(value,None)
  return local.strftime(fmt) if local else '-'
 
+@app.template_filter('message_datetime')
+def message_datetime(value,fmt='%d/%m/%Y %H:%M'):
+ # MessageQueue/MessageEvent legados gravam horário local de São Paulo sem tzinfo.
+ # Converte primeiro esse valor local para UTC e só então aplica o fuso do tenant.
+ if not value:
+  return '-'
+ utc_naive=_message_db_time_as_utc_naive(value)
+ local=_as_tenant_time(utc_naive,None)
+ return local.strftime(fmt) if local else '-'
+
 @app.template_filter('brl')
 def brl(value):
  try:
@@ -6382,13 +6392,35 @@ def processar_vistorias_automaticas(tenant_id=None):
 
   agora_local=datetime.now(_tenant_zone(c.tenant_id))
   integration,cfg=_automation_cfg(c.tenant_id)
-  if not cfg.get('inspection_automation_enabled',False) or not _automation_window_open(cfg,'inspection',agora_local): continue
+  if not cfg.get('inspection_automation_enabled',False): continue
   if (cfg.get('provider') or 'web').lower()!='business': continue
 
-  # Se existe pendente deste contrato/veículo, reutiliza sempre o mesmo token.
+  # RC15: o(s) dia(s) configurado(s) definem apenas quando uma NOVA vistoria
+  # pode ser aberta. Depois que existe uma vistoria Pendente, os lembretes
+  # continuam nos dias seguintes, respeitando somente a janela de horário e
+  # o intervalo da automação, até a conclusão.
   item=Inspection.query.filter_by(
    tenant_id=c.tenant_id,vehicle_id=c.vehicle.id,contract_id=c.id,status='Pendente'
   ).order_by(Inspection.requested_at.desc(),Inspection.id.desc()).first()
+
+  try:
+   inspection_start_hour=max(0,min(23,int(cfg.get('inspection_start_hour',10) or 10)))
+  except Exception:
+   inspection_start_hour=10
+  try:
+   inspection_end_hour=max(0,min(23,int(cfg.get('inspection_end_hour',20) or 20)))
+  except Exception:
+   inspection_end_hour=20
+
+  if item:
+   # Pendência atravessa dias: terça, quarta etc. continuam cobrando dentro
+   # da janela configurada, sem criar nova vistoria e usando o mesmo link.
+   if not (inspection_start_hour<=agora_local.hour<=inspection_end_hour):
+    continue
+  else:
+   # Sem pendência, só abre uma nova vistoria no(s) dia(s) selecionado(s).
+   if not _automation_window_open(cfg,'inspection',agora_local):
+    continue
 
   if not item:
    # Depois que a vistoria foi enviada, não cria outra dentro da mesma semana.

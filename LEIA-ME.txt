@@ -1,15 +1,11 @@
-FROTA FÁCIL — RC10 — TEMPLATES CONFIGURÁVEIS DOS PORTAIS
+FROTA FÁCIL RC17 — CORREÇÃO DE HORÁRIO DAS MENSAGENS
 
-Alteração:
-- Permite informar por locadora o nome do template Meta usado no Portal do Proprietário.
-- Permite informar por locadora o nome do template Meta usado no Portal do Motorista.
-- Campos disponíveis em Configurações > Automações.
-- Valores padrão preservados:
-  * acesso_portal_proprietario
-  * acesso_portal_motorista
-- Os envios manuais e automáticos usam o nome salvo na configuração do tenant.
-- Sem alteração/migração de banco.
+Corrige a exibição dos horários de MessageQueue/MessageEvent em Integrações.
+Esses registros legados usam horário local de São Paulo sem tzinfo; antes a tela os tratava como UTC,
+mostrando aproximadamente 3 horas a menos.
 
-Deploy mínimo:
+Arquivos para deploy:
 - app.py
-- templates/configuracoes_automacoes.html
+- templates/integracoes.html
+
+Sem migração de banco.
