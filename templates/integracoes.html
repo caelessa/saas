@@ -174,7 +174,7 @@
     <tbody>
       {% for item in agendadas %}
       <tr>
-        <td><strong>{{ item.scheduled_at|sp_datetime if item.scheduled_at else '-' }}</strong><br><small>Criada em {{ item.created_at|sp_datetime if item.created_at else '-' }}</small></td>
+        <td><strong>{{ item.scheduled_at|message_datetime if item.scheduled_at else '-' }}</strong><br><small>Criada em {{ item.created_at|message_datetime if item.created_at else '-' }}</small></td>
         <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
         <td>{{ item.message_type }}</td>
         <td>{{ item.provider }}</td>
@@ -197,7 +197,7 @@
     <tbody>
       {% for item in recentes %}
       <tr>
-        <td><strong>{{ item.updated_at|sp_datetime if item.updated_at else (item.created_at|sp_datetime if item.created_at else '-') }}</strong>{% if item.created_at %}<br><small>Criada em {{ item.created_at|sp_datetime }}</small>{% endif %}</td>
+        <td><strong>{{ item.updated_at|message_datetime if item.updated_at else (item.created_at|message_datetime if item.created_at else '-') }}</strong>{% if item.created_at %}<br><small>Criada em {{ item.created_at|message_datetime }}</small>{% endif %}</td>
         <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
         <td>{{ item.message_type }}</td>
         <td>{{ item.provider }}</td>
