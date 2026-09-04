@@ -164,7 +164,7 @@
   <div class="section-heading">
     <div>
       <h2>Próximas mensagens agendadas</h2>
-      <p class="muted">Mensagens que ainda aguardam a data e o horário programados. Elas permanecem aqui até serem enviadas, canceladas ou apresentarem falha.</p>
+      <p class="muted">Mensagens que ainda aguardam envio. A próxima a ser disparada aparece primeiro.</p>
     </div>
     {% if agendadas %}<span class="badge">{{ agendadas|length }} agendada(s)</span>{% endif %}
   </div>
@@ -190,13 +190,14 @@
 
 <section class="card" style="margin-top:20px">
   <h2>Histórico recente de mensagens</h2>
+  <p class="muted">Ordenado pela última atividade: mensagens enviadas, entregues, lidas ou atualizadas mais recentemente aparecem no topo.</p>
   {% if recentes %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Data</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Erro</th></tr></thead>
+    <thead><tr><th>Última atividade</th><th>Destinatário</th><th>Tipo</th><th>Provedor</th><th>Status</th><th>Erro</th></tr></thead>
     <tbody>
       {% for item in recentes %}
       <tr>
-        <td>{{ item.created_at|sp_datetime if item.created_at else '-' }}</td>
+        <td><strong>{{ item.updated_at|sp_datetime if item.updated_at else (item.created_at|sp_datetime if item.created_at else '-') }}</strong>{% if item.created_at %}<br><small>Criada em {{ item.created_at|sp_datetime }}</small>{% endif %}</td>
         <td>{{ item.recipient_name or item.recipient }}<br><small>{{ item.recipient }}</small></td>
         <td>{{ item.message_type }}</td>
         <td>{{ item.provider }}</td>
