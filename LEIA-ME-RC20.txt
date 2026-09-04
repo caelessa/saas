@@ -1,0 +1,22 @@
+FROTA FÁCIL — RC20
+Conclusão de manutenção com comprovantes opcionais
+
+ALTERAÇÕES
+- A tela de conclusão de manutenção passa a aceitar comprovantes no mesmo fluxo.
+- Anexo NÃO é obrigatório.
+- Aceita múltiplos arquivos: PDF, JPG, JPEG, PNG e WEBP.
+- Limite: 15 MB por arquivo.
+- Tipos sugeridos: comprovante de manutenção, nota fiscal, recibo, comprovante de pagamento, orçamento e nota da oficina.
+- Os arquivos ficam vinculados diretamente à manutenção concluída.
+- A área separada "Comprovantes de manutenção" permanece disponível para anexar documentos depois.
+- Em caso de falha no armazenamento, a conclusão é revertida para evitar manutenção concluída sem os anexos selecionados.
+
+ARQUIVOS ALTERADOS
+- app.py
+- templates/base.html
+
+BANCO DE DADOS
+- Nenhuma migração necessária.
+
+DEPLOY RÁPIDO
+Se a RC19 já estiver instalada, substitua apenas app.py e templates/base.html.

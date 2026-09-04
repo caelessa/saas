@@ -5302,6 +5302,30 @@ def concluir_manutencao(id):
 
  oficina=(request.form.get('oficina') or '').strip()
  obs_conclusao=(request.form.get('observacoes_conclusao') or '').strip()
+
+ # RC20: comprovantes opcionais podem ser anexados no mesmo ato da conclusão.
+ # A área separada /manutencoes/comprovantes continua disponível para complementos posteriores.
+ tipo_comprovante=(request.form.get('tipo_comprovante_conclusao') or 'Comprovante de manutenção').strip()[:40]
+ arquivos_conclusao=[f for f in request.files.getlist('arquivos') if f and f.filename]
+ comprovantes_preparados=[]
+ if arquivos_conclusao:
+  permitidas={'.pdf','.jpg','.jpeg','.png','.webp'}
+  try:
+   for f in arquivos_conclusao:
+    nome_original=secure_filename(f.filename)
+    ext=Path(nome_original).suffix.lower()
+    if not nome_original or ext not in permitidas:
+     raise ValueError('Envie somente comprovantes PDF, JPG, JPEG, PNG ou WEBP.')
+    conteudo=f.read()
+    if not conteudo:
+     raise ValueError(f'O arquivo {nome_original} está vazio.')
+    if len(conteudo)>15*1024*1024:
+     raise ValueError(f'O arquivo {nome_original} excede o limite de 15 MB.')
+    comprovantes_preparados.append((nome_original,conteudo,f.mimetype or _mimetype_documento(nome_original)))
+  except ValueError as exc:
+   flash(str(exc),'danger')
+   return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
+
  m.data=data_realizada
  m.km=int(km_realizada) if km_realizada not in (None,'') else None
  m.custo=custo_realizado
@@ -5341,9 +5365,33 @@ def concluir_manutencao(id):
   )
   db.session.add(prox)
 
- db.session.commit()
+ # Salva os comprovantes junto com a conclusão, sem obrigar o usuário a anexar nada.
+ chaves_enviadas=[]
+ try:
+  for nome_original,conteudo,mimetype in comprovantes_preparados:
+   chave=f'{tid()}/manutencoes/{m.id}/documentos/{uuid.uuid4().hex}_{nome_original}'
+   storage.upload(BytesIO(conteudo),chave,mimetype)
+   chaves_enviadas.append(chave)
+   db.session.add(Document(
+    tenant_id=tid(),tipo=tipo_comprovante,entidade='Manutenção',entidade_id=m.id,
+    identificador=identificador_documento(tipo_comprovante,m.id,nome_original),
+    nome_original=nome_original,arquivo=chave,hash_sha256=hashlib.sha256(conteudo).hexdigest(),status='Ativo'
+   ))
+  db.session.commit()
+ except Exception:
+  db.session.rollback()
+  for chave in chaves_enviadas:
+   try: storage.delete(chave)
+   except Exception: pass
+  app.logger.exception('Falha ao concluir manutenção %s com comprovantes',m.id)
+  flash('Não foi possível concluir a manutenção porque houve falha ao armazenar os comprovantes. Tente novamente ou conclua sem anexos e envie depois pela área de Comprovantes de manutenção.','danger')
+  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
+
  recalcular_alertas(tid())
- flash('Manutenção concluída e registrada no histórico do veículo.','success')
+ if comprovantes_preparados:
+  flash(f'Manutenção concluída e {len(comprovantes_preparados)} comprovante(s) anexado(s).','success')
+ else:
+  flash('Manutenção concluída e registrada no histórico do veículo.','success')
  return redirect(url_for('manutencoes') + f'#manutencao-{m.id}')
 
 @app.route('/manutencoes/gerenciar')
