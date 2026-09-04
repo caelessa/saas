@@ -1,0 +1,17 @@
+FROTA FÁCIL — RC21 — BASE DE CONSULTA DA IA ATUALIZADA
+
+Atualização da Base de Conhecimento/Consulta da IA para a conclusão de manutenções.
+
+A IA agora sabe orientar claramente que:
+- comprovantes podem ser anexados no próprio formulário Concluir manutenção;
+- o anexo é opcional;
+- podem ser enviados vários arquivos;
+- formatos aceitos: PDF, JPG, JPEG, PNG e WEBP, até 15 MB por arquivo;
+- o documento fica vinculado à manutenção;
+- a área separada Comprovantes de manutenção continua disponível para anexos posteriores e complementares;
+- manutenção pode ser concluída mesmo quando a nota fiscal/comprovante ainda não chegou.
+
+Arquivo alterado:
+- static/Base_Conhecimento_IA_Frota_Facil.txt
+
+Sem migração de banco.
