@@ -1,0 +1,10 @@
+FROTA FÁCIL RC19 — CORREÇÃO DEFINITIVA DO HORÁRIO DAS MENSAGENS
+
+Correção:
+- remove a dupla conversão de fuso na tela Integrações;
+- MessageQueue/MessageEvent permanecem armazenados como horário local de São Paulo sem tzinfo;
+- o filtro message_datetime faz a conversão apenas uma vez para o fuso do tenant;
+- exemplo: 09:01 não aparece mais incorretamente como 12:01.
+
+Deploy mínimo: app.py
+Sem migração de banco.
