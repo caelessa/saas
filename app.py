@@ -5409,7 +5409,7 @@ def enviar_vistoria_whatsapp_automatico(item):
  """Envia automaticamente o link da vistoria usando o template aprovado da Meta.
 
  Parâmetros do template:
- 1 motorista, 2 locadora, 3 veículo, 4 placa, 5 link da vistoria.
+ 1 motorista, 2 locadora, 3 veículo, 4 placa, 5 link da vistoria, 6 intervalo dos lembretes (horas).
  A criação/regravação da vistoria nunca é desfeita se o WhatsApp falhar.
  """
  if not item or not item.driver or not item.vehicle:
@@ -5431,16 +5431,19 @@ def enviar_vistoria_whatsapp_automatico(item):
   or (((tenant.nome if tenant else '') or '').strip())
   or 'Locadora'
  )
+ intervalo_vistoria=_reminder_interval(cfg,'inspection')
  template_parameters=[
   item.driver.nome or '',
   nome_locadora,
   item.vehicle.marca_modelo or '',
   item.vehicle.placa or '',
   link,
+  str(intervalo_vistoria),
  ]
  mensagem=(f'Olá, {item.driver.nome}. A locadora {nome_locadora} solicita uma vistoria do veículo '
            f'{item.vehicle.marca_modelo}, placa {item.vehicle.placa}. '
-           f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela.')
+           f'Para realizar a vistoria, acesse este link: {link} e siga as instruções exibidas na tela. '
+           f'Enquanto a vistoria não for finalizada, o lembrete será reenviado a cada {intervalo_vistoria} horas.')
  fila=MessageQueue(
   tenant_id=item.tenant_id,channel='whatsapp',provider='whatsapp_business',recipient=telefone,
   recipient_name=item.driver.nome,message_type='vistoria',body=mensagem,template_name=template_name,
@@ -6897,11 +6900,9 @@ def integracoes():
   MessageQueue.tenant_id==tid(),
   MessageQueue.status!='AGENDADA',
  ).order_by(MessageQueue.updated_at.desc(),MessageQueue.id.desc()).limit(20).all()
- for fila_recente in agendadas+recentes:
-  for campo_data in ('created_at','updated_at','sent_at','scheduled_at'):
-   valor=getattr(fila_recente,campo_data,None)
-   if valor:
-    set_committed_value(fila_recente,campo_data,_message_db_time_as_utc_naive(valor))
+ # RC19: MessageQueue já grava horários locais de São Paulo sem tzinfo.
+ # Não pré-converter aqui: o filtro message_datetime faz a conversão exatamente uma vez.
+ # A pré-conversão introduzida anteriormente fazia 09:01 aparecer como 12:01.
  return render_template('integracoes.html',whatsapp=whatsapp_item,whatsapp_cfg=whatsapp_cfg,signature=signature_item,signature_cfg=signature_cfg,signature_ready=signature_ready,signature_message=signature_message,agendadas=agendadas,recentes=recentes,status_label=whatsapp_status_label,webhook_url=url_for('whatsapp_webhook',_external=True),meta_embedded_ready=bool(META_APP_ID and META_APP_SECRET and META_WHATSAPP_CONFIG_ID),meta_app_id=META_APP_ID,meta_config_id=META_WHATSAPP_CONFIG_ID,meta_graph_version=META_GRAPH_VERSION)
 
 @app.route('/integracoes/whatsapp/embedded-signup/concluir',methods=['POST'])
