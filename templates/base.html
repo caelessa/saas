@@ -1,125 +1,247 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}Frota Fácil{% endblock %}</title>
-{% if tenant_visual and tenant_visual.favicon_key %}<link rel="icon" href="{{url_for('identidade_publica_tenant',tenant_id=tenant_visual.id,tipo='favicon')}}">{% endif %}
-<link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
-<style>
-:root{
- --tenant-primary:{{ tenant_visual.cor_primaria if tenant_visual and tenant_visual.cor_primaria else '#111827' }};
- --tenant-secondary:{{ tenant_visual.cor_secundaria if tenant_visual and tenant_visual.cor_secundaria else '#475569' }};
-}
-aside{border-right-color:var(--tenant-primary)!important}
-aside .brand{color:var(--tenant-primary)!important}
-button,.button,.help-button{border-color:var(--tenant-primary)}
-button:not(.secondary),.button:not(.secondary),.help-button:not(.secondary){background:var(--tenant-primary)!important;color:#fff!important}
-a{accent-color:var(--tenant-primary)}
-.tenant-brand-wrap{display:flex;align-items:center;gap:10px;margin-bottom:2px}
-.tenant-brand-logo{width:42px;height:42px;object-fit:contain;border-radius:8px;background:#fff;flex:0 0 auto}
-.tenant-platform{margin-top:7px;display:flex;align-items:center;gap:7px}.tenant-platform-label{font-size:10px;opacity:.62;white-space:nowrap}.tenant-platform-logo{width:98px;height:34px;object-fit:contain;border-radius:6px;background:#fff;padding:2px 5px;box-sizing:border-box}
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}{{ current_user.tenant.nome_fantasia or current_user.tenant.nome or 'Frota Fácil' }}{% endblock %}</title>
+  {% if current_user.tenant.favicon_key %}
+  <link rel="icon" href="{{ url_for('arquivo_identidade_locadora',tipo='favicon') }}">
+  {% endif %}
+  <link rel="stylesheet" href="{{ url_for('static',filename='style.css') }}">
+  <style>
+    :root{
+      --tenant-primary:{{ current_user.tenant.cor_primaria or '#173B57' }};
+      --tenant-secondary:{{ current_user.tenant.cor_secundaria or '#24638F' }};
+    }
 
-.ff-nav-search{position:relative;margin:9px 0 10px}.ff-nav-search input{width:100%;box-sizing:border-box;padding:10px 12px 10px 34px;border:1px solid rgba(255,255,255,.2);border-radius:9px;background:rgba(255,255,255,.10);color:#fff;outline:none;font-size:14px}.ff-nav-search input::placeholder{color:rgba(255,255,255,.72)}.ff-nav-search input:focus{background:#fff;color:#111827;border-color:#93c5fd}.ff-nav-search input:focus::placeholder{color:#64748b}.ff-search-icon{position:absolute;left:11px;top:10px;font-size:14px;pointer-events:none}.ff-search-results{display:none;position:absolute;z-index:1000;left:0;right:0;top:44px;background:#fff;border:1px solid #dbe3ee;border-radius:10px;box-shadow:0 14px 34px rgba(15,23,42,.24);max-height:320px;overflow:auto;padding:6px}.ff-search-results.open{display:block}.ff-search-item{display:block;padding:9px 10px;border-radius:7px;text-decoration:none!important;color:#0f172a!important;font-size:14px;line-height:1.25}.ff-search-item:hover,.ff-search-item.active{background:#eff6ff;color:#1d4ed8!important}.ff-search-item small{display:block;color:#64748b;margin-top:3px;font-size:12px}.ff-search-empty{padding:11px;color:#64748b;font-size:13px}
-</style></head><body><div class="app"><aside><div class="tenant-brand-wrap">
-{% if tenant_visual and tenant_visual.logo_key %}
-<img class="tenant-brand-logo" src="{{url_for('identidade_publica_tenant',tenant_id=tenant_visual.id,tipo='logo')}}" alt="Logo">
-{% endif %}
-<div>
-<div class="brand">{{ tenant_visual.nome_fantasia if tenant_visual and tenant_visual.nome_fantasia else (tenant_visual.nome if tenant_visual else 'Frota Fácil') }}</div>
-<div class="tag">Gestão inteligente para locadoras</div>
-<div class="tenant-platform"><span class="tenant-platform-label">Tecnologia</span><img class="tenant-platform-logo" src="{{ url_for('static',filename='frota_facil_logo.png') }}" alt="Frota Fácil"></div>
+    /* Cabeçalho da locadora: a marca do cliente fica isolada da marca Frota Fácil. */
+    .ff-tenant-brand{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:14px;
+    }
+    .ff-tenant-logo{
+      width:48px;
+      height:48px;
+      border-radius:12px;
+      object-fit:contain;
+      background:#fff;
+      padding:4px;
+      flex:0 0 auto;
+    }
+    .ff-tenant-logo-placeholder{
+      width:48px;
+      height:48px;
+      border-radius:12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:rgba(255,255,255,.08);
+      font-weight:800;
+      font-size:18px;
+      flex:0 0 auto;
+    }
+    .ff-tenant-name{
+      font-size:22px;
+      line-height:1.1;
+      font-weight:800;
+      color:var(--tenant-primary);
+      overflow-wrap:anywhere;
+    }
+
+    /* Frota Fácil aparece como tecnologia da locadora, não como slogan da locadora. */
+    .ff-tech-card{
+      margin:0 0 14px;
+      padding:11px 12px;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:12px;
+      background:rgba(255,255,255,.045);
+    }
+    .ff-tech-label{
+      display:block;
+      margin-bottom:7px;
+      font-size:10px;
+      line-height:1;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      opacity:.68;
+    }
+    .ff-tech-row{
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .ff-tech-badge{
+      min-width:88px;
+      padding:7px 10px;
+      border-radius:9px;
+      background:#fff;
+      color:#173B57;
+      text-align:center;
+      font-weight:800;
+      font-size:13px;
+      line-height:1.05;
+      box-shadow:0 2px 8px rgba(0,0,0,.12);
+    }
+    .ff-tech-badge small{
+      display:block;
+      margin-top:2px;
+      color:#24638F;
+      font-size:9px;
+      font-weight:700;
+      letter-spacing:.03em;
+    }
+    .ff-tech-divider{
+      width:1px;
+      height:35px;
+      background:rgba(255,255,255,.22);
+      flex:0 0 auto;
+    }
+    .ff-tech-tagline{
+      font-size:11px;
+      line-height:1.35;
+      opacity:.82;
+    }
+
+    .ff-nav-search{
+      position:relative;
+      margin:0 0 12px;
+    }
+    .ff-nav-search input{
+      width:100%;
+      box-sizing:border-box;
+      padding:10px 12px 10px 34px;
+      border:1px solid rgba(255,255,255,.15);
+      border-radius:10px;
+      background:rgba(255,255,255,.065);
+      color:inherit;
+      outline:none;
+    }
+    .ff-nav-search input::placeholder{color:inherit;opacity:.65}
+    .ff-nav-search span{
+      position:absolute;
+      left:11px;
+      top:50%;
+      transform:translateY(-50%);
+      opacity:.72;
+      pointer-events:none;
+    }
+    .ff-nav-hidden{display:none!important}
+
+    button,.btn,.button{--tenant-color:var(--tenant-primary)}
+
+    @media (max-width: 900px){
+      .ff-tech-tagline{font-size:10px}
+      .ff-tenant-name{font-size:18px}
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="ff-tenant-brand">
+      {% if current_user.tenant.logo_key %}
+        <img class="ff-tenant-logo" src="{{ url_for('arquivo_identidade_locadora',tipo='logo') }}" alt="Logo da locadora">
+      {% else %}
+        <div class="ff-tenant-logo-placeholder">{{ (current_user.tenant.nome_fantasia or current_user.tenant.nome or 'L')[:1]|upper }}</div>
+      {% endif %}
+      <div class="ff-tenant-name">{{ current_user.tenant.nome_fantasia or current_user.tenant.nome or 'Locadora' }}</div>
+    </div>
+
+    <div class="ff-tech-card" aria-label="Tecnologia Frota Fácil">
+      <span class="ff-tech-label">Tecnologia</span>
+      <div class="ff-tech-row">
+        <div class="ff-tech-badge">FF<small>FROTA FÁCIL</small></div>
+        <div class="ff-tech-divider"></div>
+        <div class="ff-tech-tagline">Gestão inteligente<br>para locadoras</div>
+      </div>
+    </div>
+
+    <div class="ff-nav-search">
+      <span>🔎</span>
+      <input id="ffNavSearch" type="search" placeholder="Buscar função..." autocomplete="off" aria-label="Buscar função no menu">
+    </div>
+
+    <nav id="ffMainNav">
+      <a href="{{url_for('dashboard')}}">▦ Dashboard</a>
+      <a href="{{url_for('motoristas')}}">👤 Motoristas</a>
+      <a href="{{url_for('veiculos')}}">🚗 Veículos</a>
+      <a href="{{url_for('quilometragens')}}">📷 Quilometragens</a>
+      <a href="{{url_for('conferencia_quilometragens')}}">✅ Conferir KM</a>
+      <a href="{{url_for('configuracoes_quilometragem')}}">⚙️ Config. KM</a>
+      <a href="{{url_for('configuracoes')}}">⚙️ Configurações</a>
+      <a href="{{url_for('integracoes')}}">🔌 Integrações</a>
+      <a href="{{url_for('investidores')}}">👤 Proprietários</a>
+      <a href="{{url_for('cobrancas')}}">💰 Cobranças</a>
+      <a href="{{url_for('contratos')}}">📄 Contratos</a>
+      <a href="{{url_for('modelos_contrato')}}">🧩 Modelos de contrato</a>
+      <a href="{{url_for('documentos')}}">📎 Documentos</a>
+      <a href="{{url_for('vistorias')}}">🎥 Vistorias</a>
+      <a href="{{url_for('manutencoes')}}">🔧 Manutenções</a>
+      <a href="{{url_for('alertas')}}">🚨 Alertas</a>
+      <a href="{{url_for('administracao_armazenamento')}}">🛡️ Armazenamento</a>
+    </nav>
+
+    <div class="user">
+      {{current_user.nome}}<br>
+      <small>{{current_user.tenant.nome_fantasia or current_user.tenant.nome}}</small>
+      <a href="{{url_for('sair')}}">Sair</a>
+    </div>
+  </aside>
+
+  <main>
+    <header class="app-header">
+      <div>
+        <h1>{% block heading %}{% endblock %}</h1>
+        <p>{% block subheading %}{% endblock %}</p>
+      </div>
+      <div class="help-actions">
+        <button type="button" class="help-button" onclick="openFFHelp()">? Como usar</button>
+        <button type="button" class="help-button secondary" onclick="openFFHelpCenter()">Central de Ajuda</button>
+      </div>
+    </header>
+
+    {% with msgs=get_flashed_messages(with_categories=true) %}
+      {% for cat,msg in msgs %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
 </div>
-</div><div class="ff-nav-search" id="ffNavSearch"><span class="ff-search-icon">🔎</span><input id="ffNavSearchInput" type="search" autocomplete="off" placeholder="Buscar função..." aria-label="Buscar no Frota Fácil"><div id="ffNavSearchResults" class="ff-search-results"></div></div><nav><a href="{{url_for('dashboard')}}">▦ Dashboard</a><a href="{{url_for('motoristas')}}">👤 Motoristas</a><a href="{{url_for('veiculos')}}">🚗 Veículos</a><a href="{{url_for('quilometragens')}}">📷 Quilometragens</a><a href="{{url_for('conferencia_quilometragens')}}">✅ Conferir KM</a><a href="{{url_for('configuracoes_quilometragem')}}">⚙️ Config. KM</a><a href="/configuracoes">⚙️ Configurações</a><a href="{{url_for('integracoes')}}">🔌 Integrações</a><a href="{{url_for('investidores')}}">👤 Proprietários</a><a href="{{url_for('cobrancas')}}">💰 Cobranças</a><a href="/financeiro-locadora">📊 Financeiro da locadora</a><a href="{{url_for('contratos')}}">📄 Contratos</a><a href="{{url_for('modelos_contrato')}}">🧩 Modelos de contrato</a><a href="{{url_for('documentos')}}">📎 Documentos</a><a href="{{url_for('vistorias')}}">🎥 Vistorias</a><a href="{{url_for('manutencoes')}}">🔧 Manutenções</a><a href="{{url_for('gerenciar_manutencoes')}}">🛠️ Gerenciar manutenções</a><a href="{{url_for('comprovantes_manutencao')}}">🧾 Comprovantes de manutenção</a><a href="{{url_for('alertas')}}">🚨 Alertas</a><a href="{{url_for('administracao_armazenamento')}}">🛡️ Armazenamento</a><a href="{{url_for('ajuda')}}">❓ Ajuda e Suporte</a></nav><div class="user">{{current_user.nome}}<br><small>{{current_user.tenant.nome}}</small><a href="{{url_for('sair')}}">Sair</a></div></aside><main><header class="app-header"><div><h1>{% block heading %}{% endblock %}</h1><p>{% block subheading %}{% endblock %}</p></div><div class="help-actions"><button type="button" class="help-button" onclick="openFFHelp()">? Como usar</button><button type="button" class="help-button secondary" onclick="location.href='{{url_for('ajuda')}}'">Central de Ajuda</button></div></header>{% with msgs=get_flashed_messages(with_categories=true) %}{% for cat,msg in msgs %}<div class="flash {{cat}}">{{msg}}</div>{% endfor %}{% endwith %}{% block content %}{% endblock %}</main></div><div id="ffHelpModal" class="help-modal" onclick="if(event.target===this)closeFFHelp()"><div class="help-dialog"><button class="help-close" onclick="closeFFHelp()">×</button><h2 id="ffHelpTitle">Como usar</h2><p id="ffHelpText"></p><button onclick="closeFFHelp()">Entendi</button></div></div><div id="ffHelpCenter" class="help-modal" onclick="if(event.target===this)closeFFHelpCenter()"><div class="help-dialog help-center"><button class="help-close" onclick="closeFFHelpCenter()">×</button><h2>Central de Ajuda</h2><p class="muted">Tutoriais rápidos dos módulos do Frota Fácil.</p><div id="ffHelpCenterList"></div></div></div><script>
-(function(){
- const input=document.getElementById('ffNavSearchInput'), box=document.getElementById('ffNavSearchResults');
- if(!input||!box)return;
- const pages=[
-  ['Dashboard','/','inicio painel resumo indicadores'],
-  ['Motoristas','/motoristas','motorista cadastro condutor'],
-  ['Portal do Motorista','/motoristas/portal-acessos','portal motorista acesso login senha convite whatsapp'],
-  ['Veículos','/veiculos','veiculo carro frota placa cadastro'],
-  ['Quilometragens','/quilometragens','km quilometragem odometro foto painel'],
-  ['Conferir KM','/quilometragens/conferencia','conferir km validar quilometragem'],
-  ['Configurações de KM','/configuracoes/quilometragem','configurar km quilometragem'],
-  ['Configurações','/configuracoes','configuracoes ajustes central'],
-  ['Automações e mensagens','/configuracoes/automacoes','automacao automatico mensagens lembretes portal convite'],
-  ['Dados da locadora','/configuracoes/locadora','locadora empresa dados logo identidade'],
-  ['Integrações','/integracoes','integracao whatsapp meta clicksign'],
-  ['Templates WhatsApp','/integracoes/whatsapp/templates-meta','template whatsapp meta mensagens'],
-  ['Proprietários','/investidores','proprietario investidor dono veiculo'],
-  ['Portal do Proprietário','/investidores','portal proprietario acesso login senha convite'],
-  ['Cobranças','/cobrancas','cobranca pagamento recibo comprovante financeiro'],
-  ['Financeiro da locadora','/financeiro-locadora','financeiro receita despesa resultado'],
-  ['Contratos','/contratos','contrato locacao assinatura'],
-  ['Modelos de contrato','/modelos-contrato','modelo contrato template'],
-  ['Documentos','/documentos','documento cnh crlv arquivo'],
-  ['Vistorias','/vistorias','vistoria fotos painel semanal'],
-  ['Manutenções','/manutencoes','manutencao revisao oleo oficina preventiva'],
-  ['Gerenciar manutenções','/manutencoes/gerenciar','gerenciar manutencao cancelar excluir'],
-  ['Comprovantes de manutenção','/manutencoes/comprovantes','comprovante manutencao nota oficina'],
-  ['Alertas','/alertas','alerta aviso pendencia'],
-  ['Armazenamento','/administracao/armazenamento','armazenamento backup r2 arquivos'],
-  ['Ajuda e Suporte','/ajuda','ajuda suporte manual duvida problema chamado'],
-  ['Manual do Usuário','/ajuda/manual','manual tutorial como usar instrucoes'],
-  ['Solicitações de suporte','/ajuda/suporte','suporte chamado problema ajuda']
- ];
- const norm=v=>(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
- let found=[], active=-1;
- function render(){
-  const q=norm(input.value); active=-1;
-  if(!q){box.classList.remove('open');box.innerHTML='';return;}
-  const terms=q.split(/\s+/).filter(Boolean);
-  found=pages.map(p=>({p,score:terms.reduce((n,t)=>n+(norm(p[0]).includes(t)?4:0)+(norm(p[2]).includes(t)?2:0),0)}))
-    .filter(x=>terms.every(t=>(norm(x.p[0])+' '+norm(x.p[2])).includes(t))).sort((a,b)=>b.score-a.score).slice(0,8);
-  box.innerHTML=found.length?found.map((x,i)=>`<a class="ff-search-item" data-i="${i}" href="${x.p[1]}"><strong>${x.p[0]}</strong><small>${x.p[2].split(' ').slice(0,5).join(' · ')}</small></a>`).join(''):'<div class="ff-search-empty">Nenhuma função encontrada. Tente outro termo.</div>';
-  box.classList.add('open');
- }
- function mark(){box.querySelectorAll('.ff-search-item').forEach((el,i)=>el.classList.toggle('active',i===active));}
- input.addEventListener('input',render);
- input.addEventListener('keydown',e=>{
-  if(e.key==='ArrowDown'&&found.length){e.preventDefault();active=(active+1)%found.length;mark();}
-  else if(e.key==='ArrowUp'&&found.length){e.preventDefault();active=(active-1+found.length)%found.length;mark();}
-  else if(e.key==='Enter'&&found.length){e.preventDefault();location.href=found[active>=0?active:0].p[1];}
-  else if(e.key==='Escape'){box.classList.remove('open');input.blur();}
- });
- document.addEventListener('click',e=>{if(!document.getElementById('ffNavSearch').contains(e.target))box.classList.remove('open');});
- document.addEventListener('keydown',e=>{if(e.key==='/'&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)){e.preventDefault();input.focus();render();}});
-})();
-</script><script src="{{url_for('static',filename='help.js')}}"></script>
+
+<div id="ffHelpModal" class="help-modal" onclick="if(event.target===this)closeFFHelp()">
+  <div class="help-dialog">
+    <button class="help-close" onclick="closeFFHelp()">×</button>
+    <h2 id="ffHelpTitle">Como usar</h2>
+    <p id="ffHelpText"></p>
+    <button onclick="closeFFHelp()">Entendi</button>
+  </div>
+</div>
+<div id="ffHelpCenter" class="help-modal" onclick="if(event.target===this)closeFFHelpCenter()">
+  <div class="help-dialog help-center">
+    <button class="help-close" onclick="closeFFHelpCenter()">×</button>
+    <h2>Central de Ajuda</h2>
+    <p class="muted">Tutoriais rápidos dos módulos do Frota Fácil.</p>
+    <div id="ffHelpCenterList"></div>
+  </div>
+</div>
+
+<script src="{{url_for('static',filename='help.js')}}"></script>
 <script>
-// RC20 — adiciona comprovantes opcionais ao formulário existente de conclusão de manutenção.
 (function(){
- function prepararConclusaoManutencao(){
-  document.querySelectorAll('form[action*="/manutencoes/"][action$="/concluir"]').forEach(function(form){
-   if(form.dataset.ffComprovantesRc20==='1') return;
-   form.dataset.ffComprovantesRc20='1';
-   form.enctype='multipart/form-data';
-
-   var box=document.createElement('div');
-   box.className='ff-maintenance-proof-box';
-   box.style.cssText='margin:14px 0;padding:14px;border:1px solid #dbe3ee;border-radius:10px;background:#f8fafc';
-   box.innerHTML=`
-    <div style="font-weight:700;margin-bottom:5px">🧾 Comprovantes da manutenção <span style="font-weight:400;color:#64748b">(opcional)</span></div>
-    <div style="font-size:13px;color:#64748b;margin-bottom:10px">Se já tiver a documentação, anexe agora. Você também poderá complementar depois em <strong>Comprovantes de manutenção</strong>.</div>
-    <label style="display:block;margin-bottom:8px">Tipo do comprovante
-      <select name="tipo_comprovante_conclusao" style="width:100%;margin-top:4px">
-        <option value="Comprovante de manutenção">Comprovante de manutenção</option>
-        <option value="Nota fiscal">Nota fiscal</option>
-        <option value="Recibo">Recibo</option>
-        <option value="Comprovante de pagamento">Comprovante de pagamento</option>
-        <option value="Orçamento">Orçamento</option>
-        <option value="Nota da oficina">Nota da oficina</option>
-      </select>
-    </label>
-    <label style="display:block">Arquivos
-      <input type="file" name="arquivos" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" style="display:block;width:100%;margin-top:4px">
-    </label>
-    <div style="font-size:12px;color:#64748b;margin-top:6px">PDF, JPG, JPEG, PNG ou WEBP · até 15 MB por arquivo · vários arquivos permitidos.</div>
-   `;
-
-   var submit=form.querySelector('button[type="submit"],input[type="submit"]');
-   if(submit && submit.parentNode) submit.parentNode.insertBefore(box,submit);
-   else form.appendChild(box);
+  const input = document.getElementById('ffNavSearch');
+  const nav = document.getElementById('ffMainNav');
+  if (!input || !nav) return;
+  const links = Array.from(nav.querySelectorAll('a'));
+  input.addEventListener('input', function(){
+    const termo = (this.value || '').trim().toLocaleLowerCase('pt-BR');
+    links.forEach(function(link){
+      const texto = (link.textContent || '').toLocaleLowerCase('pt-BR');
+      link.classList.toggle('ff-nav-hidden', termo && !texto.includes(termo));
+    });
   });
- }
- if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',prepararConclusaoManutencao);
- else prepararConclusaoManutencao();
 })();
 </script>
-</body></html>
+<footer style="text-align:center;padding:18px;font-size:12px;opacity:.65">Tecnologia Frota Fácil</footer>
+</body>
+</html>
