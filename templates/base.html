@@ -128,6 +128,12 @@
       pointer-events:none;
     }
     .ff-nav-hidden{display:none!important}
+    .ff-nav-group summary{cursor:pointer;list-style:none;padding:10px 12px}
+    .ff-nav-group summary::-webkit-details-marker{display:none}
+    .ff-nav-group summary::after{content:'▾';float:right}
+    .ff-nav-group[open] summary::after{content:'▴'}
+    .ff-nav-submenu{padding-left:14px}
+    .ff-nav-submenu a{display:block;font-size:.94em}
 
     button,.btn,.button{--tenant-color:var(--tenant-primary)}
 
@@ -178,8 +184,13 @@
       <a href="{{url_for('modelos_contrato')}}">🧩 Modelos de contrato</a>
       <a href="{{url_for('documentos')}}">📎 Documentos</a>
       <a href="{{url_for('vistorias')}}">🎥 Vistorias</a>
-      <a href="{{url_for('manutencoes')}}">🔧 Manutenções</a>
-      <a href="{{url_for('comprovantes_manutencao')}}">🧾 Comprovantes de manutenção</a>
+      <details class="ff-nav-group" id="ffManutencoesMenu">
+        <summary>🔧 Manutenções</summary>
+        <div class="ff-nav-submenu">
+          <a href="{{url_for('manutencoes')}}">Listar manutenções</a>
+          <a href="{{url_for('comprovantes_manutencao')}}">🧾 Comprovantes de manutenção</a>
+        </div>
+      </details>
       <a href="{{url_for('alertas')}}">🚨 Alertas</a>
       <a href="{{url_for('administracao_armazenamento')}}">🛡️ Armazenamento</a>
       <a href="{{url_for('ajuda')}}">❓ Ajuda</a>
@@ -239,8 +250,19 @@
     const termo = (this.value || '').trim().toLocaleLowerCase('pt-BR');
     links.forEach(function(link){
       const texto = (link.textContent || '').toLocaleLowerCase('pt-BR');
-      link.classList.toggle('ff-nav-hidden', termo && !texto.includes(termo));
+      link.classList.toggle('ff-nav-hidden', Boolean(termo && !texto.includes(termo)));
     });
+    const manutencoesMenu = document.getElementById('ffManutencoesMenu');
+    if (manutencoesMenu) {
+      const corresponde = !termo || 'manutenções'.includes(termo) || Array.from(manutencoesMenu.querySelectorAll('a')).some(function(link){
+        return (link.textContent || '').toLocaleLowerCase('pt-BR').includes(termo);
+      });
+      manutencoesMenu.classList.toggle('ff-nav-hidden', !corresponde);
+      if (termo && corresponde) {
+        manutencoesMenu.open = true;
+        manutencoesMenu.querySelectorAll('a').forEach(function(link){link.classList.remove('ff-nav-hidden');});
+      }
+    }
   });
 })();
 </script>
