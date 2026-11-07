@@ -69,6 +69,7 @@
         </details>
         {% else %}
           <a class="button secondary" href="{{url_for('historico_veiculo',id=x.vehicle_id)}}">Ver histórico</a>
+          <a class="button secondary" href="{{url_for('comprovantes_manutencao',maintenance_id=x.id)}}">Anexar comprovante</a>
         {% endif %}
       </td>
     </tr>
