@@ -49,13 +49,28 @@
         {% if not concluida %}
         <details class="maintenance-finish">
           <summary class="button">Concluir manutenção</summary>
-          <form method="post" action="{{url_for('concluir_manutencao',id=x.id)}}" class="maintenance-finish-form">
+          <form method="post" action="{{url_for('concluir_manutencao',id=x.id)}}" class="maintenance-finish-form" enctype="multipart/form-data">
             <strong>Registrar execução</strong>
             <label>Data realizada<input type="date" name="data_realizada" value="{{hoje_sp}}" required></label>
             <label>Km realizada<input type="number" name="km_realizada" value="{{x.vehicle.km_atual or ''}}"></label>
             <label>Custo (R$)<input name="custo_realizado" inputmode="decimal" placeholder="350,00"></label>
             <label>Oficina / fornecedor<input name="oficina" placeholder="Nome da oficina"></label>
             <label class="wide">Observações<textarea name="observacoes_conclusao" placeholder="Serviços executados, peças, garantia..."></textarea></label>
+            <hr>
+            <strong>Comprovantes da manutenção (opcional)</strong>
+            <small class="muted">Anexe notas fiscais, recibos ou comprovantes agora. PDF, JPG, JPEG, PNG ou WEBP; até 15 MB por arquivo. Você também poderá anexar depois.</small>
+            <label>Tipo de comprovante
+              <select name="tipo_comprovante_conclusao">
+                <option>Nota da oficina</option>
+                <option>Nota fiscal de peças</option>
+                <option>Recibo</option>
+                <option>Comprovante de pagamento</option>
+                <option>Outro comprovante</option>
+              </select>
+            </label>
+            <label class="wide">Selecionar arquivos
+              <input type="file" name="arquivos" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple>
+            </label>
             <hr>
             <strong>Próxima manutenção (opcional)</strong>
             <small class="muted">Preencha data e/ou km para o sistema criar automaticamente um novo ciclo e novos alertas.</small>
