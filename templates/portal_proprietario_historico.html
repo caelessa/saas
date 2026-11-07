@@ -14,6 +14,7 @@ main{max-width:1100px;margin:auto;padding:24px}.top{display:flex;justify-content
 .card small{display:block;color:#64748b;margin-bottom:5px}.timeline{position:relative;margin-top:18px}.item{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:15px 16px;margin-bottom:12px;border-left:4px solid var(--primary)}
 .item-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.badge{font-size:.78rem;padding:4px 8px;border-radius:999px;background:#eef2ff}.date{color:#64748b;font-size:.84rem}.desc{margin-top:7px;color:#475569}.empty{background:#fff;padding:20px;border-radius:12px;color:#64748b}
 h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}.docs{margin-top:10px;padding-top:10px;border-top:1px dashed #dbe2ea}.docs-title{font-size:.82rem;font-weight:700;color:#475569;margin-bottom:7px}.doc-link{display:inline-block;margin:3px 6px 3px 0;padding:7px 10px;border-radius:8px;background:#f1f5f9;color:#172033;text-decoration:none;font-size:.84rem;font-weight:700}.doc-link:hover{background:#e2e8f0}
+.filters{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;margin:12px 0 18px}.filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.filters label{display:block;font-size:.85rem;font-weight:700;margin-bottom:6px}.filters input,.filters select{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}.filter-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}.filter-foot button{border:0;background:#e2e8f0;color:#172033;padding:9px 12px;border-radius:8px;cursor:pointer;font-weight:700}
 </style>
 </head>
 <body>
@@ -45,9 +46,19 @@ h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}.docs{margin-top:10px
 
 <section>
 <h2>Linha do tempo</h2>
+<div class="filters" aria-label="Filtros do histórico">
+ <div class="filter-grid">
+  <div><label for="f-tipo">Tipo de evento</label><select id="f-tipo"><option value="">Todos os eventos</option>{% for item in timeline|groupby('tipo') %}<option value="{{item.grouper}}">{{item.grouper}}</option>{% endfor %}</select></div>
+  <div><label for="f-inicio">De</label><input id="f-inicio" type="date"></div>
+  <div><label for="f-fim">Até</label><input id="f-fim" type="date"></div>
+  <div><label for="f-busca">Pesquisar</label><input id="f-busca" type="search" placeholder="Ex.: óleo, freios, oficina"></div>
+ </div>
+ <div class="filter-foot"><label style="font-weight:400;margin:0"><input id="f-docs" type="checkbox" style="width:auto"> Somente registros com comprovantes</label><button id="f-limpar" type="button">Limpar filtros</button></div>
+ <div id="f-contagem" role="status" aria-live="polite" style="margin-top:10px;color:#64748b;font-size:.85rem"></div>
+</div>
 <div class="timeline">
 {% for item in timeline %}
-<div class="item">
+<div class="item" data-tipo="{{item.tipo}}" data-data="{{item.data.strftime('%Y-%m-%d') if item.data and item.data.strftime is defined else (item.data|string)[:10] if item.data else ''}}" data-docs="{{'sim' if item.tipo == 'Manutenção' and item.maintenance_id and documentos_manutencao.get(item.maintenance_id) else 'nao'}}">
 <div class="item-head">
 <div><span class="badge">{{item.tipo}}</span> <strong>{{item.titulo}}</strong></div>
 <div class="date">{{item.data|sp_datetime if item.data else '-'}}</div>
@@ -66,6 +77,30 @@ h1,h2,h3{margin-top:0}.brand{color:#64748b;font-size:.9rem}.docs{margin-top:10px
 <div class="empty">Ainda não há registros históricos para este veículo.</div>
 {% endfor %}
 </div>
+<div class="empty" id="f-vazio" hidden>Nenhum registro corresponde aos filtros selecionados.</div>
 </section>
 </main>
+<script>
+(function(){
+ const root=document.querySelector('.timeline');if(!root)return;
+ const items=Array.from(root.querySelectorAll('.item'));
+ const ids=['f-tipo','f-inicio','f-fim','f-busca','f-docs'];
+ const fields=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));
+ const count=document.getElementById('f-contagem'),empty=document.getElementById('f-vazio');
+ function apply(){
+  const tipo=fields['f-tipo'].value,ini=fields['f-inicio'].value,fim=fields['f-fim'].value;
+  const busca=fields['f-busca'].value.trim().toLocaleLowerCase('pt-BR'),docs=fields['f-docs'].checked;
+  let shown=0;
+  for(const item of items){const date=item.dataset.data||'';
+   const ok=(!tipo||item.dataset.tipo===tipo)&&(!ini||(date&&date>=ini))&&(!fim||(date&&date<=fim))&&(!docs||item.dataset.docs==='sim')&&(!busca||item.textContent.toLocaleLowerCase('pt-BR').includes(busca));
+   item.hidden=!ok;if(ok)shown++;
+  }
+  count.textContent=shown+' de '+items.length+' registro(s) exibido(s)';
+  empty.hidden=shown!==0||items.length===0;
+ }
+ ids.forEach(id=>fields[id].addEventListener('input',apply));
+ document.getElementById('f-limpar').addEventListener('click',()=>{ids.forEach(id=>{if(fields[id].type==='checkbox')fields[id].checked=false;else fields[id].value='';});apply();});
+ apply();
+})();
+</script>
 </body></html>
