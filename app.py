@@ -2556,6 +2556,29 @@ def _decimal_portal(valor):
  try: return Decimal(txt)
  except Exception: raise ValueError('Valor inválido')
 
+@app.route('/portal-proprietario/simulador-roi')
+@owner_portal_required
+def portal_proprietario_simulador_roi():
+ tenant_id=int(session['owner_tenant_id']); investor_id=int(session['owner_investor_id'])
+ veiculos=Vehicle.query.filter_by(tenant_id=tenant_id,investor_id=investor_id).order_by(Vehicle.placa).all()
+ investimentos={i.vehicle_id:i for i in VehicleInvestment.query.filter_by(tenant_id=tenant_id,investor_id=investor_id).all()}
+ hoje=date.today()
+ # Os valores de referência vêm do mesmo resumo utilizado no portal; não há escrita no banco.
+ dados=resumo_portal_proprietario(tenant_id,investor_id,date(hoje.year,1,1),hoje)
+ linhas={r['vehicle'].id:r for r in dados.get('vehicles',[])}
+ def numero(valor):
+  try: return float(valor or 0)
+  except (ValueError,TypeError): return 0.0
+ registros=[]
+ for v in veiculos:
+  inv=investimentos.get(v.id); linha=linhas.get(v.id,{})
+  registros.append({'id':v.id,'nome':(v.placa or '')+' — '+(v.marca_modelo or 'Veículo'),
+   'compra':numero(inv.valor_aquisicao) if inv else 0,
+   'atual':numero(inv.valor_mercado) if inv else 0,
+   'receita_ano':numero(linha.get('repasse_pago')),
+   'custos_ano':numero(linha.get('custos'))})
+ return render_template('portal_proprietario_simulador_roi.html',tenant=Tenant.query.get(tenant_id),registros=registros,ano=hoje.year)
+
 @app.route('/portal-proprietario/veiculos/<int:vehicle_id>/investimento',methods=['GET','POST'])
 @owner_portal_required
 def portal_proprietario_investimento(vehicle_id):
